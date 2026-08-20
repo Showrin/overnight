@@ -12,8 +12,8 @@ export function Titlebar() {
       className="flex h-9 shrink-0 items-center justify-between border-b bg-background pl-3"
     >
       <div data-tauri-drag-region className="flex items-center gap-2">
-        <img src={logoIcon} alt="" className="h-5 w-auto rounded-[5px]" />
-        <LogoWordmark className="h-3 w-auto text-foreground" />
+        <img src={logoIcon} alt="" className="h-6 w-auto rounded-[5px]" />
+        <LogoWordmark className="h-3.5 w-auto text-foreground" />
       </div>
       <div className="flex h-full items-stretch">
         <button
