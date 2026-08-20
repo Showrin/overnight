@@ -30,3 +30,6 @@ src-tauri/gen/
 # Env
 .env
 .env.local
+
+# Local tooling state
+.claude/
