@@ -1,6 +1,6 @@
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { Minus, Square, X } from 'lucide-react'
-import logoMark from '@/assets/logo-mark.svg'
+import logoIcon from '@/assets/logo-icon.svg'
 import { LogoWordmark } from '@/components/logo-wordmark'
 
 const appWindow = getCurrentWindow()
@@ -12,7 +12,7 @@ export function Titlebar() {
       className="flex h-9 shrink-0 items-center justify-between border-b bg-background pl-3"
     >
       <div data-tauri-drag-region className="flex items-center gap-2">
-        <img src={logoMark} alt="" className="h-4 w-auto" />
+        <img src={logoIcon} alt="" className="h-5 w-auto rounded-[5px]" />
         <LogoWordmark className="h-3 w-auto text-foreground" />
       </div>
       <div className="flex h-full items-stretch">
