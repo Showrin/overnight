@@ -1,3 +1,8 @@
+import {
+  isPermissionGranted,
+  requestPermission,
+  sendNotification,
+} from '@tauri-apps/plugin-notification'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -6,6 +11,16 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+
+async function testNotification() {
+  let granted = await isPermissionGranted()
+  if (!granted) {
+    granted = (await requestPermission()) === 'granted'
+  }
+  if (granted) {
+    sendNotification({ title: 'Overnight', body: 'Notifications are working.' })
+  }
+}
 
 function App() {
   return (
@@ -16,7 +31,7 @@ function App() {
           <CardDescription>Desktop shell scaffold</CardDescription>
         </CardHeader>
         <CardContent>
-          <Button>Get started</Button>
+          <Button onClick={testNotification}>Send test notification</Button>
         </CardContent>
       </Card>
     </main>
