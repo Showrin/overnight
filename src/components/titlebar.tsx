@@ -9,7 +9,7 @@ export function Titlebar() {
   return (
     <header
       data-tauri-drag-region
-      className="flex h-9 shrink-0 items-center justify-between border-b bg-background pl-3"
+      className="flex h-9 shrink-0 items-center justify-between border-b bg-background-alt pl-3"
     >
       <div data-tauri-drag-region className="flex items-center gap-2">
         <img src={logoIcon} alt="" className="h-6 w-auto rounded-[5px]" />
