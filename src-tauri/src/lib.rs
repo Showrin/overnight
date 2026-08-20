@@ -1,3 +1,6 @@
+mod commands;
+mod db;
+
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::{Manager, WindowEvent};
@@ -6,6 +9,17 @@ use tauri::{Manager, WindowEvent};
 pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_notification::init())
+    .invoke_handler(tauri::generate_handler![
+      commands::list_tasks,
+      commands::create_task,
+      commands::get_task,
+      commands::update_task_status,
+      commands::delete_task,
+      commands::start_session,
+      commands::get_session,
+      commands::list_sessions_for_task,
+      commands::end_session,
+    ])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
@@ -14,6 +28,17 @@ pub fn run() {
             .build(),
         )?;
       }
+
+      let pool = db::init_pool(app.handle())?;
+      {
+        let conn = pool.get()?;
+        let table_names = ["tasks", "sessions", "activity", "metrics", "container_metrics", "settings"];
+        for table in table_names {
+          let count: i64 = conn.query_row(&format!("SELECT count(*) FROM {table}"), [], |row| row.get(0))?;
+          log::info!("db: {table} has {count} row(s)");
+        }
+      }
+      app.manage(pool);
 
       let show_item = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
       let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
