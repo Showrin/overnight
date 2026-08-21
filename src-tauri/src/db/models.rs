@@ -57,6 +57,22 @@ pub struct ContainerMetric {
   pub memory_mb: f64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JiraIssue {
+  pub id: String,
+  pub key: String,
+  pub summary: String,
+  pub status: String,
+  pub issue_type: Option<String>,
+  pub priority: Option<String>,
+  pub assignee: Option<String>,
+  pub url: String,
+  pub raw_fields: String,
+  pub synced_at: i64,
+  pub created_at: i64,
+  pub updated_at: i64,
+}
+
 #[allow(dead_code)] // not yet exposed via commands.rs; settings::get/set work directly with raw values
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Setting {

@@ -15,12 +15,12 @@ pub mod activity;
 #[allow(dead_code)]
 pub mod container_metrics;
 pub mod error;
+pub mod jira_issues;
 #[allow(dead_code)]
 pub mod metrics;
 pub mod migrations;
 pub mod models;
 pub mod sessions;
-#[allow(dead_code)]
 pub mod settings;
 pub mod tasks;
 

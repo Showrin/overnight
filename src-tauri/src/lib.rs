@@ -1,5 +1,6 @@
 mod commands;
 mod db;
+mod jira;
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
@@ -19,6 +20,10 @@ pub fn run() {
       commands::get_session,
       commands::list_sessions_for_task,
       commands::end_session,
+      commands::save_jira_config,
+      commands::get_jira_config,
+      commands::sync_jira_issues,
+      commands::list_jira_issues,
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {
@@ -32,7 +37,15 @@ pub fn run() {
       let pool = db::init_pool(app.handle())?;
       {
         let conn = pool.get()?;
-        let table_names = ["tasks", "sessions", "activity", "metrics", "container_metrics", "settings"];
+        let table_names = [
+          "tasks",
+          "sessions",
+          "activity",
+          "metrics",
+          "container_metrics",
+          "settings",
+          "jira_issues",
+        ];
         for table in table_names {
           let count: i64 = conn.query_row(&format!("SELECT count(*) FROM {table}"), [], |row| row.get(0))?;
           log::info!("db: {table} has {count} row(s)");
