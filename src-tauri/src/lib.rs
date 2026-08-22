@@ -1,6 +1,7 @@
 mod commands;
 mod db;
 mod jira;
+mod process;
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
