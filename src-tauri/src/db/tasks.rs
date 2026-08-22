@@ -11,6 +11,7 @@ fn row_to_task(row: &rusqlite::Row) -> rusqlite::Result<Task> {
     jira_key: row.get("jira_key")?,
     status: row.get("status")?,
     project_path: row.get("project_path")?,
+    project_id: row.get("project_id")?,
     metadata: row.get("metadata")?,
     created_at: row.get("created_at")?,
     updated_at: row.get("updated_at")?,

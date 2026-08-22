@@ -4,9 +4,9 @@ use rusqlite_migration::{Migrations, M};
 // are TEXT UUIDv4. Foreign keys cascade on delete so removing a task/session
 // cleans up its dependents without manual fan-out deletes in the repo layer.
 //
-// Forward-compat note: a future schema v2 will likely add a proper
-// `project_folders` table + `project_folder_id` FK once OVN-55 lands,
-// deprecating the free-text `tasks.project_path` column used for now.
+// Schema v2 (OVN-55): added `projects` + `tasks.project_id`. The old
+// free-text `tasks.project_path` column is left in place, superseded but
+// not backfilled/dropped, to keep the migration non-destructive.
 pub fn migrations() -> Migrations<'static> {
   Migrations::new(vec![M::up(
     "
@@ -91,6 +91,21 @@ pub fn migrations() -> Migrations<'static> {
     );
     CREATE INDEX ix_jira_issues_status ON jira_issues(status);
     ",
+  ), M::up(
+    "
+    CREATE TABLE projects (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      repo_path TEXT NOT NULL,
+      plans_path TEXT,
+      dev_server_port INTEGER,
+      extra_clone_paths TEXT NOT NULL DEFAULT '[]',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    ALTER TABLE tasks ADD COLUMN project_id TEXT REFERENCES projects(id) ON DELETE SET NULL;
+    ",
   )])
 }
 
@@ -116,6 +131,6 @@ mod tests {
         |row| row.get(0),
       )
       .unwrap();
-    assert_eq!(table_count, 7);
+    assert_eq!(table_count, 8);
   }
 }

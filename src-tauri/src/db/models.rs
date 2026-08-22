@@ -8,6 +8,7 @@ pub struct Task {
   pub jira_key: Option<String>,
   pub status: String,
   pub project_path: Option<String>,
+  pub project_id: Option<String>,
   pub metadata: Option<String>,
   pub created_at: i64,
   pub updated_at: i64,
@@ -69,6 +70,18 @@ pub struct JiraIssue {
   pub url: String,
   pub raw_fields: String,
   pub synced_at: i64,
+  pub created_at: i64,
+  pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Project {
+  pub id: String,
+  pub name: String,
+  pub repo_path: String,
+  pub plans_path: Option<String>,
+  pub dev_server_port: Option<i64>,
+  pub extra_clone_paths: Vec<String>,
   pub created_at: i64,
   pub updated_at: i64,
 }
