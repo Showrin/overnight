@@ -106,6 +106,42 @@ pub fn migrations() -> Migrations<'static> {
 
     ALTER TABLE tasks ADD COLUMN project_id TEXT REFERENCES projects(id) ON DELETE SET NULL;
     ",
+  ), M::up(
+    "
+    CREATE TABLE sandboxes (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      mode TEXT NOT NULL,
+      status TEXT NOT NULL,
+      container_id TEXT,
+      folder_path TEXT,
+      host_port INTEGER,
+      created_at INTEGER NOT NULL,
+      stopped_at INTEGER
+    );
+    CREATE INDEX ix_sandboxes_project_id ON sandboxes(project_id);
+
+    -- container_metrics predates sandboxes and only ever recorded a required
+    -- session_id. Recreated here (rather than ALTERed) so session_id can
+    -- become optional and sandbox_id/network columns can be added in one
+    -- consistent shape, preserving any existing rows.
+    CREATE TABLE container_metrics_new (
+      id TEXT PRIMARY KEY,
+      session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE,
+      sandbox_id TEXT REFERENCES sandboxes(id) ON DELETE CASCADE,
+      captured_at INTEGER NOT NULL,
+      cpu_percent REAL NOT NULL,
+      memory_mb REAL NOT NULL,
+      network_rx_bytes REAL NOT NULL DEFAULT 0,
+      network_tx_bytes REAL NOT NULL DEFAULT 0
+    );
+    INSERT INTO container_metrics_new (id, session_id, captured_at, cpu_percent, memory_mb)
+      SELECT id, session_id, captured_at, cpu_percent, memory_mb FROM container_metrics;
+    DROP TABLE container_metrics;
+    ALTER TABLE container_metrics_new RENAME TO container_metrics;
+    CREATE INDEX ix_container_metrics_session_captured ON container_metrics(session_id, captured_at);
+    CREATE INDEX ix_container_metrics_sandbox_captured ON container_metrics(sandbox_id, captured_at);
+    ",
   )])
 }
 
@@ -131,6 +167,6 @@ mod tests {
         |row| row.get(0),
       )
       .unwrap();
-    assert_eq!(table_count, 8);
+    assert_eq!(table_count, 9);
   }
 }

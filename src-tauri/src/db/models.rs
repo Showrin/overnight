@@ -52,10 +52,29 @@ pub struct Metric {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContainerMetric {
   pub id: String,
-  pub session_id: String,
+  pub session_id: Option<String>,
+  pub sandbox_id: Option<String>,
   pub captured_at: i64,
   pub cpu_percent: f64,
   pub memory_mb: f64,
+  pub network_rx_bytes: f64,
+  pub network_tx_bytes: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Sandbox {
+  pub id: String,
+  pub project_id: String,
+  /// "mount" (bind-mounts the project's repo_path) or "clone" (git-clones
+  /// repo_path into an isolated folder first).
+  pub mode: String,
+  /// "starting" | "running" | "stopped" | "error"
+  pub status: String,
+  pub container_id: Option<String>,
+  pub folder_path: Option<String>,
+  pub host_port: Option<i64>,
+  pub created_at: i64,
+  pub stopped_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

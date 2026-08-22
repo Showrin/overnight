@@ -57,6 +57,7 @@ pub fn run() {
           "settings",
           "jira_issues",
           "projects",
+          "sandboxes",
         ];
         for table in table_names {
           let count: i64 = conn.query_row(&format!("SELECT count(*) FROM {table}"), [], |row| row.get(0))?;
