@@ -18,6 +18,10 @@ subprocesses (Claude Code first, others later) behind a common abstraction.
 src/                      # React frontend
   components/
     ui/                    # shadcn/ui primitives
+    dashboard/             # Jira issue list (dashboard screen)
+    projects/              # Projects screen: list, create/edit form
+    settings/              # Settings screen: permission mode, Jira config form
+    sidebar.tsx            # left nav (Dashboard / Projects / Settings)
   assets/                  # logo SVGs etc.
   index.css                # design tokens (see below)
 
@@ -30,7 +34,7 @@ src-tauri/src/
     error.rs                 # shared db::Error (crosses Tauri IPC via Serialize)
     migrations.rs             # schema (rusqlite_migration), test_conn() helper
     models.rs
-    tasks.rs / sessions.rs / activity.rs / metrics.rs / container_metrics.rs / settings.rs
+    tasks.rs / sessions.rs / activity.rs / metrics.rs / container_metrics.rs / settings.rs / projects.rs
   providers/                # not yet built (OVN-53) — see below
     claude_code/
 ```
@@ -63,14 +67,23 @@ Schema v1 (SQLite, via `rusqlite` + `rusqlite_migration`, see
 - **`container_metrics`** — sandbox resource usage (cpu/memory) over time,
   for autonomous-mode sessions running in a container.
 - **`settings`** — generic key/JSON-value store.
+- **`projects`** (OVN-55, schema v2) — user-managed local projects: `name`,
+  `repo_path` (validated as an existing git repo — `.git` marker check — on
+  create/update), optional `plans_path` (defaults to `.agent/plans` under
+  `repo_path` when unset, resolved in application code, not SQL), optional
+  per-project `dev_server_port`, and `extra_clone_paths` (JSON array of glob
+  patterns for extra files/folders to copy into a clone of the project — not
+  restricted to gitignored files). No GitHub/Bitbucket OAuth — local path
+  only.
 
 All timestamps are unix-epoch-milliseconds integers; all primary keys are
 UUIDv4 text. Foreign keys cascade on delete.
 
-**Note on `tasks.project_path`**: this is a placeholder. OVN-55 (Settings)
-introduces a proper `project_folders` registry (multiple named local paths,
-plus repos sourced from connected GitHub/Bitbucket accounts). Schema v2 will
-add a `project_folder_id` FK and deprecate this free-text column.
+**Note on `tasks.project_path`**: superseded by `tasks.project_id`, a
+nullable FK to `projects` (`ON DELETE SET NULL`, same convention as
+`sessions.parent_session_id`). The old free-text column is left in place
+non-destructively — not backfilled or dropped — since no production data
+depended on it.
 
 ## AgentProvider abstraction
 
