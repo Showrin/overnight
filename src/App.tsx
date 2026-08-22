@@ -3,6 +3,7 @@ import { Titlebar } from '@/components/titlebar'
 import { Sidebar, type Screen } from '@/components/sidebar'
 import { JiraIssueList } from '@/components/dashboard/JiraIssueList'
 import { ProjectsScreen } from '@/components/projects/ProjectsScreen'
+import { SettingsScreen } from '@/components/settings/SettingsScreen'
 
 function App() {
   const [screen, setScreen] = useState<Screen>('dashboard')
@@ -19,6 +20,7 @@ function App() {
             </div>
           )}
           {screen === 'projects' && <ProjectsScreen />}
+          {screen === 'settings' && <SettingsScreen />}
         </main>
       </div>
     </div>

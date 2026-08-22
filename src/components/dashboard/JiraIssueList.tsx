@@ -22,100 +22,11 @@ interface JiraIssue {
   url: string
 }
 
-const inputClassName =
-  'h-8 rounded-lg border border-border bg-background px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50'
-
-function JiraConfigForm({
-  initial,
-  onSaved,
-  onCancel,
-}: {
-  initial: JiraConfig | null
-  onSaved: () => void
-  onCancel?: () => void
-}) {
-  const [site, setSite] = useState(initial?.site ?? '')
-  const [email, setEmail] = useState(initial?.email ?? '')
-  const [jql, setJql] = useState(initial?.jql ?? '')
-  const [apiToken, setApiToken] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  async function handleSave() {
-    setSaving(true)
-    setError(null)
-    try {
-      await invoke('save_jira_config', {
-        site,
-        email,
-        jql: jql.trim() ? jql : null,
-        apiToken,
-      })
-      await onSaved()
-    } catch (e) {
-      setError(String(e))
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <Card className="w-96">
-      <CardHeader>
-        <CardTitle>Connect Jira</CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-2">
-        <input
-          className={inputClassName}
-          placeholder="Site (https://your-team.atlassian.net)"
-          value={site}
-          onChange={(e) => setSite(e.target.value)}
-        />
-        <input
-          className={inputClassName}
-          placeholder="Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-        />
-        <input
-          className={inputClassName}
-          placeholder="JQL (defaults to your assigned issues)"
-          value={jql}
-          onChange={(e) => setJql(e.target.value)}
-        />
-        <input
-          className={inputClassName}
-          type="password"
-          placeholder="API token"
-          value={apiToken}
-          onChange={(e) => setApiToken(e.target.value)}
-        />
-        {error && <p className="text-sm text-destructive">{error}</p>}
-        <div className="flex gap-2">
-          <Button
-            className="flex-1"
-            onClick={handleSave}
-            disabled={saving || !site || !email || !apiToken}
-          >
-            {saving ? 'Saving…' : 'Save'}
-          </Button>
-          {onCancel && (
-            <Button variant="outline" onClick={onCancel} disabled={saving}>
-              Cancel
-            </Button>
-          )}
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
-
 export function JiraIssueList() {
   const [config, setConfig] = useState<JiraConfig | null>(null)
   const [issues, setIssues] = useState<JiraIssue[]>([])
   const [syncing, setSyncing] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [editing, setEditing] = useState(false)
 
   async function loadConfig() {
     const c = await invoke<JiraConfig>('get_jira_config')
@@ -149,16 +60,18 @@ export function JiraIssueList() {
 
   if (!config) return null
 
-  if (!config.has_token || editing) {
+  if (!config.has_token) {
     return (
-      <JiraConfigForm
-        initial={config}
-        onSaved={() => {
-          setEditing(false)
-          return loadConfig().then(loadIssues)
-        }}
-        onCancel={config.has_token ? () => setEditing(false) : undefined}
-      />
+      <Card className="w-96">
+        <CardHeader>
+          <CardTitle>Jira issues</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">
+            Connect Jira in Settings to see issues.
+          </p>
+        </CardContent>
+      </Card>
     )
   }
 
@@ -166,14 +79,9 @@ export function JiraIssueList() {
     <Card className="w-96">
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle>Jira issues</CardTitle>
-        <div className="flex gap-2">
-          <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
-            Edit
-          </Button>
-          <Button size="sm" onClick={handleSync} disabled={syncing}>
-            {syncing ? 'Syncing…' : 'Sync now'}
-          </Button>
-        </div>
+        <Button size="sm" onClick={handleSync} disabled={syncing}>
+          {syncing ? 'Syncing…' : 'Sync now'}
+        </Button>
       </CardHeader>
       <CardContent className="flex flex-col gap-2">
         {error && <p className="text-sm text-destructive">{error}</p>}
