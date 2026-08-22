@@ -287,7 +287,7 @@ pub fn list_jira_issues(pool: State<DbPool>) -> std::result::Result<Vec<JiraIssu
 // too, matching the existing pattern used by the Jira commands above.
 
 const SANDBOX_MEMORY_MB: u32 = 2048;
-const SANDBOX_IMAGE: &str = "mcr.microsoft.com/devcontainers/universal";
+const SANDBOX_IMAGE: &str = "mcr.microsoft.com/devcontainers/base:ubuntu";
 const SANDBOX_CONTAINER_PORT: u16 = 8080;
 
 fn sandboxes_dir(app: &AppHandle) -> std::result::Result<PathBuf, String> {
