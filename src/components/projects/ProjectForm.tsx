@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { open } from '@tauri-apps/plugin-dialog'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -35,6 +36,24 @@ export function ProjectForm({
 
   function removePattern(index: number) {
     setExtraClonePaths((paths) => paths.filter((_, i) => i !== index))
+  }
+
+  async function browseRepoPath() {
+    const path = await open({ directory: true, multiple: false })
+    if (typeof path === 'string') setRepoPath(path)
+  }
+
+  async function browsePlansPath() {
+    const path = await open({ directory: true, multiple: false })
+    if (typeof path === 'string') setPlansPath(path)
+  }
+
+  async function browseClonePath(kind: 'file' | 'folder') {
+    const selection = await open({ directory: kind === 'folder', multiple: true })
+    if (!selection) return
+    const paths = Array.isArray(selection) ? selection : [selection]
+    if (paths.length === 0) return
+    setExtraClonePaths((existing) => [...existing, ...paths])
   }
 
   async function handleSave() {
@@ -73,21 +92,31 @@ export function ProjectForm({
         </div>
         <div className="flex flex-col gap-1">
           <Label htmlFor="project-repo-path">Local repo path</Label>
-          <Input
-            id="project-repo-path"
-            placeholder="/path/to/repo"
-            value={repoPath}
-            onChange={(e) => setRepoPath(e.target.value)}
-          />
+          <div className="flex gap-2">
+            <Input
+              id="project-repo-path"
+              placeholder="/path/to/repo"
+              value={repoPath}
+              onChange={(e) => setRepoPath(e.target.value)}
+            />
+            <Button type="button" variant="outline" onClick={browseRepoPath}>
+              Browse
+            </Button>
+          </div>
         </div>
         <div className="flex flex-col gap-1">
           <Label htmlFor="project-plans-path">Plans path (optional)</Label>
-          <Input
-            id="project-plans-path"
-            placeholder="defaults to .agent/plans under repo path"
-            value={plansPath}
-            onChange={(e) => setPlansPath(e.target.value)}
-          />
+          <div className="flex gap-2">
+            <Input
+              id="project-plans-path"
+              placeholder="defaults to .agent/plans under repo path"
+              value={plansPath}
+              onChange={(e) => setPlansPath(e.target.value)}
+            />
+            <Button type="button" variant="outline" onClick={browsePlansPath}>
+              Browse
+            </Button>
+          </div>
         </div>
         <div className="flex flex-col gap-1">
           <Label htmlFor="project-port">Dev server port (optional)</Label>
@@ -102,7 +131,7 @@ export function ProjectForm({
           <Label>Extra files/folders to clone (optional)</Label>
           <div className="flex gap-2">
             <Input
-              placeholder="glob pattern, e.g. .env or docs/**"
+              placeholder="type a glob pattern, or browse below"
               value={newPattern}
               onChange={(e) => setNewPattern(e.target.value)}
               onKeyDown={(e) => {
@@ -114,6 +143,14 @@ export function ProjectForm({
             />
             <Button type="button" variant="outline" onClick={addPattern}>
               Add
+            </Button>
+          </div>
+          <div className="flex gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={() => browseClonePath('file')}>
+              Browse file(s)
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => browseClonePath('folder')}>
+              Browse folder
             </Button>
           </div>
           {extraClonePaths.length > 0 && (
