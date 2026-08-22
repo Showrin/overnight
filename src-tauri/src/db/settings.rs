@@ -24,6 +24,7 @@ pub fn set(conn: &Connection, key: &str, value: &str) -> Result<()> {
   Ok(())
 }
 
+#[allow(dead_code)] // not yet consumed; kept for a future setting that needs structured storage
 pub fn get_json<T: DeserializeOwned>(conn: &Connection, key: &str) -> Result<Option<T>> {
   match get(conn, key)? {
     Some(raw) => Ok(Some(serde_json::from_str(&raw)?)),
@@ -31,6 +32,7 @@ pub fn get_json<T: DeserializeOwned>(conn: &Connection, key: &str) -> Result<Opt
   }
 }
 
+#[allow(dead_code)] // not yet consumed; kept for a future setting that needs structured storage
 pub fn set_json<T: Serialize>(conn: &Connection, key: &str, value: &T) -> Result<()> {
   let raw = serde_json::to_string(value)?;
   set(conn, key, &raw)

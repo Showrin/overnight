@@ -73,6 +73,24 @@ pub fn migrations() -> Migrations<'static> {
       updated_at INTEGER NOT NULL
     );
     ",
+  ), M::up(
+    "
+    CREATE TABLE jira_issues (
+      id TEXT PRIMARY KEY,
+      key TEXT NOT NULL UNIQUE,
+      summary TEXT NOT NULL,
+      status TEXT NOT NULL,
+      issue_type TEXT,
+      priority TEXT,
+      assignee TEXT,
+      url TEXT NOT NULL,
+      raw_fields TEXT NOT NULL,
+      synced_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX ix_jira_issues_status ON jira_issues(status);
+    ",
   )])
 }
 
@@ -98,6 +116,6 @@ mod tests {
         |row| row.get(0),
       )
       .unwrap();
-    assert_eq!(table_count, 6);
+    assert_eq!(table_count, 7);
   }
 }
