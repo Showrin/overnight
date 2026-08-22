@@ -103,6 +103,10 @@ pub async fn rm<R: Runtime>(app: &AppHandle<R>, container_id: &str) -> Result<()
   Ok(())
 }
 
+// exec/logs_stream/stats and the parse_* helpers below aren't called by any
+// command yet — they're wired up by the metrics-polling/logs/terminal step
+// of the Sandboxes page, not the lifecycle (create/start/stop/delete) step.
+#[allow(dead_code)]
 pub async fn exec<R: Runtime>(app: &AppHandle<R>, container_id: &str, cmd: &[&str]) -> Result<String> {
   let mut args = vec!["exec", container_id];
   args.extend_from_slice(cmd);
@@ -110,11 +114,13 @@ pub async fn exec<R: Runtime>(app: &AppHandle<R>, container_id: &str, cmd: &[&st
 }
 
 /// Streams `docker logs -f <container_id>` line-by-line.
+#[allow(dead_code)]
 pub fn logs_stream<R: Runtime>(app: &AppHandle<R>, container_id: &str) -> Result<SpawnedProcess> {
   let args = vec!["logs".to_string(), "-f".to_string(), container_id.to_string()];
   Ok(crate::process::spawn(app, "docker", &args, None)?)
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ContainerStats {
   pub cpu_percent: f64,
@@ -123,6 +129,7 @@ pub struct ContainerStats {
   pub network_tx_bytes: f64,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize)]
 struct RawStats {
   #[serde(rename = "CPUPerc")]
@@ -134,6 +141,7 @@ struct RawStats {
 }
 
 /// `docker stats --no-stream`, parsed into numeric values.
+#[allow(dead_code)]
 pub async fn stats<R: Runtime>(app: &AppHandle<R>, container_id: &str) -> Result<ContainerStats> {
   let raw = run(app, "docker", &["stats", "--no-stream", "--format", "{{json .}}", container_id]).await?;
   let parsed: RawStats = serde_json::from_str(&raw).map_err(|e| Error::ParseFailed(e.to_string()))?;
@@ -146,6 +154,7 @@ pub async fn stats<R: Runtime>(app: &AppHandle<R>, container_id: &str) -> Result
   })
 }
 
+#[allow(dead_code)]
 fn parse_percent(raw: &str) -> Result<f64> {
   raw
     .trim()
@@ -175,11 +184,13 @@ fn parse_byte_size(raw: &str) -> Result<f64> {
   Ok(value * multiplier)
 }
 
+#[allow(dead_code)]
 fn parse_mem_usage_mb(raw: &str) -> Result<f64> {
   let used = raw.split('/').next().ok_or_else(|| Error::ParseFailed(format!("bad mem usage: {raw}")))?;
   Ok(parse_byte_size(used)? / (1024.0 * 1024.0))
 }
 
+#[allow(dead_code)]
 fn parse_net_io(raw: &str) -> Result<(f64, f64)> {
   let mut parts = raw.split('/');
   let rx = parts.next().ok_or_else(|| Error::ParseFailed(format!("bad net io: {raw}")))?;

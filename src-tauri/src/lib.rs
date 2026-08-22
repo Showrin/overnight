@@ -1,8 +1,5 @@
 mod commands;
 mod db;
-// Not yet consumed — no Tauri commands wire into it yet (lands in a later
-// Sandboxes-page step).
-#[allow(dead_code)]
 mod docker;
 mod jira;
 mod process;
@@ -39,6 +36,12 @@ pub fn run() {
       commands::get_settings,
       commands::save_settings,
       commands::start_plan_session,
+      commands::docker_health_check,
+      commands::list_sandboxes,
+      commands::create_sandbox,
+      commands::stop_sandbox,
+      commands::start_sandbox,
+      commands::delete_sandbox,
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {

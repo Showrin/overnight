@@ -73,6 +73,17 @@ pub fn update_status(
   get(conn, id)
 }
 
+pub fn set_folder_path(conn: &Connection, id: &str, folder_path: &str) -> Result<Sandbox> {
+  let changed = conn.execute(
+    "UPDATE sandboxes SET folder_path = ?1 WHERE id = ?2",
+    params![folder_path, id],
+  )?;
+  if changed == 0 {
+    return Err(Error::NotFound);
+  }
+  get(conn, id)
+}
+
 pub fn delete(conn: &Connection, id: &str) -> Result<()> {
   let changed = conn.execute("DELETE FROM sandboxes WHERE id = ?1", params![id])?;
   if changed == 0 {

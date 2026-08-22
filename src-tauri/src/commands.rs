@@ -1,9 +1,11 @@
+use std::path::PathBuf;
+
 use serde::Serialize;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::db::error::{Error, Result};
-use crate::db::models::{JiraIssue, Project, Session, Task};
-use crate::db::{jira_issues, projects, sessions, settings, tasks, DbPool};
+use crate::db::models::{JiraIssue, Project, Sandbox, Session, Task};
+use crate::db::{jira_issues, projects, sandboxes, sessions, settings, tasks, DbPool};
 use crate::jira::{self, JiraClient};
 use crate::providers::claude_code::ClaudeCodeProvider;
 use crate::providers::AgentProvider;
@@ -274,4 +276,149 @@ pub async fn sync_jira_issues(pool: State<'_, DbPool>) -> std::result::Result<us
 pub fn list_jira_issues(pool: State<DbPool>) -> std::result::Result<Vec<JiraIssue>, String> {
   let conn = pool.get().map_err(|e| e.to_string())?;
   jira_issues::list(&conn).map_err(|e| e.to_string())
+}
+
+// Sandboxes ------------------------------------------------------------
+//
+// A sandbox is a Docker container running a fixed dev-tools image, bound
+// either directly to a project's repo_path ("mount" mode) or to a fresh
+// clone of it ("clone" mode). Errors are stringified rather than using
+// `db::error::Error`/`Result` since they can originate from `docker::Error`
+// too, matching the existing pattern used by the Jira commands above.
+
+const SANDBOX_MEMORY_MB: u32 = 2048;
+const SANDBOX_IMAGE: &str = "mcr.microsoft.com/devcontainers/universal";
+const SANDBOX_CONTAINER_WORKDIR: &str = "/workspaces/project";
+const SANDBOX_CONTAINER_PORT: u16 = 8080;
+
+fn sandboxes_dir(app: &AppHandle) -> std::result::Result<PathBuf, String> {
+  let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("sandboxes");
+  std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+  Ok(dir)
+}
+
+fn check_free_memory() -> std::result::Result<(), String> {
+  let free_mb = crate::docker::host_free_memory_mb();
+  if free_mb < SANDBOX_MEMORY_MB as f64 {
+    return Err(format!(
+      "not enough free memory to start a sandbox: {free_mb:.0}MB free, {SANDBOX_MEMORY_MB}MB required"
+    ));
+  }
+  Ok(())
+}
+
+#[tauri::command]
+pub async fn docker_health_check(app: AppHandle) -> std::result::Result<(), String> {
+  crate::docker::info(&app).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn list_sandboxes(pool: State<'_, DbPool>) -> std::result::Result<Vec<Sandbox>, String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  sandboxes::list(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn create_sandbox(
+  app: AppHandle,
+  pool: State<'_, DbPool>,
+  project_id: String,
+  mode: String,
+) -> std::result::Result<Sandbox, String> {
+  if mode != "mount" && mode != "clone" {
+    return Err(format!("invalid sandbox mode: {mode} (expected \"mount\" or \"clone\")"));
+  }
+  let pool = pool.inner().clone();
+
+  let project = {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    projects::get(&conn, &project_id).map_err(|e| e.to_string())?
+  };
+
+  if mode == "mount" {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    let existing = sandboxes::list_for_project(&conn, &project_id).map_err(|e| e.to_string())?;
+    if existing.iter().any(|s| s.mode == "mount" && matches!(s.status.as_str(), "starting" | "running")) {
+      return Err("a mount-mode sandbox is already running for this project".to_string());
+    }
+  }
+
+  check_free_memory()?;
+
+  let sandbox = {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    let initial_folder = if mode == "mount" { Some(project.repo_path.as_str()) } else { None };
+    sandboxes::create(&conn, &project_id, &mode, initial_folder).map_err(|e| e.to_string())?
+  };
+
+  let folder_path = if mode == "clone" {
+    let target = sandboxes_dir(&app)?.join(&sandbox.id);
+    crate::docker::clone_repo(&app, &project.repo_path, &target).await.map_err(|e| e.to_string())?;
+    let path = target.to_string_lossy().to_string();
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    sandboxes::set_folder_path(&conn, &sandbox.id, &path).map_err(|e| e.to_string())?;
+    path
+  } else {
+    project.repo_path.clone()
+  };
+
+  let host_port = crate::docker::find_free_port().map_err(|e| e.to_string())?;
+  let opts = crate::docker::RunOptions {
+    image: SANDBOX_IMAGE,
+    name: &format!("overnight-sandbox-{}", sandbox.id),
+    mount: (&folder_path, SANDBOX_CONTAINER_WORKDIR),
+    host_port,
+    container_port: SANDBOX_CONTAINER_PORT,
+    memory_mb: SANDBOX_MEMORY_MB,
+  };
+  let container_id = crate::docker::run_container(&app, &opts).await.map_err(|e| e.to_string())?;
+
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  sandboxes::update_status(&conn, &sandbox.id, "running", Some(&container_id), Some(host_port as i64))
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn stop_sandbox(app: AppHandle, pool: State<'_, DbPool>, id: String) -> std::result::Result<Sandbox, String> {
+  let pool = pool.inner().clone();
+  let sandbox = {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    sandboxes::get(&conn, &id).map_err(|e| e.to_string())?
+  };
+  let container_id = sandbox.container_id.ok_or_else(|| "sandbox has no container to stop".to_string())?;
+  crate::docker::stop(&app, &container_id).await.map_err(|e| e.to_string())?;
+
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  sandboxes::update_status(&conn, &id, "stopped", None, None).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn start_sandbox(app: AppHandle, pool: State<'_, DbPool>, id: String) -> std::result::Result<Sandbox, String> {
+  let pool = pool.inner().clone();
+  let sandbox = {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    sandboxes::get(&conn, &id).map_err(|e| e.to_string())?
+  };
+  let container_id = sandbox.container_id.ok_or_else(|| "sandbox has no container to start".to_string())?;
+
+  check_free_memory()?;
+  crate::docker::start(&app, &container_id).await.map_err(|e| e.to_string())?;
+
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  sandboxes::update_status(&conn, &id, "running", None, None).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_sandbox(app: AppHandle, pool: State<'_, DbPool>, id: String) -> std::result::Result<(), String> {
+  let pool = pool.inner().clone();
+  let sandbox = {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    sandboxes::get(&conn, &id).map_err(|e| e.to_string())?
+  };
+  if let Some(container_id) = sandbox.container_id {
+    crate::docker::rm(&app, &container_id).await.map_err(|e| e.to_string())?;
+  }
+
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  sandboxes::delete(&conn, &id).map_err(|e| e.to_string())
 }

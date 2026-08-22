@@ -17,9 +17,6 @@ pub mod metrics;
 pub mod migrations;
 pub mod models;
 pub mod projects;
-// Not yet consumed — no Tauri commands wire into sandbox lifecycle yet
-// (lands in a later Sandboxes-page step).
-#[allow(dead_code)]
 pub mod sandboxes;
 pub mod sessions;
 pub mod settings;
