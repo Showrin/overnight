@@ -20,6 +20,8 @@ pub mod jira_issues;
 pub mod metrics;
 pub mod migrations;
 pub mod models;
+#[allow(dead_code)]
+pub mod projects;
 pub mod sessions;
 pub mod settings;
 pub mod tasks;
