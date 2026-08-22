@@ -97,17 +97,24 @@ tracking, sandbox orchestration) never talks to a specific agent CLI
 directly.
 
 ```rust
-trait AgentProvider {
+trait AgentProvider: Send + Sync {
     fn launch_plan_session(&self, /* ... */) -> Result<SessionHandle>;
     fn launch_autonomous_session(&self, /* ... */) -> Result<SessionHandle>;
-    fn stream_events(&self, handle: &SessionHandle) -> impl Stream<Item = AgentEvent>;
-    fn stop(&self, handle: &SessionHandle) -> Result<()>;
+    fn stream_events(&self, handle: &SessionHandle, /* ... */) -> Pin<Box<dyn Stream<Item = AgentEvent> + Send>>;
+    fn stop(&self, handle: &mut SessionHandle) -> Result<()>;
     fn resume(&self, provider_session_id: &str, /* ... */) -> Result<SessionHandle>;
     fn capture_plan(&self, handle: &SessionHandle) -> Result<Plan>;
     fn get_usage(&self, handle: &SessionHandle) -> Result<Usage>;
     fn supports(&self, capability: Capability) -> bool;
 }
 ```
+
+**Why the boxed stream**: `impl Stream` in a trait method isn't object-safe on
+stable Rust, but the provider for a given session is chosen at runtime from
+`sessions.agent_provider` (a plain string column) — callers need
+`Box<dyn AgentProvider>`, which requires every method signature to be
+object-safe. `stream_events` therefore returns a boxed, pinned stream
+instead of `impl Stream`.
 
 - `SessionHandle` is opaque to callers — it wraps whatever the provider
   needs internally (process handle, provider session id, etc.), and is what
