@@ -51,7 +51,6 @@ pub fn list_for_task(conn: &Connection, task_id: &str) -> Result<Vec<Session>> {
   Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
-#[allow(dead_code)] // consumed by OVN-53's resume() once the AgentProvider trait lands
 pub fn set_provider_session_id(conn: &Connection, id: &str, provider_session_id: &str) -> Result<Session> {
   let changed = conn.execute(
     "UPDATE sessions SET provider_session_id = ?1 WHERE id = ?2",
