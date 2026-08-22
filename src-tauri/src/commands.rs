@@ -350,9 +350,32 @@ pub async fn create_sandbox(
     sandboxes::create(&conn, &project_id, &mode, initial_folder).map_err(|e| e.to_string())?
   };
 
+  // From here on the sandbox row already exists (status "starting"). If
+  // anything below fails — including a slow/failed image pull inside
+  // run_container, which can take a long time for a multi-GB image like
+  // SANDBOX_IMAGE — mark the row "error" instead of leaving it stuck at
+  // "starting" forever with no signal that it didn't work.
+  match provision_sandbox(&app, &pool, &project, &sandbox, &mode).await {
+    Ok(result) => Ok(result),
+    Err(e) => {
+      if let Ok(conn) = pool.get() {
+        let _ = sandboxes::update_status(&conn, &sandbox.id, "error", None, None);
+      }
+      Err(e)
+    }
+  }
+}
+
+async fn provision_sandbox(
+  app: &AppHandle,
+  pool: &DbPool,
+  project: &Project,
+  sandbox: &Sandbox,
+  mode: &str,
+) -> std::result::Result<Sandbox, String> {
   let folder_path = if mode == "clone" {
-    let target = sandboxes_dir(&app)?.join(&sandbox.id);
-    crate::docker::clone_repo(&app, &project.repo_path, &target).await.map_err(|e| e.to_string())?;
+    let target = sandboxes_dir(app)?.join(&sandbox.id);
+    crate::docker::clone_repo(app, &project.repo_path, &target).await.map_err(|e| e.to_string())?;
     let path = target.to_string_lossy().to_string();
     let conn = pool.get().map_err(|e| e.to_string())?;
     sandboxes::set_folder_path(&conn, &sandbox.id, &path).map_err(|e| e.to_string())?;
@@ -370,7 +393,7 @@ pub async fn create_sandbox(
     container_port: SANDBOX_CONTAINER_PORT,
     memory_mb: SANDBOX_MEMORY_MB,
   };
-  let container_id = crate::docker::run_container(&app, &opts).await.map_err(|e| e.to_string())?;
+  let container_id = crate::docker::run_container(app, &opts).await.map_err(|e| e.to_string())?;
 
   let conn = pool.get().map_err(|e| e.to_string())?;
   sandboxes::update_status(&conn, &sandbox.id, "running", Some(&container_id), Some(host_port as i64))

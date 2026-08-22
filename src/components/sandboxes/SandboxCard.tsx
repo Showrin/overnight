@@ -83,7 +83,13 @@ export function SandboxCard({
         <CardTitle>{projectName}</CardTitle>
         <div className="flex gap-2">
           <Badge variant="outline">{sandbox.mode}</Badge>
-          <Badge variant={sandbox.status === 'running' ? 'default' : 'secondary'}>{sandbox.status}</Badge>
+          <Badge
+            variant={
+              sandbox.status === 'running' ? 'default' : sandbox.status === 'error' ? 'destructive' : 'secondary'
+            }
+          >
+            {sandbox.status}
+          </Badge>
         </div>
       </CardHeader>
       <CardContent className="flex flex-col gap-3 text-sm text-muted-foreground">
