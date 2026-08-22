@@ -8,8 +8,7 @@ use crate::db::error::Result;
 
 // Not yet consumed by commands.rs — these are exercised by their own unit
 // tests and will be wired up by OVN-19 (activity) and OVN-53 (metrics,
-// container_metrics) once those tickets land. Settings will get commands
-// once OVN-55 (Settings UI) consumes it.
+// container_metrics) once those tickets land.
 #[allow(dead_code)]
 pub mod activity;
 #[allow(dead_code)]
@@ -20,7 +19,6 @@ pub mod jira_issues;
 pub mod metrics;
 pub mod migrations;
 pub mod models;
-#[allow(dead_code)]
 pub mod projects;
 pub mod sessions;
 pub mod settings;

@@ -24,6 +24,12 @@ pub fn run() {
       commands::get_jira_config,
       commands::sync_jira_issues,
       commands::list_jira_issues,
+      commands::list_projects,
+      commands::create_project,
+      commands::update_project,
+      commands::delete_project,
+      commands::get_settings,
+      commands::save_settings,
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {
@@ -45,6 +51,7 @@ pub fn run() {
           "container_metrics",
           "settings",
           "jira_issues",
+          "projects",
         ];
         for table in table_names {
           let count: i64 = conn.query_row(&format!("SELECT count(*) FROM {table}"), [], |row| row.get(0))?;
