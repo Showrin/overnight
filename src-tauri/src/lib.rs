@@ -42,6 +42,10 @@ pub fn run() {
       commands::stop_sandbox,
       commands::start_sandbox,
       commands::delete_sandbox,
+      commands::get_sandbox_metrics,
+      commands::stream_sandbox_logs,
+      commands::open_sandbox_vscode,
+      commands::open_sandbox_terminal,
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {

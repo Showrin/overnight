@@ -7,9 +7,6 @@ use tauri::{AppHandle, Manager};
 use crate::db::error::Result;
 
 pub mod activity;
-// Not yet consumed — sandbox/container orchestration isn't built, so no
-// caller records container resource usage yet.
-#[allow(dead_code)]
 pub mod container_metrics;
 pub mod error;
 pub mod jira_issues;

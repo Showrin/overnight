@@ -4,8 +4,8 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
 use crate::db::error::{Error, Result};
-use crate::db::models::{JiraIssue, Project, Sandbox, Session, Task};
-use crate::db::{jira_issues, projects, sandboxes, sessions, settings, tasks, DbPool};
+use crate::db::models::{ContainerMetric, JiraIssue, Project, Sandbox, Session, Task};
+use crate::db::{container_metrics, jira_issues, projects, sandboxes, sessions, settings, tasks, DbPool};
 use crate::jira::{self, JiraClient};
 use crate::providers::claude_code::ClaudeCodeProvider;
 use crate::providers::AgentProvider;
@@ -421,4 +421,98 @@ pub async fn delete_sandbox(app: AppHandle, pool: State<'_, DbPool>, id: String)
 
   let conn = pool.get().map_err(|e| e.to_string())?;
   sandboxes::delete(&conn, &id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_sandbox_metrics(
+  app: AppHandle,
+  pool: State<'_, DbPool>,
+  id: String,
+) -> std::result::Result<ContainerMetric, String> {
+  let pool = pool.inner().clone();
+  let sandbox = {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    sandboxes::get(&conn, &id).map_err(|e| e.to_string())?
+  };
+  let container_id = sandbox.container_id.ok_or_else(|| "sandbox has no running container".to_string())?;
+  let stats = crate::docker::stats(&app, &container_id).await.map_err(|e| e.to_string())?;
+
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  container_metrics::record_for_sandbox(
+    &conn,
+    &id,
+    stats.cpu_percent,
+    stats.memory_mb,
+    stats.network_rx_bytes,
+    stats.network_tx_bytes,
+  )
+  .map_err(|e| e.to_string())
+}
+
+#[derive(Clone, Serialize)]
+struct SandboxLogLine {
+  sandbox_id: String,
+  line: String,
+}
+
+/// Starts a background task streaming `docker logs -f` for a sandbox's
+/// container, emitting each line as a `sandbox-log` webview event. Returns
+/// immediately once the stream is set up — the frontend's LogsPanel
+/// subscribes to the event rather than polling this command.
+#[tauri::command]
+pub fn stream_sandbox_logs(app: AppHandle, pool: State<DbPool>, id: String) -> std::result::Result<(), String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  let sandbox = sandboxes::get(&conn, &id).map_err(|e| e.to_string())?;
+  let container_id = sandbox.container_id.ok_or_else(|| "sandbox has no running container".to_string())?;
+
+  let spawned = crate::docker::logs_stream(&app, &container_id).map_err(|e| e.to_string())?;
+  let bg_app = app.clone();
+  let sandbox_id = id.clone();
+  tauri::async_runtime::spawn(async move {
+    use futures::StreamExt;
+    let mut lines = spawned.stdout_lines;
+    while let Some(line) = lines.next().await {
+      crate::process::emit_to_webview(&bg_app, "sandbox-log", SandboxLogLine { sandbox_id: sandbox_id.clone(), line });
+    }
+  });
+  Ok(())
+}
+
+#[tauri::command]
+pub fn open_sandbox_vscode(pool: State<DbPool>, id: String) -> std::result::Result<(), String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  let sandbox = sandboxes::get(&conn, &id).map_err(|e| e.to_string())?;
+  let folder = sandbox.folder_path.ok_or_else(|| "sandbox has no folder to open".to_string())?;
+  std::process::Command::new("code").arg(&folder).spawn().map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+#[tauri::command]
+pub fn open_sandbox_terminal(pool: State<DbPool>, id: String) -> std::result::Result<(), String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  let sandbox = sandboxes::get(&conn, &id).map_err(|e| e.to_string())?;
+  let container_id = sandbox.container_id.ok_or_else(|| "sandbox has no running container".to_string())?;
+
+  #[cfg(target_os = "windows")]
+  {
+    std::process::Command::new("cmd")
+      .args(["/C", "start", "cmd", "/K", &format!("docker exec -it {container_id} bash")])
+      .spawn()
+      .map_err(|e| e.to_string())?;
+  }
+  #[cfg(target_os = "macos")]
+  {
+    let script = format!("tell application \"Terminal\" to do script \"docker exec -it {container_id} bash\"");
+    std::process::Command::new("osascript").arg("-e").arg(script).spawn().map_err(|e| e.to_string())?;
+  }
+  #[cfg(target_os = "linux")]
+  {
+    std::process::Command::new("x-terminal-emulator")
+      .arg("-e")
+      .arg(format!("docker exec -it {container_id} bash"))
+      .spawn()
+      .map_err(|e| e.to_string())?;
+  }
+
+  Ok(())
 }
