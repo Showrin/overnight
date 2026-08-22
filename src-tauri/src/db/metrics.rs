@@ -51,6 +51,18 @@ pub fn total_tokens_for_session(conn: &Connection, session_id: &str) -> Result<(
     .map_err(Into::into)
 }
 
+pub fn total_tokens_for_sandbox(conn: &Connection, sandbox_id: &str) -> Result<(i64, i64)> {
+  conn
+    .query_row(
+      "SELECT COALESCE(SUM(m.tokens_input), 0), COALESCE(SUM(m.tokens_output), 0)
+       FROM metrics m JOIN sessions s ON s.id = m.session_id
+       WHERE s.sandbox_id = ?1",
+      params![sandbox_id],
+      |row| Ok((row.get(0)?, row.get(1)?)),
+    )
+    .map_err(Into::into)
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -76,5 +88,27 @@ mod tests {
     let (input, output) = total_tokens_for_session(&conn, &session_id).unwrap();
     assert_eq!(input, 300);
     assert_eq!(output, 125);
+  }
+
+  #[test]
+  fn sums_tokens_for_sandbox_across_sessions() {
+    let conn = test_conn();
+    let task = tasks::create(&conn, "Task", None, None, "todo", None).unwrap();
+    let project = crate::db::projects::create(&conn, "Overnight", "/repo/overnight", None, None, &[]).unwrap();
+    let sandbox = crate::db::sandboxes::create(&conn, &project.id, "mount", None).unwrap();
+
+    let session_a = sessions::create(&conn, &task.id, "claude_code", "autonomous", None).unwrap();
+    sessions::set_sandbox_id(&conn, &session_a.id, &sandbox.id).unwrap();
+    let session_b = sessions::create(&conn, &task.id, "claude_code", "autonomous", None).unwrap();
+    sessions::set_sandbox_id(&conn, &session_b.id, &sandbox.id).unwrap();
+    let unrelated_session = sessions::create(&conn, &task.id, "claude_code", "plan", None).unwrap();
+
+    record(&conn, &session_a.id, 100, 50, None, None).unwrap();
+    record(&conn, &session_b.id, 20, 10, None, None).unwrap();
+    record(&conn, &unrelated_session.id, 999, 999, None, None).unwrap();
+
+    let (input, output) = total_tokens_for_sandbox(&conn, &sandbox.id).unwrap();
+    assert_eq!(input, 120);
+    assert_eq!(output, 60);
   }
 }

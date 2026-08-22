@@ -28,6 +28,11 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// Working directory inside every sandbox container — the project/clone
+/// folder is bind-mounted here, and `docker exec -w` uses it too so agent
+/// sessions run against the right files.
+pub const CONTAINER_WORKDIR: &str = "/workspaces/project";
+
 async fn run<R: Runtime>(app: &AppHandle<R>, program: &str, args: &[&str]) -> Result<String> {
   let output = app.shell().command(program).args(args).output().await?;
   if !output.status.success() {

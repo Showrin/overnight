@@ -142,6 +142,11 @@ pub fn migrations() -> Migrations<'static> {
     CREATE INDEX ix_container_metrics_session_captured ON container_metrics(session_id, captured_at);
     CREATE INDEX ix_container_metrics_sandbox_captured ON container_metrics(sandbox_id, captured_at);
     ",
+  ), M::up(
+    "
+    ALTER TABLE sessions ADD COLUMN sandbox_id TEXT REFERENCES sandboxes(id) ON DELETE SET NULL;
+    CREATE INDEX ix_sessions_sandbox_id ON sessions(sandbox_id);
+    ",
   )])
 }
 

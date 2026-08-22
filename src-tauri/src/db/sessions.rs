@@ -16,6 +16,7 @@ fn row_to_session(row: &rusqlite::Row) -> rusqlite::Result<Session> {
     ended_at: row.get("ended_at")?,
     transcript_path: row.get("transcript_path")?,
     plan_path: row.get("plan_path")?,
+    sandbox_id: row.get("sandbox_id")?,
   })
 }
 
@@ -49,6 +50,14 @@ pub fn list_for_task(conn: &Connection, task_id: &str) -> Result<Vec<Session>> {
   let mut stmt = conn.prepare("SELECT * FROM sessions WHERE task_id = ?1 ORDER BY started_at DESC")?;
   let rows = stmt.query_map(params![task_id], row_to_session)?;
   Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+pub fn set_sandbox_id(conn: &Connection, id: &str, sandbox_id: &str) -> Result<Session> {
+  let changed = conn.execute("UPDATE sessions SET sandbox_id = ?1 WHERE id = ?2", params![sandbox_id, id])?;
+  if changed == 0 {
+    return Err(Error::NotFound);
+  }
+  get(conn, id)
 }
 
 pub fn set_provider_session_id(conn: &Connection, id: &str, provider_session_id: &str) -> Result<Session> {
@@ -105,6 +114,18 @@ mod tests {
     let ended = end(&conn, &session.id, "completed").unwrap();
     assert_eq!(ended.status, "completed");
     assert!(ended.ended_at.is_some());
+  }
+
+  #[test]
+  fn set_sandbox_id_links_session_to_sandbox() {
+    let conn = test_conn();
+    let task_id = make_task(&conn);
+    let project = crate::db::projects::create(&conn, "Overnight", "/repo/overnight", None, None, &[]).unwrap();
+    let sandbox = crate::db::sandboxes::create(&conn, &project.id, "mount", None).unwrap();
+    let session = create(&conn, &task_id, "claude_code", "autonomous", None).unwrap();
+
+    let linked = set_sandbox_id(&conn, &session.id, &sandbox.id).unwrap();
+    assert_eq!(linked.sandbox_id.as_deref(), Some(sandbox.id.as_str()));
   }
 
   #[test]

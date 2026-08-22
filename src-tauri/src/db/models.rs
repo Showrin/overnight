@@ -27,6 +27,9 @@ pub struct Session {
   pub ended_at: Option<i64>,
   pub transcript_path: Option<String>,
   pub plan_path: Option<String>,
+  /// Set when this session ran inside a sandbox's container (via
+  /// `docker exec`) rather than directly on the host.
+  pub sandbox_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -5,7 +5,7 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::db::error::{Error, Result};
 use crate::db::models::{ContainerMetric, JiraIssue, Project, Sandbox, Session, Task};
-use crate::db::{container_metrics, jira_issues, projects, sandboxes, sessions, settings, tasks, DbPool};
+use crate::db::{container_metrics, jira_issues, metrics, projects, sandboxes, sessions, settings, tasks, DbPool};
 use crate::jira::{self, JiraClient};
 use crate::providers::claude_code::ClaudeCodeProvider;
 use crate::providers::AgentProvider;
@@ -288,7 +288,6 @@ pub fn list_jira_issues(pool: State<DbPool>) -> std::result::Result<Vec<JiraIssu
 
 const SANDBOX_MEMORY_MB: u32 = 2048;
 const SANDBOX_IMAGE: &str = "mcr.microsoft.com/devcontainers/universal";
-const SANDBOX_CONTAINER_WORKDIR: &str = "/workspaces/project";
 const SANDBOX_CONTAINER_PORT: u16 = 8080;
 
 fn sandboxes_dir(app: &AppHandle) -> std::result::Result<PathBuf, String> {
@@ -366,7 +365,7 @@ pub async fn create_sandbox(
   let opts = crate::docker::RunOptions {
     image: SANDBOX_IMAGE,
     name: &format!("overnight-sandbox-{}", sandbox.id),
-    mount: (&folder_path, SANDBOX_CONTAINER_WORKDIR),
+    mount: (&folder_path, crate::docker::CONTAINER_WORKDIR),
     host_port,
     container_port: SANDBOX_CONTAINER_PORT,
     memory_mb: SANDBOX_MEMORY_MB,
@@ -476,6 +475,21 @@ pub fn stream_sandbox_logs(app: AppHandle, pool: State<DbPool>, id: String) -> s
     }
   });
   Ok(())
+}
+
+#[derive(Serialize)]
+pub struct SandboxUsage {
+  pub input_tokens: i64,
+  pub output_tokens: i64,
+}
+
+/// Sums token usage across every agent session that ran inside this
+/// sandbox's container (see `providers::claude_code::launch_autonomous_session`).
+#[tauri::command]
+pub fn get_sandbox_usage(pool: State<DbPool>, id: String) -> std::result::Result<SandboxUsage, String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  let (input_tokens, output_tokens) = metrics::total_tokens_for_sandbox(&conn, &id).map_err(|e| e.to_string())?;
+  Ok(SandboxUsage { input_tokens, output_tokens })
 }
 
 #[tauri::command]

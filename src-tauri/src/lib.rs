@@ -43,6 +43,7 @@ pub fn run() {
       commands::start_sandbox,
       commands::delete_sandbox,
       commands::get_sandbox_metrics,
+      commands::get_sandbox_usage,
       commands::stream_sandbox_logs,
       commands::open_sandbox_vscode,
       commands::open_sandbox_terminal,

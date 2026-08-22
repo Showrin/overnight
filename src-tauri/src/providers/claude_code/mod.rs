@@ -65,16 +65,45 @@ impl AgentProvider for ClaudeCodeProvider {
     self.spawn_session(app, pool, task_id, None, prompt, &[])
   }
 
-  fn launch_autonomous_session(
-    &self,
-    _app: &AppHandle,
-    _pool: &DbPool,
-    _task_id: &str,
-    _prompt: &str,
-  ) -> Result<SessionHandle> {
-    Err(Error::NotImplemented(
-      "launch_autonomous_session: sandbox orchestration isn't built yet (see ARCHITECTURE.md's sandbox parameterization section)",
-    ))
+  fn launch_autonomous_session(&self, app: &AppHandle, pool: &DbPool, task_id: &str, prompt: &str) -> Result<SessionHandle> {
+    let conn = pool.get().map_err(db::error::Error::from)?;
+    let task = db::tasks::get(&conn, task_id)?;
+    let project_id = task
+      .project_id
+      .ok_or_else(|| Error::InvalidState("task has no project; can't find a sandbox to run in".to_string()))?;
+    let sandbox = db::sandboxes::list_for_project(&conn, &project_id)?
+      .into_iter()
+      .find(|s| s.status == "running")
+      .ok_or_else(|| Error::InvalidState("no running sandbox for this task's project".to_string()))?;
+    let container_id = sandbox
+      .container_id
+      .clone()
+      .ok_or_else(|| Error::InvalidState(format!("sandbox {} has no container", sandbox.id)))?;
+
+    let args = vec![
+      "exec".to_string(),
+      "-w".to_string(),
+      crate::docker::CONTAINER_WORKDIR.to_string(),
+      container_id,
+      CLAUDE_BIN.to_string(),
+      "-p".to_string(),
+      prompt.to_string(),
+      "--output-format".to_string(),
+      "stream-json".to_string(),
+      "--permission-mode".to_string(),
+      "bypassPermissions".to_string(),
+      "--verbose".to_string(),
+    ];
+
+    let spawned = crate::process::spawn(app, "docker", &args, None)?;
+    let session = db::sessions::create(&conn, task_id, PROVIDER_NAME, "autonomous", None)?;
+    db::sessions::set_sandbox_id(&conn, &session.id, &sandbox.id)?;
+
+    Ok(SessionHandle {
+      session_id: session.id,
+      child: Some(spawned.child),
+      stdout_lines: Mutex::new(Some(spawned.stdout_lines)),
+    })
   }
 
   fn stream_events(
