@@ -1,5 +1,9 @@
 mod commands;
 mod db;
+// Not yet consumed — no Tauri commands wire into it yet (lands in a later
+// Sandboxes-page step).
+#[allow(dead_code)]
+mod docker;
 mod jira;
 mod process;
 mod providers;

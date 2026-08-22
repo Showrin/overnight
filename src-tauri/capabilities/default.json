@@ -18,7 +18,9 @@
     {
       "identifier": "shell:allow-execute",
       "allow": [
-        { "name": "claude", "cmd": "claude", "args": true }
+        { "name": "claude", "cmd": "claude", "args": true },
+        { "name": "docker", "cmd": "docker", "args": true },
+        { "name": "git", "cmd": "git", "args": true }
       ]
     }
   ]
