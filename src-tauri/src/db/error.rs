@@ -12,6 +12,10 @@ pub enum Error {
   Json(#[from] serde_json::Error),
   #[error("not found")]
   NotFound,
+  #[error("not a git repository: {0}")]
+  InvalidRepoPath(String),
+  #[error("invalid value: {0}")]
+  InvalidValue(String),
 }
 
 // Tauri commands require their Err type to implement Serialize to cross IPC.
