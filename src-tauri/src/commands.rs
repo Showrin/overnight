@@ -1,10 +1,12 @@
 use serde::Serialize;
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::db::error::{Error, Result};
 use crate::db::models::{JiraIssue, Project, Session, Task};
 use crate::db::{jira_issues, projects, sessions, settings, tasks, DbPool};
 use crate::jira::{self, JiraClient};
+use crate::providers::claude_code::ClaudeCodeProvider;
+use crate::providers::AgentProvider;
 
 #[tauri::command]
 pub fn list_tasks(pool: State<DbPool>) -> Result<Vec<Task>> {
@@ -75,6 +77,40 @@ pub fn list_sessions_for_task(pool: State<DbPool>, task_id: String) -> Result<Ve
 pub fn end_session(pool: State<DbPool>, id: String, status: String) -> Result<Session> {
   let conn = pool.get()?;
   sessions::end(&conn, &id, &status)
+}
+
+// No chat UI consumes this yet — it exists so OVN-19/OVN-53 can be
+// smoke-tested end-to-end via devtools (`invoke`) before the UI lands.
+// Errors are stringified (rather than using `db::error::Error`/`Result`)
+// since they can originate from `providers::Error` too, matching the
+// existing pattern used by the Jira commands below.
+#[tauri::command]
+pub fn start_plan_session(
+  app: AppHandle,
+  pool: State<DbPool>,
+  task_id: String,
+  prompt: String,
+) -> std::result::Result<Session, String> {
+  let pool = pool.inner().clone();
+  let provider = ClaudeCodeProvider;
+
+  let handle = provider.launch_plan_session(&app, &pool, &task_id, &prompt).map_err(|e| e.to_string())?;
+
+  let session = {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    sessions::get(&conn, &handle.session_id).map_err(|e| e.to_string())?
+  };
+
+  let bg_app = app.clone();
+  let bg_pool = pool.clone();
+  tauri::async_runtime::spawn(async move {
+    use futures::StreamExt;
+    let provider = ClaudeCodeProvider;
+    let mut events = provider.stream_events(&bg_app, &bg_pool, &handle);
+    while events.next().await.is_some() {}
+  });
+
+  Ok(session)
 }
 
 fn validate_repo_path(repo_path: &str) -> Result<()> {

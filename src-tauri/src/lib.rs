@@ -1,11 +1,7 @@
 mod commands;
 mod db;
 mod jira;
-// Not yet consumed by commands.rs — exercised by their own unit tests and
-// wired up once OVN-53's ClaudeCodeProvider + Tauri command land.
-#[allow(dead_code)]
 mod process;
-#[allow(dead_code)]
 mod providers;
 
 use tauri::menu::{Menu, MenuItem};
@@ -38,6 +34,7 @@ pub fn run() {
       commands::delete_project,
       commands::get_settings,
       commands::save_settings,
+      commands::start_plan_session,
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {

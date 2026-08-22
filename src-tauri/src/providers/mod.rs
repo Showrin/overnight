@@ -20,8 +20,12 @@ pub enum Error {
   Process(#[from] crate::process::Error),
   #[error("db error: {0}")]
   Db(#[from] crate::db::error::Error),
+  // Constructed by `stop()`/`launch_autonomous_session()`, which no caller
+  // reaches yet — see the trait-level dead_code note below.
+  #[allow(dead_code)]
   #[error("not implemented: {0}")]
   NotImplemented(&'static str),
+  #[allow(dead_code)]
   #[error("invalid state: {0}")]
   InvalidState(String),
 }
@@ -33,6 +37,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// note in ARCHITECTURE.md. Only capabilities an existing trait method
 /// already exposes belong here; this is not a place to speculate about
 /// features no code path uses yet.
+// Only `ClaudeCodeProvider::supports()` constructs/matches these today — a
+// real caller (capability-aware UI) lands with the chat UI ticket.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Capability {
   Resume,
@@ -51,15 +58,23 @@ pub enum AgentEvent {
   ToolUse { id: String, name: String, input: serde_json::Value },
   ToolResult { tool_use_id: String, output: serde_json::Value },
   Usage { input_tokens: i64, output_tokens: i64, cost_usd: Option<f64>, model: Option<String> },
+  // Reserved for translation-layer failures (e.g. a stream-json line that
+  // parses but doesn't match any known shape); no such case has arisen yet.
+  #[allow(dead_code)]
   Error { message: String },
   SessionEnded { status: String },
 }
 
+// Return types of `capture_plan`/`get_usage`, which no caller reaches yet
+// (no chat UI to show a captured plan or usage numbers) — see the
+// trait-level dead_code note below.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Plan {
   pub content: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Usage {
   pub input_tokens: i64,
@@ -73,7 +88,9 @@ pub struct Usage {
 pub struct SessionHandle {
   /// `sessions.id` (our db row), not the provider's own session id.
   pub session_id: String,
-  /// `None` once `stop()` has taken and killed it.
+  /// `None` once `stop()` has taken and killed it. Not yet read anywhere
+  /// but by `stop()` itself, which no caller reaches yet (see below).
+  #[allow(dead_code)]
   pub(crate) child: Option<tauri_plugin_shell::process::CommandChild>,
   /// Taken (via `Mutex::lock().take()`) the first time `stream_events` is
   /// called — a process's stdout can only be consumed once.
@@ -83,6 +100,13 @@ pub struct SessionHandle {
 pub trait AgentProvider: Send + Sync {
   fn launch_plan_session(&self, app: &AppHandle, pool: &DbPool, task_id: &str, prompt: &str) -> Result<SessionHandle>;
 
+  // The methods below aren't reachable from `commands.rs` yet — there's no
+  // chat UI to trigger stop/resume, show a captured plan, display usage,
+  // or adapt to per-provider capabilities. They're implemented and unit
+  // tested (see `providers::claude_code`) against ARCHITECTURE.md's target
+  // trait shape now, so that ticket can wire them up directly instead of
+  // re-deriving this layer.
+  #[allow(dead_code)]
   fn launch_autonomous_session(
     &self,
     app: &AppHandle,
@@ -98,9 +122,10 @@ pub trait AgentProvider: Send + Sync {
     handle: &SessionHandle,
   ) -> Pin<Box<dyn Stream<Item = AgentEvent> + Send>>;
 
+  #[allow(dead_code)]
   fn stop(&self, handle: &mut SessionHandle) -> Result<()>;
 
-  #[allow(clippy::too_many_arguments)]
+  #[allow(dead_code, clippy::too_many_arguments)]
   fn resume(
     &self,
     app: &AppHandle,
@@ -111,9 +136,12 @@ pub trait AgentProvider: Send + Sync {
     prompt: &str,
   ) -> Result<SessionHandle>;
 
+  #[allow(dead_code)]
   fn capture_plan(&self, pool: &DbPool, handle: &SessionHandle) -> Result<Plan>;
 
+  #[allow(dead_code)]
   fn get_usage(&self, pool: &DbPool, handle: &SessionHandle) -> Result<Usage>;
 
+  #[allow(dead_code)]
   fn supports(&self, capability: Capability) -> bool;
 }
