@@ -2,6 +2,8 @@
 //! any particular agent CLI. `providers/claude_code/` builds on top of this;
 //! this module must never gain Claude-specific behavior.
 
+pub mod json_lines;
+
 use std::path::Path;
 use std::pin::Pin;
 
