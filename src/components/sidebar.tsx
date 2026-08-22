@@ -1,10 +1,11 @@
-import { FolderGit2, LayoutDashboard, Settings } from 'lucide-react'
+import { Box, FolderGit2, LayoutDashboard, Settings } from 'lucide-react'
 
-export type Screen = 'dashboard' | 'projects' | 'settings'
+export type Screen = 'dashboard' | 'projects' | 'sandboxes' | 'settings'
 
 const items: { screen: Screen; label: string; icon: typeof LayoutDashboard }[] = [
   { screen: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { screen: 'projects', label: 'Projects', icon: FolderGit2 },
+  { screen: 'sandboxes', label: 'Sandboxes', icon: Box },
   { screen: 'settings', label: 'Settings', icon: Settings },
 ]
 

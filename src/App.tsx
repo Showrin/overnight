@@ -3,6 +3,7 @@ import { Titlebar } from '@/components/titlebar'
 import { Sidebar, type Screen } from '@/components/sidebar'
 import { JiraIssueList } from '@/components/dashboard/JiraIssueList'
 import { ProjectsScreen } from '@/components/projects/ProjectsScreen'
+import { SandboxesScreen } from '@/components/sandboxes/SandboxesScreen'
 import { SettingsScreen } from '@/components/settings/SettingsScreen'
 
 function App() {
@@ -20,6 +21,7 @@ function App() {
             </div>
           )}
           {screen === 'projects' && <ProjectsScreen />}
+          {screen === 'sandboxes' && <SandboxesScreen />}
           {screen === 'settings' && <SettingsScreen />}
         </main>
       </div>
