@@ -3,7 +3,10 @@
 //! on a specific agent CLI's flags, wire format, or session-file
 //! conventions — see ARCHITECTURE.md's "AgentProvider abstraction" section.
 
+pub mod claude_code;
+
 use std::pin::Pin;
+use std::sync::Mutex;
 
 use futures::Stream;
 use serde::Serialize;
@@ -70,7 +73,11 @@ pub struct Usage {
 pub struct SessionHandle {
   /// `sessions.id` (our db row), not the provider's own session id.
   pub session_id: String,
-  pub(crate) child: tauri_plugin_shell::process::CommandChild,
+  /// `None` once `stop()` has taken and killed it.
+  pub(crate) child: Option<tauri_plugin_shell::process::CommandChild>,
+  /// Taken (via `Mutex::lock().take()`) the first time `stream_events` is
+  /// called — a process's stdout can only be consumed once.
+  pub(crate) stdout_lines: Mutex<Option<Pin<Box<dyn Stream<Item = String> + Send>>>>,
 }
 
 pub trait AgentProvider: Send + Sync {
@@ -93,7 +100,16 @@ pub trait AgentProvider: Send + Sync {
 
   fn stop(&self, handle: &mut SessionHandle) -> Result<()>;
 
-  fn resume(&self, app: &AppHandle, pool: &DbPool, provider_session_id: &str, prompt: &str) -> Result<SessionHandle>;
+  #[allow(clippy::too_many_arguments)]
+  fn resume(
+    &self,
+    app: &AppHandle,
+    pool: &DbPool,
+    task_id: &str,
+    parent_session_id: &str,
+    provider_session_id: &str,
+    prompt: &str,
+  ) -> Result<SessionHandle>;
 
   fn capture_plan(&self, pool: &DbPool, handle: &SessionHandle) -> Result<Plan>;
 
