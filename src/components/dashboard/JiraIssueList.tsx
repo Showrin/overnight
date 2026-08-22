@@ -25,10 +25,18 @@ interface JiraIssue {
 const inputClassName =
   'h-8 rounded-lg border border-border bg-background px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50'
 
-function JiraConfigForm({ onSaved }: { onSaved: () => void }) {
-  const [site, setSite] = useState('')
-  const [email, setEmail] = useState('')
-  const [jql, setJql] = useState('')
+function JiraConfigForm({
+  initial,
+  onSaved,
+  onCancel,
+}: {
+  initial: JiraConfig | null
+  onSaved: () => void
+  onCancel?: () => void
+}) {
+  const [site, setSite] = useState(initial?.site ?? '')
+  const [email, setEmail] = useState(initial?.email ?? '')
+  const [jql, setJql] = useState(initial?.jql ?? '')
   const [apiToken, setApiToken] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -43,7 +51,7 @@ function JiraConfigForm({ onSaved }: { onSaved: () => void }) {
         jql: jql.trim() ? jql : null,
         apiToken,
       })
-      onSaved()
+      await onSaved()
     } catch (e) {
       setError(String(e))
     } finally {
@@ -83,12 +91,20 @@ function JiraConfigForm({ onSaved }: { onSaved: () => void }) {
           onChange={(e) => setApiToken(e.target.value)}
         />
         {error && <p className="text-sm text-destructive">{error}</p>}
-        <Button
-          onClick={handleSave}
-          disabled={saving || !site || !email || !apiToken}
-        >
-          {saving ? 'Saving…' : 'Save'}
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            className="flex-1"
+            onClick={handleSave}
+            disabled={saving || !site || !email || !apiToken}
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </Button>
+          {onCancel && (
+            <Button variant="outline" onClick={onCancel} disabled={saving}>
+              Cancel
+            </Button>
+          )}
+        </div>
       </CardContent>
     </Card>
   )
@@ -99,6 +115,7 @@ export function JiraIssueList() {
   const [issues, setIssues] = useState<JiraIssue[]>([])
   const [syncing, setSyncing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [editing, setEditing] = useState(false)
 
   async function loadConfig() {
     const c = await invoke<JiraConfig>('get_jira_config')
@@ -132,17 +149,31 @@ export function JiraIssueList() {
 
   if (!config) return null
 
-  if (!config.has_token) {
-    return <JiraConfigForm onSaved={() => loadConfig().then(loadIssues)} />
+  if (!config.has_token || editing) {
+    return (
+      <JiraConfigForm
+        initial={config}
+        onSaved={() => {
+          setEditing(false)
+          return loadConfig().then(loadIssues)
+        }}
+        onCancel={config.has_token ? () => setEditing(false) : undefined}
+      />
+    )
   }
 
   return (
     <Card className="w-96">
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle>Jira issues</CardTitle>
-        <Button size="sm" onClick={handleSync} disabled={syncing}>
-          {syncing ? 'Syncing…' : 'Sync now'}
-        </Button>
+        <div className="flex gap-2">
+          <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
+            Edit
+          </Button>
+          <Button size="sm" onClick={handleSync} disabled={syncing}>
+            {syncing ? 'Syncing…' : 'Sync now'}
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="flex flex-col gap-2">
         {error && <p className="text-sm text-destructive">{error}</p>}

@@ -1,8 +1,16 @@
+use serde::Deserialize;
+
 use crate::jira::error::Result;
 use crate::jira::wire::{Issue, SearchRequest, SearchResponse};
 
 const SEARCH_FIELDS: [&str; 5] = ["summary", "status", "issuetype", "priority", "assignee"];
 const PAGE_SIZE: u32 = 100;
+
+#[derive(Deserialize)]
+struct TenantInfo {
+  #[serde(rename = "cloudId")]
+  cloud_id: String,
+}
 
 /// A Jira issue normalized into the shape the rest of the app (and the
 /// SQLite cache) consumes, decoupled from Jira's wire format.
@@ -34,9 +42,31 @@ impl JiraClient {
     }
   }
 
+  /// Scoped API tokens (the "API tokens with scopes" Atlassian now issues,
+  /// e.g. with `read:jira-work`) are silently ignored by the site-direct
+  /// domain: `{site}/rest/api/3/...` returns 200 with empty results instead
+  /// of an auth error. They only work through the cloud gateway, which is
+  /// addressed by cloud id rather than site hostname, so every API call
+  /// needs to go through `api.atlassian.com/ex/jira/{cloud_id}` instead.
+  /// The cloud id itself comes from this unauthenticated lookup.
+  async fn resolve_cloud_id(&self) -> Result<String> {
+    let info: TenantInfo = self
+      .http
+      .get(format!("{}/_edge/tenant_info", self.site))
+      .send()
+      .await?
+      .error_for_status()?
+      .json()
+      .await?;
+    Ok(info.cloud_id)
+  }
+
   /// Runs `jql` against `/rest/api/3/search/jql`, following `nextPageToken`
   /// until Jira reports no more pages, and returns every issue normalized.
   pub async fn search_all(&self, jql: &str) -> Result<Vec<NormalizedIssue>> {
+    let cloud_id = self.resolve_cloud_id().await?;
+    let search_url = format!("https://api.atlassian.com/ex/jira/{cloud_id}/rest/api/3/search/jql");
+
     let mut out = Vec::new();
     let mut next_page_token: Option<String> = None;
 
@@ -50,7 +80,7 @@ impl JiraClient {
 
       let response: SearchResponse = self
         .http
-        .post(format!("{}/rest/api/3/search/jql", self.site))
+        .post(&search_url)
         .basic_auth(&self.email, Some(&self.token))
         .json(&body)
         .send()
