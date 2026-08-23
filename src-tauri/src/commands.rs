@@ -513,12 +513,21 @@ pub async fn open_sandbox_vscode(app: AppHandle, pool: State<'_, DbPool>, id: St
   #[cfg(not(target_os = "windows"))]
   let mut cmd = std::process::Command::new("code");
 
-  cmd.arg("--remote").arg(&remote);
-  if let Some(folder) = sandbox.folder_path {
-    #[cfg(target_os = "windows")]
-    cmd.arg(windows_path_to_posix(&folder));
-    #[cfg(not(target_os = "windows"))]
-    cmd.arg(folder);
+  // `--folder-uri` encodes the remote authority and path as one URI
+  // string, unlike `--remote <host> <path>` which passes the path as a
+  // separate bare positional arg — safer on Windows, where a leading `/`
+  // in a plain CLI arg can be mis-parsed as a switch character.
+  match sandbox.folder_path {
+    Some(folder) => {
+      #[cfg(target_os = "windows")]
+      let posix_path = windows_path_to_posix(&folder);
+      #[cfg(not(target_os = "windows"))]
+      let posix_path = folder;
+      cmd.arg("--folder-uri").arg(format!("vscode-remote://{remote}{posix_path}"));
+    }
+    None => {
+      cmd.arg("--remote").arg(&remote);
+    }
   }
   cmd
     .spawn()
