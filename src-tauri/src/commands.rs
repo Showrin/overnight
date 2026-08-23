@@ -1,11 +1,9 @@
-use std::path::PathBuf;
-
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, State};
 
 use crate::db::error::{Error, Result};
-use crate::db::models::{ContainerMetric, JiraIssue, Project, Sandbox, Session, Task};
-use crate::db::{container_metrics, jira_issues, metrics, projects, sandboxes, sessions, settings, tasks, DbPool};
+use crate::db::models::{JiraIssue, Project, Sandbox, Session, Task};
+use crate::db::{jira_issues, metrics, projects, sandboxes, sessions, settings, tasks, DbPool};
 use crate::jira::{self, JiraClient};
 use crate::providers::claude_code::ClaudeCodeProvider;
 use crate::providers::AgentProvider;
@@ -280,35 +278,33 @@ pub fn list_jira_issues(pool: State<DbPool>) -> std::result::Result<Vec<JiraIssu
 
 // Sandboxes ------------------------------------------------------------
 //
-// A sandbox is a Docker container running a fixed dev-tools image, bound
-// either directly to a project's repo_path ("mount" mode) or to a fresh
-// clone of it ("clone" mode). Errors are stringified rather than using
-// `db::error::Error`/`Result` since they can originate from `docker::Error`
-// too, matching the existing pattern used by the Jira commands above.
+// A sandbox is an `sbx` (Docker Sandboxes) microVM, bound either directly
+// to a project's repo_path ("mount" mode) or to an in-VM clone of it
+// ("clone" mode, via `sbx create --clone` — sbx manages the clone itself,
+// we don't). Errors are stringified rather than using `db::error::Error`/
+// `Result` since they can originate from `sbx::Error` too, matching the
+// existing pattern used by the Jira commands above.
 
 const SANDBOX_MEMORY_MB: u32 = 2048;
-const SANDBOX_IMAGE: &str = "mcr.microsoft.com/devcontainers/base:ubuntu";
-const SANDBOX_CONTAINER_PORT: u16 = 8080;
-
-fn sandboxes_dir(app: &AppHandle) -> std::result::Result<PathBuf, String> {
-  let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("sandboxes");
-  std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-  Ok(dir)
-}
+const SANDBOX_PORT: u16 = 8080;
 
 fn check_free_memory() -> std::result::Result<(), String> {
-  let free_mb = crate::docker::host_free_memory_mb();
+  let free_mb = crate::sbx::host_free_memory_mb();
   if free_mb < SANDBOX_MEMORY_MB as f64 {
     return Err(format!(
-      "not enough free memory to start a sandbox: {free_mb:.0}MB free, {SANDBOX_MEMORY_MB}MB required"
+      "not enough free memory to start a sandbox: {free_mb:.0}MB free, {SANDBOX_MEMORY_MB}MB recommended"
     ));
   }
   Ok(())
 }
 
+fn sbx_name_for(sandbox_id: &str) -> String {
+  format!("overnight-{sandbox_id}")
+}
+
 #[tauri::command]
-pub async fn docker_health_check(app: AppHandle) -> std::result::Result<(), String> {
-  crate::docker::info(&app).await.map_err(|e| e.to_string())
+pub async fn sbx_health_check(app: AppHandle) -> std::result::Result<(), String> {
+  crate::sbx::health_check(&app).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -346,15 +342,17 @@ pub async fn create_sandbox(
 
   let sandbox = {
     let conn = pool.get().map_err(|e| e.to_string())?;
+    // Clone mode's clone lives inside the sandbox VM, not on the host — no
+    // host-visible folder_path to record for it.
     let initial_folder = if mode == "mount" { Some(project.repo_path.as_str()) } else { None };
     sandboxes::create(&conn, &project_id, &mode, initial_folder).map_err(|e| e.to_string())?
   };
 
   // From here on the sandbox row already exists (status "starting"). If
-  // anything below fails — including a slow/failed image pull inside
-  // run_container, which can take a long time for a multi-GB image like
-  // SANDBOX_IMAGE — mark the row "error" instead of leaving it stuck at
-  // "starting" forever with no signal that it didn't work.
+  // anything below fails — including the very first `sbx create` on this
+  // machine hanging on an unanswered interactive network-policy prompt —
+  // mark the row "error" instead of leaving it stuck at "starting" forever
+  // with no signal that it didn't work.
   match provision_sandbox(&app, &pool, &project, &sandbox, &mode).await {
     Ok(result) => Ok(result),
     Err(e) => {
@@ -373,30 +371,13 @@ async fn provision_sandbox(
   sandbox: &Sandbox,
   mode: &str,
 ) -> std::result::Result<Sandbox, String> {
-  let folder_path = if mode == "clone" {
-    let target = sandboxes_dir(app)?.join(&sandbox.id);
-    crate::docker::clone_repo(app, &project.repo_path, &target).await.map_err(|e| e.to_string())?;
-    let path = target.to_string_lossy().to_string();
-    let conn = pool.get().map_err(|e| e.to_string())?;
-    sandboxes::set_folder_path(&conn, &sandbox.id, &path).map_err(|e| e.to_string())?;
-    path
-  } else {
-    project.repo_path.clone()
-  };
-
-  let host_port = crate::docker::find_free_port().map_err(|e| e.to_string())?;
-  let opts = crate::docker::RunOptions {
-    image: SANDBOX_IMAGE,
-    name: &format!("overnight-sandbox-{}", sandbox.id),
-    mount: (&folder_path, crate::docker::CONTAINER_WORKDIR),
-    host_port,
-    container_port: SANDBOX_CONTAINER_PORT,
-    memory_mb: SANDBOX_MEMORY_MB,
-  };
-  let container_id = crate::docker::run_container(app, &opts).await.map_err(|e| e.to_string())?;
+  let name = sbx_name_for(&sandbox.id);
+  crate::sbx::create(app, &name, mode == "clone", &project.repo_path).await.map_err(|e| e.to_string())?;
+  crate::sbx::publish_port(app, &name, SANDBOX_PORT).await.map_err(|e| e.to_string())?;
+  let host_port = crate::sbx::host_port(app, &name, SANDBOX_PORT).await.map_err(|e| e.to_string())?;
 
   let conn = pool.get().map_err(|e| e.to_string())?;
-  sandboxes::update_status(&conn, &sandbox.id, "running", Some(&container_id), Some(host_port as i64))
+  sandboxes::update_status(&conn, &sandbox.id, "running", Some(&name), host_port.map(i64::from))
     .map_err(|e| e.to_string())
 }
 
@@ -407,13 +388,15 @@ pub async fn stop_sandbox(app: AppHandle, pool: State<'_, DbPool>, id: String) -
     let conn = pool.get().map_err(|e| e.to_string())?;
     sandboxes::get(&conn, &id).map_err(|e| e.to_string())?
   };
-  let container_id = sandbox.container_id.ok_or_else(|| "sandbox has no container to stop".to_string())?;
-  crate::docker::stop(&app, &container_id).await.map_err(|e| e.to_string())?;
+  let name = sandbox.sbx_name.ok_or_else(|| "sandbox has no sbx sandbox to stop".to_string())?;
+  crate::sbx::stop(&app, &name).await.map_err(|e| e.to_string())?;
 
   let conn = pool.get().map_err(|e| e.to_string())?;
   sandboxes::update_status(&conn, &id, "stopped", None, None).map_err(|e| e.to_string())
 }
 
+// Best-effort: see the doc comment on sbx::resume for why this isn't
+// verified against a real sbx install.
 #[tauri::command]
 pub async fn start_sandbox(app: AppHandle, pool: State<'_, DbPool>, id: String) -> std::result::Result<Sandbox, String> {
   let pool = pool.inner().clone();
@@ -421,10 +404,15 @@ pub async fn start_sandbox(app: AppHandle, pool: State<'_, DbPool>, id: String) 
     let conn = pool.get().map_err(|e| e.to_string())?;
     sandboxes::get(&conn, &id).map_err(|e| e.to_string())?
   };
-  let container_id = sandbox.container_id.ok_or_else(|| "sandbox has no container to start".to_string())?;
+  let name = sandbox.sbx_name.clone().ok_or_else(|| "sandbox has no sbx sandbox to start".to_string())?;
+  let workspace = {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    let project = projects::get(&conn, &sandbox.project_id).map_err(|e| e.to_string())?;
+    project.repo_path
+  };
 
   check_free_memory()?;
-  crate::docker::start(&app, &container_id).await.map_err(|e| e.to_string())?;
+  crate::sbx::resume(&app, &name, sandbox.mode == "clone", &workspace).await.map_err(|e| e.to_string())?;
 
   let conn = pool.get().map_err(|e| e.to_string())?;
   sandboxes::update_status(&conn, &id, "running", None, None).map_err(|e| e.to_string())
@@ -437,67 +425,12 @@ pub async fn delete_sandbox(app: AppHandle, pool: State<'_, DbPool>, id: String)
     let conn = pool.get().map_err(|e| e.to_string())?;
     sandboxes::get(&conn, &id).map_err(|e| e.to_string())?
   };
-  if let Some(container_id) = sandbox.container_id {
-    crate::docker::rm(&app, &container_id).await.map_err(|e| e.to_string())?;
+  if let Some(name) = sandbox.sbx_name {
+    crate::sbx::rm(&app, &name).await.map_err(|e| e.to_string())?;
   }
 
   let conn = pool.get().map_err(|e| e.to_string())?;
   sandboxes::delete(&conn, &id).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn get_sandbox_metrics(
-  app: AppHandle,
-  pool: State<'_, DbPool>,
-  id: String,
-) -> std::result::Result<ContainerMetric, String> {
-  let pool = pool.inner().clone();
-  let sandbox = {
-    let conn = pool.get().map_err(|e| e.to_string())?;
-    sandboxes::get(&conn, &id).map_err(|e| e.to_string())?
-  };
-  let container_id = sandbox.container_id.ok_or_else(|| "sandbox has no running container".to_string())?;
-  let stats = crate::docker::stats(&app, &container_id).await.map_err(|e| e.to_string())?;
-
-  let conn = pool.get().map_err(|e| e.to_string())?;
-  container_metrics::record_for_sandbox(
-    &conn,
-    &id,
-    stats.cpu_percent,
-    stats.memory_mb,
-    stats.network_rx_bytes,
-    stats.network_tx_bytes,
-  )
-  .map_err(|e| e.to_string())
-}
-
-#[derive(Clone, Serialize)]
-struct SandboxLogLine {
-  sandbox_id: String,
-  line: String,
-}
-
-/// Starts a background task streaming `docker logs -f` for a sandbox's
-/// container, emitting each line as a `sandbox-log` webview event. Returns
-/// immediately once the stream is set up — the frontend's LogsPanel
-/// subscribes to the event rather than polling this command.
-#[tauri::command]
-pub fn stream_sandbox_logs(app: AppHandle, pool: State<DbPool>, id: String) -> std::result::Result<(), String> {
-  let conn = pool.get().map_err(|e| e.to_string())?;
-  let sandbox = sandboxes::get(&conn, &id).map_err(|e| e.to_string())?;
-  let container_id = sandbox.container_id.ok_or_else(|| "sandbox has no running container".to_string())?;
-
-  let spawned = crate::docker::logs_stream(&app, &container_id).map_err(|e| e.to_string())?;
-  let bg_app = app.clone();
-  let sandbox_id = id.clone();
-  tauri::async_runtime::spawn(async move {
-    use futures::StreamExt;
-    let mut lines = spawned.stdout_lines;
-    while let Some(line) = lines.next().await {
-      crate::process::emit_to_webview(&bg_app, "sandbox-log", SandboxLogLine { sandbox_id: sandbox_id.clone(), line });
-    }
-  });
-  Ok(())
 }
 
 #[derive(Serialize)]
@@ -507,7 +440,7 @@ pub struct SandboxUsage {
 }
 
 /// Sums token usage across every agent session that ran inside this
-/// sandbox's container (see `providers::claude_code::launch_autonomous_session`).
+/// sandbox (see `providers::claude_code::launch_autonomous_session`).
 #[tauri::command]
 pub fn get_sandbox_usage(pool: State<DbPool>, id: String) -> std::result::Result<SandboxUsage, String> {
   let conn = pool.get().map_err(|e| e.to_string())?;
@@ -515,12 +448,25 @@ pub fn get_sandbox_usage(pool: State<DbPool>, id: String) -> std::result::Result
   Ok(SandboxUsage { input_tokens, output_tokens })
 }
 
+/// Opens VS Code's Remote-SSH into the sandbox (`sbx setup ssh` must have
+/// been run once to register the `<name>.sbx` SSH host — if it hasn't, VS
+/// Code will surface that as a connection error itself). For mount-mode
+/// sandboxes the host repo path is also valid inside the VM (sbx preserves
+/// absolute paths), so we pass it directly; clone mode has no host-visible
+/// path, so VS Code opens without one and the user navigates manually.
 #[tauri::command]
 pub fn open_sandbox_vscode(pool: State<DbPool>, id: String) -> std::result::Result<(), String> {
   let conn = pool.get().map_err(|e| e.to_string())?;
   let sandbox = sandboxes::get(&conn, &id).map_err(|e| e.to_string())?;
-  let folder = sandbox.folder_path.ok_or_else(|| "sandbox has no folder to open".to_string())?;
-  std::process::Command::new("code").arg(&folder).spawn().map_err(|e| e.to_string())?;
+  let name = sandbox.sbx_name.ok_or_else(|| "sandbox isn't running".to_string())?;
+  let remote = format!("ssh-remote+{name}.sbx");
+
+  let mut cmd = std::process::Command::new("code");
+  cmd.arg("--remote").arg(&remote);
+  if let Some(folder) = sandbox.folder_path {
+    cmd.arg(folder);
+  }
+  cmd.spawn().map_err(|e| e.to_string())?;
   Ok(())
 }
 
@@ -528,25 +474,25 @@ pub fn open_sandbox_vscode(pool: State<DbPool>, id: String) -> std::result::Resu
 pub fn open_sandbox_terminal(pool: State<DbPool>, id: String) -> std::result::Result<(), String> {
   let conn = pool.get().map_err(|e| e.to_string())?;
   let sandbox = sandboxes::get(&conn, &id).map_err(|e| e.to_string())?;
-  let container_id = sandbox.container_id.ok_or_else(|| "sandbox has no running container".to_string())?;
+  let name = sandbox.sbx_name.ok_or_else(|| "sandbox isn't running".to_string())?;
 
   #[cfg(target_os = "windows")]
   {
     std::process::Command::new("cmd")
-      .args(["/C", "start", "cmd", "/K", &format!("docker exec -it {container_id} bash")])
+      .args(["/C", "start", "cmd", "/K", &format!("sbx exec -it {name} bash")])
       .spawn()
       .map_err(|e| e.to_string())?;
   }
   #[cfg(target_os = "macos")]
   {
-    let script = format!("tell application \"Terminal\" to do script \"docker exec -it {container_id} bash\"");
+    let script = format!("tell application \"Terminal\" to do script \"sbx exec -it {name} bash\"");
     std::process::Command::new("osascript").arg("-e").arg(script).spawn().map_err(|e| e.to_string())?;
   }
   #[cfg(target_os = "linux")]
   {
     std::process::Command::new("x-terminal-emulator")
       .arg("-e")
-      .arg(format!("docker exec -it {container_id} bash"))
+      .arg(format!("sbx exec -it {name} bash"))
       .spawn()
       .map_err(|e| e.to_string())?;
   }

@@ -147,6 +147,13 @@ pub fn migrations() -> Migrations<'static> {
     ALTER TABLE sessions ADD COLUMN sandbox_id TEXT REFERENCES sandboxes(id) ON DELETE SET NULL;
     CREATE INDEX ix_sessions_sandbox_id ON sessions(sandbox_id);
     ",
+  ), M::up(
+    "
+    -- Sandboxes moved from raw docker containers to the sbx CLI (Docker
+    -- Sandboxes), whose unit of identity is a sandbox name, not a
+    -- container id.
+    ALTER TABLE sandboxes RENAME COLUMN container_id TO sbx_name;
+    ",
   )])
 }
 

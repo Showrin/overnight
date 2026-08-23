@@ -76,8 +76,8 @@ export function CreateSandboxDialog({
           </div>
           <p className="text-xs text-muted-foreground">
             {mode === 'mount'
-              ? 'Runs directly against the project\'s existing local folder. Only one mount-mode sandbox can run per project at a time.'
-              : 'Clones the project\'s local repo into a fresh, isolated folder first. Multiple clone-mode sandboxes can run per project.'}
+              ? 'Runs directly against the project\'s existing local folder — edits appear on your host immediately. Only one mount-mode sandbox can run per project at a time.'
+              : 'Clones the project\'s repo into an isolated copy inside the sandbox itself. Your local folder is untouched. Multiple clone-mode sandboxes can run per project.'}
           </p>
         </div>
         {error && <p className="text-sm text-destructive">{error}</p>}

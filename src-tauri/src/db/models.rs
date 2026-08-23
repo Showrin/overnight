@@ -73,7 +73,9 @@ pub struct Sandbox {
   pub mode: String,
   /// "starting" | "running" | "stopped" | "error"
   pub status: String,
-  pub container_id: Option<String>,
+  /// The `sbx` sandbox name (its identity for stop/rm/exec/ports), not a
+  /// docker container id.
+  pub sbx_name: Option<String>,
   pub folder_path: Option<String>,
   pub host_port: Option<i64>,
   pub created_at: i64,

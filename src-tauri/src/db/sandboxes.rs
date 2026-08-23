@@ -9,7 +9,7 @@ fn row_to_sandbox(row: &rusqlite::Row) -> rusqlite::Result<Sandbox> {
     project_id: row.get("project_id")?,
     mode: row.get("mode")?,
     status: row.get("status")?,
-    container_id: row.get("container_id")?,
+    sbx_name: row.get("sbx_name")?,
     folder_path: row.get("folder_path")?,
     host_port: row.get("host_port")?,
     created_at: row.get("created_at")?,
@@ -49,34 +49,23 @@ pub fn list_for_project(conn: &Connection, project_id: &str) -> Result<Vec<Sandb
   Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
-/// Updates lifecycle status. `container_id`/`host_port` are only applied
-/// when `Some` (e.g. once `docker run` returns an id), leaving prior values
+/// Updates lifecycle status. `sbx_name`/`host_port` are only applied
+/// when `Some` (e.g. once `sbx create` succeeds), leaving prior values
 /// intact otherwise. `stopped_at` is set automatically when `status` is
 /// "stopped" and cleared for any other status (e.g. resuming via "running").
 pub fn update_status(
   conn: &Connection,
   id: &str,
   status: &str,
-  container_id: Option<&str>,
+  sbx_name: Option<&str>,
   host_port: Option<i64>,
 ) -> Result<Sandbox> {
   let stopped_at = if status == "stopped" { Some(now_millis()) } else { None };
   let changed = conn.execute(
     "UPDATE sandboxes
-     SET status = ?1, container_id = COALESCE(?2, container_id), host_port = COALESCE(?3, host_port), stopped_at = ?4
+     SET status = ?1, sbx_name = COALESCE(?2, sbx_name), host_port = COALESCE(?3, host_port), stopped_at = ?4
      WHERE id = ?5",
-    params![status, container_id, host_port, stopped_at, id],
-  )?;
-  if changed == 0 {
-    return Err(Error::NotFound);
-  }
-  get(conn, id)
-}
-
-pub fn set_folder_path(conn: &Connection, id: &str, folder_path: &str) -> Result<Sandbox> {
-  let changed = conn.execute(
-    "UPDATE sandboxes SET folder_path = ?1 WHERE id = ?2",
-    params![folder_path, id],
+    params![status, sbx_name, host_port, stopped_at, id],
   )?;
   if changed == 0 {
     return Err(Error::NotFound);
@@ -109,7 +98,7 @@ mod tests {
     let sandbox = create(&conn, &project_id, "mount", None).unwrap();
     assert_eq!(sandbox.status, "starting");
     assert_eq!(sandbox.mode, "mount");
-    assert_eq!(sandbox.container_id, None);
+    assert_eq!(sandbox.sbx_name, None);
 
     let fetched = get(&conn, &sandbox.id).unwrap();
     assert_eq!(fetched.id, sandbox.id);
@@ -122,14 +111,14 @@ mod tests {
 
     let running = update_status(&conn, &sandbox.id, "running", Some("container123"), Some(4173)).unwrap();
     assert_eq!(running.status, "running");
-    assert_eq!(running.container_id.as_deref(), Some("container123"));
+    assert_eq!(running.sbx_name.as_deref(), Some("container123"));
     assert_eq!(running.host_port, Some(4173));
     assert_eq!(running.stopped_at, None);
 
     let stopped = update_status(&conn, &sandbox.id, "stopped", None, None).unwrap();
     assert_eq!(stopped.status, "stopped");
-    // container_id/host_port preserved even though None was passed this time.
-    assert_eq!(stopped.container_id.as_deref(), Some("container123"));
+    // sbx_name/host_port preserved even though None was passed this time.
+    assert_eq!(stopped.sbx_name.as_deref(), Some("container123"));
     assert!(stopped.stopped_at.is_some());
 
     delete(&conn, &sandbox.id).unwrap();

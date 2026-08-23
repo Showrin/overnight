@@ -16,10 +16,6 @@ fn row_to_container_metric(row: &rusqlite::Row) -> rusqlite::Result<ContainerMet
   })
 }
 
-// Not yet called by any command — kept alongside record_for_sandbox for
-// symmetry and because a future non-sandboxed session may want the same
-// per-session cpu/mem tracking `container_metrics` was originally built for.
-#[allow(dead_code)]
 pub fn record_for_session(
   conn: &Connection,
   session_id: &str,
@@ -67,9 +63,6 @@ fn record(
   Ok(metric)
 }
 
-// Not yet exposed via a command — the Sandboxes UI polls get_sandbox_metrics
-// for the latest reading rather than a full history chart, for now.
-#[allow(dead_code)]
 pub fn list_for_session(conn: &Connection, session_id: &str) -> Result<Vec<ContainerMetric>> {
   let mut stmt =
     conn.prepare("SELECT * FROM container_metrics WHERE session_id = ?1 ORDER BY captured_at ASC")?;
@@ -77,7 +70,6 @@ pub fn list_for_session(conn: &Connection, session_id: &str) -> Result<Vec<Conta
   Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
-#[allow(dead_code)]
 pub fn list_for_sandbox(conn: &Connection, sandbox_id: &str) -> Result<Vec<ContainerMetric>> {
   let mut stmt =
     conn.prepare("SELECT * FROM container_metrics WHERE sandbox_id = ?1 ORDER BY captured_at ASC")?;

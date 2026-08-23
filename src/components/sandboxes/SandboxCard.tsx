@@ -3,30 +3,19 @@ import { invoke } from '@tauri-apps/api/core'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import type { ContainerMetric, Sandbox, SandboxUsage } from './types'
+import type { Sandbox, SandboxUsage } from './types'
 
-const METRICS_POLL_MS = 5000
-
-function formatMb(mb: number) {
-  return mb >= 1024 ? `${(mb / 1024).toFixed(1)}GB` : `${mb.toFixed(0)}MB`
-}
-
-function formatBytes(bytes: number) {
-  return bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)}MB` : `${(bytes / 1024).toFixed(1)}KB`
-}
+const USAGE_POLL_MS = 5000
 
 export function SandboxCard({
   sandbox,
   projectName,
   onChanged,
-  onViewLogs,
 }: {
   sandbox: Sandbox
   projectName: string
   onChanged: () => void
-  onViewLogs: (sandboxId: string) => void
 }) {
-  const [metric, setMetric] = useState<ContainerMetric | null>(null)
   const [usage, setUsage] = useState<SandboxUsage | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -37,21 +26,15 @@ export function SandboxCard({
 
     async function poll() {
       try {
-        const [m, u] = await Promise.all([
-          invoke<ContainerMetric>('get_sandbox_metrics', { id: sandbox.id }),
-          invoke<SandboxUsage>('get_sandbox_usage', { id: sandbox.id }),
-        ])
-        if (!cancelled) {
-          setMetric(m)
-          setUsage(u)
-        }
+        const u = await invoke<SandboxUsage>('get_sandbox_usage', { id: sandbox.id })
+        if (!cancelled) setUsage(u)
       } catch {
         // Best-effort — a single missed poll shouldn't show as a card error.
       }
     }
 
     poll()
-    const interval = setInterval(poll, METRICS_POLL_MS)
+    const interval = setInterval(poll, USAGE_POLL_MS)
     return () => {
       cancelled = true
       clearInterval(interval)
@@ -97,11 +80,6 @@ export function SandboxCard({
 
         {sandbox.status === 'running' && (
           <div className="flex flex-wrap gap-2">
-            <Badge variant="outline">cpu {metric ? `${metric.cpu_percent.toFixed(1)}%` : '—'}</Badge>
-            <Badge variant="outline">ram {metric ? formatMb(metric.memory_mb) : '—'}</Badge>
-            <Badge variant="outline">
-              net {metric ? `${formatBytes(metric.network_rx_bytes)} ↓ / ${formatBytes(metric.network_tx_bytes)} ↑` : '—'}
-            </Badge>
             <Badge variant="outline">
               tokens {usage ? (usage.input_tokens + usage.output_tokens).toLocaleString() : '—'}
             </Badge>
@@ -118,9 +96,6 @@ export function SandboxCard({
               </Button>
               <Button size="sm" variant="outline" disabled={busy} onClick={() => run(() => invoke('open_sandbox_terminal', { id: sandbox.id }))}>
                 Terminal
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => onViewLogs(sandbox.id)}>
-                Logs
               </Button>
               {sandbox.host_port != null && (
                 <Button size="sm" variant="outline" onClick={openInBrowser}>

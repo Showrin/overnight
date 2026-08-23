@@ -75,17 +75,16 @@ impl AgentProvider for ClaudeCodeProvider {
       .into_iter()
       .find(|s| s.status == "running")
       .ok_or_else(|| Error::InvalidState("no running sandbox for this task's project".to_string()))?;
-    let container_id = sandbox
-      .container_id
+    let sbx_name = sandbox
+      .sbx_name
       .clone()
-      .ok_or_else(|| Error::InvalidState(format!("sandbox {} has no container", sandbox.id)))?;
+      .ok_or_else(|| Error::InvalidState(format!("sandbox {} has no sbx sandbox", sandbox.id)))?;
 
-    let args = vec![
-      "exec".to_string(),
-      "-w".to_string(),
-      crate::docker::CONTAINER_WORKDIR.to_string(),
-      container_id,
-      CLAUDE_BIN.to_string(),
+    // `sbx run --name <name> claude -- <args>` appends these args after
+    // Claude Code's default startup flags (see providers::claude_code
+    // module docs / sbx's claude-code.md), so this preserves the same
+    // stream-json event pipeline translate_event() below expects.
+    let claude_args = vec![
       "-p".to_string(),
       prompt.to_string(),
       "--output-format".to_string(),
@@ -94,8 +93,7 @@ impl AgentProvider for ClaudeCodeProvider {
       "bypassPermissions".to_string(),
       "--verbose".to_string(),
     ];
-
-    let spawned = crate::process::spawn(app, "docker", &args, None)?;
+    let spawned = crate::sbx::run_agent(app, &sbx_name, &claude_args)?;
     let session = db::sessions::create(&conn, task_id, PROVIDER_NAME, "autonomous", None)?;
     db::sessions::set_sandbox_id(&conn, &session.id, &sandbox.id)?;
 

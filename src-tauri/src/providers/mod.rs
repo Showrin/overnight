@@ -18,6 +18,8 @@ use crate::db::DbPool;
 pub enum Error {
   #[error("process error: {0}")]
   Process(#[from] crate::process::Error),
+  #[error("sbx error: {0}")]
+  Sbx(#[from] crate::sbx::Error),
   #[error("db error: {0}")]
   Db(#[from] crate::db::error::Error),
   // Constructed by `stop()`/`launch_autonomous_session()`, which no caller

@@ -1,9 +1,9 @@
 mod commands;
 mod db;
-mod docker;
 mod jira;
 mod process;
 mod providers;
+mod sbx;
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
@@ -36,15 +36,13 @@ pub fn run() {
       commands::get_settings,
       commands::save_settings,
       commands::start_plan_session,
-      commands::docker_health_check,
+      commands::sbx_health_check,
       commands::list_sandboxes,
       commands::create_sandbox,
       commands::stop_sandbox,
       commands::start_sandbox,
       commands::delete_sandbox,
-      commands::get_sandbox_metrics,
       commands::get_sandbox_usage,
-      commands::stream_sandbox_logs,
       commands::open_sandbox_vscode,
       commands::open_sandbox_terminal,
     ])
