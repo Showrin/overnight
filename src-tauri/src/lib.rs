@@ -47,6 +47,7 @@ pub fn run() {
       commands::get_sandbox_usage,
       commands::open_sandbox_vscode,
       commands::open_sandbox_terminal,
+      commands::open_path_in_explorer,
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {

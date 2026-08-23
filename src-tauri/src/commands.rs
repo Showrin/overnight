@@ -554,6 +554,24 @@ pub async fn open_sandbox_vscode(app: AppHandle, pool: State<'_, DbPool>, id: St
 }
 
 #[tauri::command]
+pub fn open_path_in_explorer(path: String) -> std::result::Result<(), String> {
+  #[cfg(target_os = "windows")]
+  {
+    std::process::Command::new("explorer").arg(&path).spawn().map_err(|e| e.to_string())?;
+  }
+  #[cfg(target_os = "macos")]
+  {
+    std::process::Command::new("open").arg(&path).spawn().map_err(|e| e.to_string())?;
+  }
+  #[cfg(target_os = "linux")]
+  {
+    std::process::Command::new("xdg-open").arg(&path).spawn().map_err(|e| e.to_string())?;
+  }
+
+  Ok(())
+}
+
+#[tauri::command]
 pub fn open_sandbox_terminal(pool: State<DbPool>, id: String) -> std::result::Result<(), String> {
   let conn = pool.get().map_err(|e| e.to_string())?;
   let sandbox = sandboxes::get(&conn, &id).map_err(|e| e.to_string())?;

@@ -25,6 +25,9 @@ export function SandboxCard({
   )
   const [busyAction, setBusyAction] = useState<BusyAction>(null)
   const [error, setError] = useState<string | null>(null)
+  const [copiedInfo, setCopiedInfo] = useState(false)
+
+  const location = sandbox.folder_path ?? projectRepoPath
 
   async function run(which: Exclude<BusyAction, null>, action: () => Promise<unknown>) {
     setBusyAction(which)
@@ -49,25 +52,67 @@ export function SandboxCard({
     }
   }
 
+  async function copyInfoCommand() {
+    if (!sandbox.sbx_name) return
+    await navigator.clipboard.writeText(`sbx info ${sandbox.sbx_name}`)
+    setCopiedInfo(true)
+    setTimeout(() => setCopiedInfo(false), 1500)
+  }
+
+  function openLocation() {
+    if (location) invoke('open_path_in_explorer', { path: location })
+  }
+
   return (
-    <Card>
-      <CardHeader>
+    <Card size="sm">
+      <CardHeader className="gap-0.5">
         <div className="flex items-center gap-2">
           <CardTitle>{sandbox.name ?? projectName}</CardTitle>
           <Badge variant={statusBadgeVariant(sandbox.status)}>{sandbox.status}</Badge>
         </div>
+        {sandbox.sbx_name && (
+          <button
+            type="button"
+            onClick={copyInfoCommand}
+            title="Copy `sbx info` command"
+            className="w-fit text-left text-xs text-muted-foreground hover:text-foreground hover:underline"
+          >
+            {copiedInfo ? 'Copied!' : sandbox.sbx_name}
+          </button>
+        )}
       </CardHeader>
-      <CardContent className="flex flex-col gap-1.5 text-sm text-muted-foreground">
-        {sandbox.sbx_name && <span className="text-xs">{sandbox.sbx_name}</span>}
-        {projectRepoPath && <span className="truncate">{projectRepoPath}</span>}
-        <span className="text-xs">{sandbox.mode === 'clone' ? 'Cloned' : 'Mounted'}</span>
-        <Badge variant={permissionBadgeVariant(sandbox.permission_mode)} className="w-fit">
-          {sandbox.permission_mode}
-        </Badge>
+      <CardContent className="flex flex-col gap-2 text-sm text-muted-foreground">
+        <div className="grid grid-cols-3 gap-4">
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <span className="text-xs text-muted-foreground/70">Permission Mode</span>
+            <Badge variant={permissionBadgeVariant(sandbox.permission_mode)} className="w-fit">
+              {sandbox.permission_mode}
+            </Badge>
+          </div>
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <span className="text-xs text-muted-foreground/70">Project Attachment</span>
+            <span className="text-sm text-foreground">{sandbox.mode === 'clone' ? 'Cloned' : 'Mounted'}</span>
+          </div>
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <span className="text-xs text-muted-foreground/70">Location</span>
+            {location ? (
+              <button
+                type="button"
+                onClick={openLocation}
+                title={`Open ${location} in the file explorer`}
+                className="truncate text-left text-sm text-foreground hover:underline"
+              >
+                {location}
+              </button>
+            ) : (
+              <span className="text-sm">—</span>
+            )}
+          </div>
+        </div>
 
         {error && <p className="text-destructive">{error}</p>}
 
-        <div className="mt-1 flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2">
           {sandbox.status === 'running' && (
             <>
               <Button
