@@ -68,7 +68,10 @@ export function SandboxCard({
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle>{projectName}</CardTitle>
+        <div className="flex flex-col">
+          <CardTitle>{sandbox.name ?? projectName}</CardTitle>
+          {sandbox.name && <span className="text-xs text-muted-foreground">{projectName}</span>}
+        </div>
         <div className="flex gap-2">
           <Badge variant="outline">{sandbox.mode}</Badge>
           <Badge

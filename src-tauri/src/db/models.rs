@@ -68,6 +68,9 @@ pub struct ContainerMetric {
 pub struct Sandbox {
   pub id: String,
   pub project_id: String,
+  /// Optional user-facing label, distinct from `sbx_name`. Falls back to
+  /// the project name for display when not set.
+  pub name: Option<String>,
   /// "mount" (bind-mounts the project's repo_path) or "clone" (git-clones
   /// repo_path into an isolated folder first).
   pub mode: String,

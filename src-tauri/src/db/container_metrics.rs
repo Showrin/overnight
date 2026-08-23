@@ -90,7 +90,7 @@ mod tests {
 
   fn make_sandbox(conn: &Connection) -> String {
     let project = projects::create(conn, "Overnight", "/repo/overnight", None, None, &[]).unwrap();
-    crate::db::sandboxes::create(conn, &project.id, "mount", None).unwrap().id
+    crate::db::sandboxes::create(conn, &project.id, "mount", None, None).unwrap().id
   }
 
   #[test]

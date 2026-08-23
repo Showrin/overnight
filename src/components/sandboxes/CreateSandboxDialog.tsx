@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { notify } from '@/lib/notify'
 import type { Project } from '@/components/projects/types'
@@ -18,6 +19,7 @@ export function CreateSandboxDialog({
   onCancel: () => void
 }) {
   const [projectId, setProjectId] = useState(projects[0]?.id ?? '')
+  const [name, setName] = useState('')
   const [mode, setMode] = useState<SandboxMode>('mount')
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -29,7 +31,7 @@ export function CreateSandboxDialog({
     setError(null)
     setNeedsPolicyInit(false)
     try {
-      await invoke<Sandbox>('create_sandbox', { projectId, mode })
+      await invoke<Sandbox>('create_sandbox', { projectId, mode, name: name.trim() || null })
       notify('Sandbox started', 'Your sandbox is up and running.')
       onCreated()
     } catch (e) {
@@ -77,6 +79,15 @@ export function CreateSandboxDialog({
               </option>
             ))}
           </select>
+        </div>
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="sandbox-name">Name (optional)</Label>
+          <Input
+            id="sandbox-name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder={projects.find((p) => p.id === projectId)?.name}
+          />
         </div>
         <div className="flex flex-col gap-1">
           <Label>Mode</Label>

@@ -340,10 +340,12 @@ pub async fn create_sandbox(
   pool: State<'_, DbPool>,
   project_id: String,
   mode: String,
+  name: Option<String>,
 ) -> std::result::Result<Sandbox, String> {
   if mode != "mount" && mode != "clone" {
     return Err(format!("invalid sandbox mode: {mode} (expected \"mount\" or \"clone\")"));
   }
+  let name = name.filter(|n| !n.trim().is_empty());
   let pool = pool.inner().clone();
 
   let project = {
@@ -366,7 +368,7 @@ pub async fn create_sandbox(
     // Clone mode's clone lives inside the sandbox VM, not on the host — no
     // host-visible folder_path to record for it.
     let initial_folder = if mode == "mount" { Some(project.repo_path.as_str()) } else { None };
-    sandboxes::create(&conn, &project_id, &mode, initial_folder).map_err(|e| e.to_string())?
+    sandboxes::create(&conn, &project_id, &mode, initial_folder, name.as_deref()).map_err(|e| e.to_string())?
   };
 
   // From here on the sandbox row already exists (status "starting"). If

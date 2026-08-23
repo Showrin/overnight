@@ -7,6 +7,7 @@ fn row_to_sandbox(row: &rusqlite::Row) -> rusqlite::Result<Sandbox> {
   Ok(Sandbox {
     id: row.get("id")?,
     project_id: row.get("project_id")?,
+    name: row.get("name")?,
     mode: row.get("mode")?,
     status: row.get("status")?,
     sbx_name: row.get("sbx_name")?,
@@ -17,13 +18,19 @@ fn row_to_sandbox(row: &rusqlite::Row) -> rusqlite::Result<Sandbox> {
   })
 }
 
-pub fn create(conn: &Connection, project_id: &str, mode: &str, folder_path: Option<&str>) -> Result<Sandbox> {
+pub fn create(
+  conn: &Connection,
+  project_id: &str,
+  mode: &str,
+  folder_path: Option<&str>,
+  name: Option<&str>,
+) -> Result<Sandbox> {
   let id = new_id();
   let now = now_millis();
   conn.execute(
-    "INSERT INTO sandboxes (id, project_id, mode, status, folder_path, created_at)
-     VALUES (?1, ?2, ?3, 'starting', ?4, ?5)",
-    params![id, project_id, mode, folder_path, now],
+    "INSERT INTO sandboxes (id, project_id, mode, status, folder_path, name, created_at)
+     VALUES (?1, ?2, ?3, 'starting', ?4, ?5, ?6)",
+    params![id, project_id, mode, folder_path, name, now],
   )?;
   get(conn, &id)
 }
@@ -95,10 +102,11 @@ mod tests {
     let conn = test_conn();
     let project_id = make_project(&conn);
 
-    let sandbox = create(&conn, &project_id, "mount", None).unwrap();
+    let sandbox = create(&conn, &project_id, "mount", None, None).unwrap();
     assert_eq!(sandbox.status, "starting");
     assert_eq!(sandbox.mode, "mount");
     assert_eq!(sandbox.sbx_name, None);
+    assert_eq!(sandbox.name, None);
 
     let fetched = get(&conn, &sandbox.id).unwrap();
     assert_eq!(fetched.id, sandbox.id);
@@ -137,10 +145,23 @@ mod tests {
   }
 
   #[test]
+  fn stores_and_returns_optional_name() {
+    let conn = test_conn();
+    let project_id = make_project(&conn);
+
+    let named = create(&conn, &project_id, "clone", None, Some("staging")).unwrap();
+    assert_eq!(named.name.as_deref(), Some("staging"));
+    assert_eq!(get(&conn, &named.id).unwrap().name.as_deref(), Some("staging"));
+
+    let unnamed = create(&conn, &project_id, "clone", None, None).unwrap();
+    assert_eq!(unnamed.name, None);
+  }
+
+  #[test]
   fn deleting_project_cascades_to_sandboxes() {
     let conn = test_conn();
     let project_id = make_project(&conn);
-    let sandbox = create(&conn, &project_id, "clone", Some("/data/sandboxes/abc")).unwrap();
+    let sandbox = create(&conn, &project_id, "clone", Some("/data/sandboxes/abc"), Some("my sandbox")).unwrap();
 
     crate::db::projects::delete(&conn, &project_id).unwrap();
 

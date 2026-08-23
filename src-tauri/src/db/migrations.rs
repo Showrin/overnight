@@ -154,6 +154,13 @@ pub fn migrations() -> Migrations<'static> {
     -- container id.
     ALTER TABLE sandboxes RENAME COLUMN container_id TO sbx_name;
     ",
+  ), M::up(
+    "
+    -- User-facing label, separate from sbx_name (the underlying sbx CLI
+    -- identity) — lets the UI tell apart multiple clone-mode sandboxes
+    -- for the same project.
+    ALTER TABLE sandboxes ADD COLUMN name TEXT;
+    ",
   )])
 }
 

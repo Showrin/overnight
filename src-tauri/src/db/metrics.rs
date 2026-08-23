@@ -95,7 +95,7 @@ mod tests {
     let conn = test_conn();
     let task = tasks::create(&conn, "Task", None, None, "todo", None).unwrap();
     let project = crate::db::projects::create(&conn, "Overnight", "/repo/overnight", None, None, &[]).unwrap();
-    let sandbox = crate::db::sandboxes::create(&conn, &project.id, "mount", None).unwrap();
+    let sandbox = crate::db::sandboxes::create(&conn, &project.id, "mount", None, None).unwrap();
 
     let session_a = sessions::create(&conn, &task.id, "claude_code", "autonomous", None).unwrap();
     sessions::set_sandbox_id(&conn, &session_a.id, &sandbox.id).unwrap();

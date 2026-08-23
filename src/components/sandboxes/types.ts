@@ -4,6 +4,7 @@ export type SandboxStatus = 'starting' | 'running' | 'stopped' | 'error'
 export interface Sandbox {
   id: string
   project_id: string
+  name: string | null
   mode: SandboxMode
   status: SandboxStatus
   sbx_name: string | null
