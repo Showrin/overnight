@@ -15,11 +15,11 @@ export function Titlebar({
   return (
     <header
       data-tauri-drag-region
-      className="flex h-9 shrink-0 items-center justify-between border-b bg-background-alt pl-3"
+      className="flex h-11 shrink-0 items-center justify-between border-b bg-background-alt pl-3"
     >
       <div data-tauri-drag-region className="flex items-center gap-2">
-        <img src={logoIcon} alt="" className="h-7 w-auto rounded-[6px]" />
-        <LogoWordmark className="h-4 w-auto text-foreground" />
+        <img src={logoIcon} alt="" className="h-5 w-auto rounded-sm" />
+        {/* <LogoWordmark className="h-4.5 w-auto text-foreground" /> */}
         <button
           type="button"
           aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
