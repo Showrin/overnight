@@ -462,18 +462,25 @@ pub fn get_sandbox_usage(pool: State<DbPool>, id: String) -> std::result::Result
   Ok(SandboxUsage { input_tokens, output_tokens })
 }
 
-/// Opens VS Code's Remote-SSH into the sandbox (`sbx setup ssh` must have
-/// been run once to register the `<name>.sbx` SSH host — if it hasn't, VS
-/// Code will surface that as a connection error itself). For mount-mode
-/// sandboxes the host repo path is also valid inside the VM (sbx preserves
-/// absolute paths), so we pass it directly; clone mode has no host-visible
-/// path, so VS Code opens without one and the user navigates manually.
+/// Opens VS Code's Remote-SSH into the sandbox, running `sbx setup ssh`
+/// first so the `<name>.sbx` SSH host is always registered (no manual
+/// one-time setup required). For mount-mode sandboxes the host repo path
+/// is also valid inside the VM (sbx preserves absolute paths), so we pass
+/// it directly; clone mode has no host-visible path, so VS Code opens
+/// without one and the user navigates manually.
 #[tauri::command]
-pub fn open_sandbox_vscode(pool: State<DbPool>, id: String) -> std::result::Result<(), String> {
-  let conn = pool.get().map_err(|e| e.to_string())?;
-  let sandbox = sandboxes::get(&conn, &id).map_err(|e| e.to_string())?;
+pub async fn open_sandbox_vscode(app: AppHandle, pool: State<'_, DbPool>, id: String) -> std::result::Result<(), String> {
+  let sandbox = {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    sandboxes::get(&conn, &id).map_err(|e| e.to_string())?
+  };
   let name = sandbox.sbx_name.ok_or_else(|| "sandbox isn't running".to_string())?;
   let remote = format!("ssh-remote+{name}.sbx");
+
+  // Regenerates the managed `Host *.sbx` SSH config block so `<name>.sbx`
+  // resolves — documented as safe to re-run, so this replaces requiring
+  // the user to run `sbx setup ssh` manually once beforehand.
+  crate::sbx::setup_ssh(&app).await.map_err(|e| e.to_string())?;
 
   // `code` is a .cmd shim on Windows; CreateProcessW (what
   // std::process::Command uses) can't execute batch files directly, so it

@@ -40,6 +40,16 @@ async fn run<R: Runtime>(app: &AppHandle<R>, args: &[&str]) -> Result<String> {
   Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+/// `sbx setup ssh` — (re)generates the managed `Host *.sbx` block in the
+/// user's SSH config so `<name>.sbx` resolves for `ssh`/VS Code Remote-SSH.
+/// Documented as safe to re-run to regenerate the block, so callers can
+/// invoke this before every VS Code launch instead of requiring the user
+/// to run it once manually first.
+pub async fn setup_ssh<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
+  run(app, &["setup", "ssh"]).await?;
+  Ok(())
+}
+
 /// `sbx policy init <preset>` — one-time, machine-wide setup that answers
 /// the interactive network-policy prompt headlessly. `preset` must be one
 /// of `allow-all`, `balanced`, or `deny-all` (sbx's own accepted values).
