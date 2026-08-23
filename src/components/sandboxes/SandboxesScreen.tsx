@@ -1,10 +1,49 @@
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { useAppStore } from '@/store/useAppStore'
 import { CreateSandboxDialog } from './CreateSandboxDialog'
 import { SandboxCard } from './SandboxCard'
+import type { Sandbox } from './types'
+
+function SandboxGroup({
+  title,
+  sandboxes,
+  projectName,
+  onAddNew,
+  onChanged,
+}: {
+  title: string
+  sandboxes: Sandbox[]
+  projectName: string
+  onAddNew?: () => void
+  onChanged: () => void
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-normal text-muted-foreground">{title}</span>
+        {onAddNew && (
+          <Button size="sm" variant="outline" onClick={onAddNew}>
+            <Plus className="size-3.5" />
+            Add New
+          </Button>
+        )}
+      </div>
+      {sandboxes.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No sandboxes yet.</p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {sandboxes.map((sandbox) => (
+            <SandboxCard key={sandbox.id} sandbox={sandbox} projectName={projectName} onChanged={onChanged} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 export function SandboxesScreen() {
   const sandboxes = useAppStore((s) => s.sandboxes)
@@ -12,7 +51,7 @@ export function SandboxesScreen() {
   const loadSandboxes = useAppStore((s) => s.loadSandboxes)
   const [sbxError, setSbxError] = useState<string | null>(null)
   const [checkingSbx, setCheckingSbx] = useState(true)
-  const [creating, setCreating] = useState(false)
+  const [creatingForProjectId, setCreatingForProjectId] = useState<string | null>(null)
 
   async function checkSbx() {
     setCheckingSbx(true)
@@ -29,10 +68,6 @@ export function SandboxesScreen() {
   useEffect(() => {
     checkSbx()
   }, [])
-
-  function projectName(projectId: string) {
-    return projects.find((p) => p.id === projectId)?.name ?? 'Unknown project'
-  }
 
   if (checkingSbx) {
     return (
@@ -60,47 +95,54 @@ export function SandboxesScreen() {
     )
   }
 
+  const orphanSandboxes = sandboxes.filter((sb) => !projects.some((p) => p.id === sb.project_id))
+
   return (
-    <div className="flex w-full flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-medium">Sandboxes</h1>
-        <Button size="sm" onClick={() => setCreating(true)} disabled={projects.length === 0}>
-          New Sandbox
-        </Button>
-      </div>
-      {projects.length === 0 && (
-        <p className="text-sm text-muted-foreground">Create a project first, then start a sandbox for it.</p>
-      )}
+    <div className="flex w-full flex-col gap-6">
+      <h1 className="text-lg font-medium">Sandboxes</h1>
       <p className="text-xs text-muted-foreground">
         If this is the first sandbox created on this machine, `sbx` may prompt for a network policy the first time —
         run <code>sbx run claude</code> once yourself in a terminal beforehand if creation seems stuck.
       </p>
 
-      <Dialog open={creating} onOpenChange={setCreating}>
+      <Dialog open={creatingForProjectId != null} onOpenChange={(open) => !open && setCreatingForProjectId(null)}>
         <DialogContent title="New sandbox">
-          <CreateSandboxDialog
-            onCreated={() => {
-              setCreating(false)
-              loadSandboxes()
-            }}
-            onCancel={() => setCreating(false)}
-          />
+          {creatingForProjectId && (
+            <CreateSandboxDialog
+              defaultProjectId={creatingForProjectId}
+              onCreated={() => {
+                setCreatingForProjectId(null)
+                loadSandboxes()
+              }}
+              onCancel={() => setCreatingForProjectId(null)}
+            />
+          )}
         </DialogContent>
       </Dialog>
 
-      {sandboxes.length === 0 && (
-        <p className="text-sm text-muted-foreground">No sandboxes yet — click New Sandbox to start one.</p>
+      {projects.length === 0 && (
+        <p className="text-sm text-muted-foreground">Create a project first, then start a sandbox for it.</p>
       )}
-      <div className="flex flex-col gap-2">
-        {sandboxes.map((sandbox) => (
-          <SandboxCard
-            key={sandbox.id}
-            sandbox={sandbox}
-            projectName={projectName(sandbox.project_id)}
-            onChanged={loadSandboxes}
-          />
-        ))}
-      </div>
+
+      {projects.map((project) => (
+        <SandboxGroup
+          key={project.id}
+          title={project.name}
+          projectName={project.name}
+          sandboxes={sandboxes.filter((sb) => sb.project_id === project.id)}
+          onAddNew={() => setCreatingForProjectId(project.id)}
+          onChanged={loadSandboxes}
+        />
+      ))}
+
+      {orphanSandboxes.length > 0 && (
+        <SandboxGroup
+          title="Unknown project"
+          projectName="Unknown project"
+          sandboxes={orphanSandboxes}
+          onChanged={loadSandboxes}
+        />
+      )}
     </div>
   )
 }

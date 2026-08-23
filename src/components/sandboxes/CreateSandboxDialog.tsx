@@ -43,14 +43,16 @@ function ErrorDetails({ message }: { message: string }) {
 }
 
 export function CreateSandboxDialog({
+  defaultProjectId,
   onCreated,
   onCancel,
 }: {
+  defaultProjectId?: string
   onCreated: () => void
   onCancel: () => void
 }) {
   const projects = useAppStore((s) => s.projects)
-  const [projectId, setProjectId] = useState(projects[0]?.id ?? '')
+  const [projectId, setProjectId] = useState(defaultProjectId ?? projects[0]?.id ?? '')
   const [name, setName] = useState('')
   const [permissionMode, setPermissionMode] = useState('')
   const [mode, setMode] = useState<SandboxMode>('mount')

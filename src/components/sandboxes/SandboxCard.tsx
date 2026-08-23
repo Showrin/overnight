@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { notify } from '@/lib/notify'
+import { permissionBadgeVariant, statusBadgeVariant } from '@/lib/sandboxDisplay'
 import { useAppStore } from '@/store/useAppStore'
 import type { Sandbox } from './types'
 
@@ -30,7 +31,10 @@ export function SandboxCard({
     setError(null)
     try {
       await action()
-      if (which === 'start') notify('Sandbox started', `${projectName} is up and running.`)
+      const title = sandbox.name ?? projectName
+      if (which === 'start') notify('Sandbox started', `${title} is up and running.`)
+      if (which === 'stop') notify('Sandbox stopped', `${title} has been stopped.`)
+      if (which === 'delete') notify('Sandbox deleted', `${title} has been deleted.`)
       onChanged()
     } catch (e) {
       setError(String(e))
@@ -47,39 +51,19 @@ export function SandboxCard({
 
   return (
     <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
-        <div className="flex flex-col">
+      <CardHeader>
+        <div className="flex items-center gap-2">
           <CardTitle>{sandbox.name ?? projectName}</CardTitle>
-          {sandbox.name && <span className="text-xs text-muted-foreground">{projectName}</span>}
-        </div>
-        <div className="flex gap-2">
-          <Badge variant="outline">{sandbox.mode}</Badge>
-          <Badge variant="outline">{sandbox.permission_mode}</Badge>
-          <Badge
-            variant={
-              sandbox.status === 'running' ? 'default' : sandbox.status === 'error' ? 'destructive' : 'secondary'
-            }
-          >
-            {sandbox.status}
-          </Badge>
+          <Badge variant={statusBadgeVariant(sandbox.status)}>{sandbox.status}</Badge>
         </div>
       </CardHeader>
-      <CardContent className="flex flex-col gap-1 text-sm text-muted-foreground">
-        <span className="truncate font-mono text-xs" title={sandbox.id}>
-          {sandbox.id}
-        </span>
-        {projectRepoPath && (
-          <span className="truncate">
-            <span className="text-xs text-muted-foreground/70">Project folder: </span>
-            {projectRepoPath}
-          </span>
-        )}
-        {sandbox.folder_path && (
-          <span className="truncate">
-            <span className="text-xs text-muted-foreground/70">Sandbox folder: </span>
-            {sandbox.folder_path}
-          </span>
-        )}
+      <CardContent className="flex flex-col gap-1.5 text-sm text-muted-foreground">
+        {sandbox.sbx_name && <span className="text-xs">{sandbox.sbx_name}</span>}
+        {projectRepoPath && <span className="truncate">{projectRepoPath}</span>}
+        <span className="text-xs">{sandbox.mode === 'clone' ? 'Cloned' : 'Mounted'}</span>
+        <Badge variant={permissionBadgeVariant(sandbox.permission_mode)} className="w-fit">
+          {sandbox.permission_mode}
+        </Badge>
 
         {error && <p className="text-destructive">{error}</p>}
 
