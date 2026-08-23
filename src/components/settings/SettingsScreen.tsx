@@ -2,14 +2,13 @@ import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { PERMISSION_MODES } from '@/lib/permissionModes'
 import { AnthropicConfigForm } from './AnthropicConfigForm'
 import { JiraConfigForm, type JiraConfig } from './JiraConfigForm'
 
 interface AppSettings {
   default_claude_permission_mode: string
 }
-
-const PERMISSION_MODES = ['plan', 'default', 'acceptEdits', 'bypassPermissions'] as const
 
 const selectClassName =
   'h-8 rounded-lg border border-border bg-background px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50'

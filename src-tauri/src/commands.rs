@@ -341,12 +341,32 @@ pub async fn create_sandbox(
   project_id: String,
   mode: String,
   name: Option<String>,
+  permission_mode: Option<String>,
 ) -> std::result::Result<Sandbox, String> {
   if mode != "mount" && mode != "clone" {
     return Err(format!("invalid sandbox mode: {mode} (expected \"mount\" or \"clone\")"));
   }
   let name = name.filter(|n| !n.trim().is_empty());
   let pool = pool.inner().clone();
+
+  // Unset means "use whatever's configured as the app-wide default" —
+  // resolved and snapshotted onto the sandbox now rather than looked up
+  // again on every session launch, same as folder_path/sbx_name are fixed
+  // at creation time.
+  let permission_mode = match permission_mode.filter(|m| !m.trim().is_empty()) {
+    Some(m) => {
+      if !VALID_PERMISSION_MODES.contains(&m.as_str()) {
+        return Err(format!("invalid permission mode: {m}"));
+      }
+      m
+    }
+    None => {
+      let conn = pool.get().map_err(|e| e.to_string())?;
+      settings::get(&conn, CLAUDE_PERMISSION_MODE_KEY)
+        .map_err(|e| e.to_string())?
+        .unwrap_or_else(|| DEFAULT_CLAUDE_PERMISSION_MODE.to_string())
+    }
+  };
 
   let project = {
     let conn = pool.get().map_err(|e| e.to_string())?;
@@ -368,7 +388,7 @@ pub async fn create_sandbox(
     // Clone mode's clone lives inside the sandbox VM, not on the host — no
     // host-visible folder_path to record for it.
     let initial_folder = if mode == "mount" { Some(project.repo_path.as_str()) } else { None };
-    sandboxes::create(&conn, &project_id, &mode, initial_folder, name.as_deref()).map_err(|e| e.to_string())?
+    sandboxes::create(&conn, &project_id, &mode, initial_folder, name.as_deref(), &permission_mode).map_err(|e| e.to_string())?
   };
 
   // From here on the sandbox row already exists (status "starting"). If
@@ -396,6 +416,9 @@ async fn provision_sandbox(
 ) -> std::result::Result<Sandbox, String> {
   let name = sbx_name_for(&sandbox.id);
   crate::sbx::create(app, &name, mode == "clone", &project.repo_path).await.map_err(|e| e.to_string())?;
+  crate::sbx::set_claude_default_permission_mode(app, &name, &sandbox.permission_mode)
+    .await
+    .map_err(|e| e.to_string())?;
   crate::sbx::publish_port(app, &name, SANDBOX_PORT).await.map_err(|e| e.to_string())?;
   let host_port = crate::sbx::host_port(app, &name, SANDBOX_PORT).await.map_err(|e| e.to_string())?;
 

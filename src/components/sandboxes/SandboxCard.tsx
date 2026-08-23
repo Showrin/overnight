@@ -74,6 +74,7 @@ export function SandboxCard({
         </div>
         <div className="flex gap-2">
           <Badge variant="outline">{sandbox.mode}</Badge>
+          <Badge variant="outline">{sandbox.permission_mode}</Badge>
           <Badge
             variant={
               sandbox.status === 'running' ? 'default' : sandbox.status === 'error' ? 'destructive' : 'secondary'

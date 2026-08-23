@@ -6,6 +6,7 @@ export interface Sandbox {
   project_id: string
   name: string | null
   mode: SandboxMode
+  permission_mode: string
   status: SandboxStatus
   sbx_name: string | null
   folder_path: string | null

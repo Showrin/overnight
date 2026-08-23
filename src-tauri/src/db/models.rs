@@ -74,6 +74,11 @@ pub struct Sandbox {
   /// "mount" (bind-mounts the project's repo_path) or "clone" (git-clones
   /// repo_path into an isolated folder first).
   pub mode: String,
+  /// Claude permission mode this sandbox was created with: "plan" |
+  /// "default" | "acceptEdits" | "bypassPermissions". Applied both to
+  /// app-launched autonomous sessions and to `claude` run manually in the
+  /// sandbox's own terminal.
+  pub permission_mode: String,
   /// "starting" | "running" | "stopped" | "error"
   pub status: String,
   /// The `sbx` sandbox name (its identity for stop/rm/exec/ports), not a

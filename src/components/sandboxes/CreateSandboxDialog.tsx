@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { notify } from '@/lib/notify'
+import { PERMISSION_MODES } from '@/lib/permissionModes'
 import type { Project } from '@/components/projects/types'
 import type { Sandbox, SandboxMode } from './types'
 
@@ -49,6 +50,7 @@ export function CreateSandboxDialog({
 }) {
   const [projectId, setProjectId] = useState(projects[0]?.id ?? '')
   const [name, setName] = useState('')
+  const [permissionMode, setPermissionMode] = useState('')
   const [mode, setMode] = useState<SandboxMode>('mount')
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -60,7 +62,12 @@ export function CreateSandboxDialog({
     setError(null)
     setNeedsPolicyInit(false)
     try {
-      await invoke<Sandbox>('create_sandbox', { projectId, mode, name: name.trim() || null })
+      await invoke<Sandbox>('create_sandbox', {
+        projectId,
+        mode,
+        name: name.trim() || null,
+        permissionMode: permissionMode || null,
+      })
       notify('Sandbox started', 'Your sandbox is up and running.')
       onCreated()
     } catch (e) {
@@ -117,6 +124,22 @@ export function CreateSandboxDialog({
             onChange={(e) => setName(e.target.value)}
             placeholder={projects.find((p) => p.id === projectId)?.name}
           />
+        </div>
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="sandbox-permission-mode">Permission mode</Label>
+          <select
+            id="sandbox-permission-mode"
+            value={permissionMode}
+            onChange={(e) => setPermissionMode(e.target.value)}
+            className="h-8 rounded-lg border border-border bg-background px-2.5 text-sm"
+          >
+            <option value="">Use Settings default</option>
+            {PERMISSION_MODES.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
         </div>
         <div className="flex flex-col gap-1">
           <Label>Mode</Label>

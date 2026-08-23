@@ -133,6 +133,44 @@ pub async fn create<R: Runtime>(app: &AppHandle<R>, name: &str, clone: bool, wor
   Ok(())
 }
 
+/// Makes a bare `claude` typed inside a manually-opened terminal
+/// (`open_sandbox_terminal`'s `sbx exec -it <name> bash`) use the same
+/// permission mode the sandbox was created with, not just app-launched
+/// autonomous sessions.
+///
+/// `sbx run --name <name> claude` goes through sbx's own managed `claude`
+/// agent entrypoint and its own default startup flags. But our terminal
+/// button drops into a bare shell instead (so the user can run arbitrary
+/// commands, not just attach to the agent), and a `claude` typed there
+/// invokes the raw binary with none of sbx's defaults — landing on Claude
+/// Code's own manual-approval default regardless of what was configured.
+/// Confirmed against a real sandbox: `/status` inside a manually-opened
+/// terminal showed "manual" even though the app's own launched sessions
+/// were passing a different mode explicitly.
+///
+/// Appending an alias to `/etc/sandbox-persistent.sh` (sourced for every
+/// bash invocation, interactive or not, per sbx's docs) closes that gap.
+/// It only needs to run once at creation — the file is part of the
+/// sandbox's persistent state and survives stop/resume. `mode` must
+/// already be one of Claude Code's valid `--permission-mode` values —
+/// callers are expected to have validated it (see commands.rs's
+/// VALID_PERMISSION_MODES).
+pub async fn set_claude_default_permission_mode<R: Runtime>(app: &AppHandle<R>, name: &str, mode: &str) -> Result<()> {
+  run(
+    app,
+    &[
+      "exec",
+      "-d",
+      name,
+      "bash",
+      "-c",
+      &format!("echo \"alias claude='claude --permission-mode {mode}'\" >> /etc/sandbox-persistent.sh"),
+    ],
+  )
+  .await?;
+  Ok(())
+}
+
 pub async fn stop<R: Runtime>(app: &AppHandle<R>, name: &str) -> Result<()> {
   run(app, &["stop", name]).await?;
   Ok(())

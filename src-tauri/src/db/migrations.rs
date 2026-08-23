@@ -161,6 +161,17 @@ pub fn migrations() -> Migrations<'static> {
     -- for the same project.
     ALTER TABLE sandboxes ADD COLUMN name TEXT;
     ",
+  ), M::up(
+    "
+    -- Snapshot of the Claude permission mode this sandbox was created
+    -- with (one of plan/default/acceptEdits/bypassPermissions), applied
+    -- both to app-launched autonomous sessions and to a bare `claude`
+    -- typed in the sandbox's own terminal. Existing rows default to
+    -- 'default' (Claude's own manual-approval mode) rather than the
+    -- 'bypassPermissions' they were actually launched with previously,
+    -- since that was undocumented app behavior, not a user choice.
+    ALTER TABLE sandboxes ADD COLUMN permission_mode TEXT NOT NULL DEFAULT 'default';
+    ",
   )])
 }
 

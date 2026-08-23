@@ -84,13 +84,17 @@ impl AgentProvider for ClaudeCodeProvider {
     // Claude Code's default startup flags (see providers::claude_code
     // module docs / sbx's claude-code.md), so this preserves the same
     // stream-json event pipeline translate_event() below expects.
+    // permission_mode is whatever the sandbox was created with (see
+    // create_sandbox's VALID_PERMISSION_MODES) — not hardcoded, so
+    // autonomous runs respect the same setting a manual terminal session
+    // in this sandbox uses (see sbx::set_claude_default_permission_mode).
     let claude_args = vec![
       "-p".to_string(),
       prompt.to_string(),
       "--output-format".to_string(),
       "stream-json".to_string(),
       "--permission-mode".to_string(),
-      "bypassPermissions".to_string(),
+      sandbox.permission_mode.clone(),
       "--verbose".to_string(),
     ];
     let spawned = crate::sbx::run_agent(app, &sbx_name, &claude_args)?;
