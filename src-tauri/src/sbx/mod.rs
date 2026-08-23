@@ -304,29 +304,82 @@ pub struct HostStats {
   pub memory_percent: f64,
   pub memory_used_mb: f64,
   pub memory_total_mb: f64,
+  /// Aggregate space usage across every mounted disk sysinfo can see —
+  /// there's no cross-platform disk I/O throughput API in sysinfo, so this
+  /// is capacity, not activity (it changes slowly, unlike the other stats).
+  pub disk_percent: f64,
+  pub disk_used_mb: f64,
+  pub disk_total_mb: f64,
+  pub network_rx_kb_per_sec: f64,
+  pub network_tx_kb_per_sec: f64,
 }
 
-/// Samples current host-wide CPU/memory usage from a long-lived `System`.
-///
-/// The caller must reuse the same `System` instance across calls (not
-/// recreate it each time): `sysinfo` computes CPU usage as a delta between
-/// two refreshes, so a freshly-constructed `System` always reports 0% on
-/// its first refresh. Managed as Tauri app state, polled every 5s — well
-/// above `sysinfo::MINIMUM_CPU_UPDATE_INTERVAL` — this yields a meaningful
-/// reading on every call after the first.
-pub fn sample_host_stats(sys: &mut sysinfo::System) -> HostStats {
-  sys.refresh_cpu_usage();
-  sys.refresh_memory();
+/// Holds the long-lived state `sample_host_stats` needs to reuse across
+/// polls: `sysinfo` computes both CPU usage and network throughput as a
+/// delta between two refreshes of the *same* instance, so recreating
+/// these each call would always report zero. Managed as Tauri app state.
+pub struct HostMonitor {
+  system: sysinfo::System,
+  networks: sysinfo::Networks,
+  last_sampled: Option<std::time::Instant>,
+}
 
-  let memory_total_mb = sys.total_memory() as f64 / (1024.0 * 1024.0);
-  let memory_used_mb = sys.used_memory() as f64 / (1024.0 * 1024.0);
+impl HostMonitor {
+  pub fn new() -> Self {
+    Self {
+      system: sysinfo::System::new_all(),
+      networks: sysinfo::Networks::new_with_refreshed_list(),
+      last_sampled: None,
+    }
+  }
+}
+
+/// Samples current host-wide CPU/memory/disk/network usage. See
+/// `HostMonitor`'s doc comment for why `monitor` must be reused across
+/// calls rather than recreated. Polled every 5s from the frontend — well
+/// above `sysinfo::MINIMUM_CPU_UPDATE_INTERVAL` — so this yields a
+/// meaningful reading on every call after the first.
+pub fn sample_host_stats(monitor: &mut HostMonitor) -> HostStats {
+  monitor.system.refresh_cpu_usage();
+  monitor.system.refresh_memory();
+  monitor.networks.refresh();
+
+  let memory_total_mb = monitor.system.total_memory() as f64 / (1024.0 * 1024.0);
+  let memory_used_mb = monitor.system.used_memory() as f64 / (1024.0 * 1024.0);
   let memory_percent = if memory_total_mb > 0.0 { memory_used_mb / memory_total_mb * 100.0 } else { 0.0 };
 
+  let disks = sysinfo::Disks::new_with_refreshed_list();
+  let (disk_total, disk_available) = disks
+    .list()
+    .iter()
+    .fold((0u64, 0u64), |(total, available), d| (total + d.total_space(), available + d.available_space()));
+  let disk_total_mb = disk_total as f64 / (1024.0 * 1024.0);
+  let disk_used_mb = (disk_total - disk_available) as f64 / (1024.0 * 1024.0);
+  let disk_percent = if disk_total_mb > 0.0 { disk_used_mb / disk_total_mb * 100.0 } else { 0.0 };
+
+  let elapsed_secs = monitor.last_sampled.map(|t| t.elapsed().as_secs_f64()).unwrap_or(0.0);
+  monitor.last_sampled = Some(std::time::Instant::now());
+  let (rx_bytes, tx_bytes) = monitor
+    .networks
+    .list()
+    .values()
+    .fold((0u64, 0u64), |(rx, tx), data| (rx + data.received(), tx + data.transmitted()));
+  let (network_rx_kb_per_sec, network_tx_kb_per_sec) = if elapsed_secs > 0.0 {
+    (rx_bytes as f64 / 1024.0 / elapsed_secs, tx_bytes as f64 / 1024.0 / elapsed_secs)
+  } else {
+    (0.0, 0.0)
+  };
+
   HostStats {
-    cpu_percent: sys.global_cpu_usage() as f64,
+    cpu_percent: monitor.system.global_cpu_usage() as f64,
     memory_percent,
     memory_used_mb,
     memory_total_mb,
+    disk_percent,
+    disk_used_mb,
+    disk_total_mb,
+    network_rx_kb_per_sec,
+    network_tx_kb_per_sec,
   }
 }
 

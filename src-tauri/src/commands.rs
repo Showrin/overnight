@@ -491,26 +491,20 @@ pub fn get_sandbox_usage(pool: State<DbPool>, id: String) -> std::result::Result
 
 const HOST_METRICS_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 
-/// Samples current host-wide CPU/memory usage, records it, and prunes
-/// samples older than `HOST_METRICS_RETENTION_MS`. Called on the same
-/// poll loop the frontend already uses for sandbox status, so this runs
-/// roughly every 5s (see `sample_host_stats`'s doc comment for why the
-/// `System` must be reused across calls rather than recreated here).
+/// Samples current host-wide CPU/memory/disk/network usage, records it,
+/// and prunes samples older than `HOST_METRICS_RETENTION_MS`. Called on
+/// the same poll loop the frontend already uses for sandbox status, so
+/// this runs roughly every 5s (see `HostMonitor`'s doc comment for why it
+/// must be reused across calls rather than recreated here).
 #[tauri::command]
-pub fn get_host_stats(pool: State<DbPool>, sys: State<Mutex<sysinfo::System>>) -> Result<HostMetric> {
+pub fn get_host_stats(pool: State<DbPool>, monitor: State<Mutex<crate::sbx::HostMonitor>>) -> Result<HostMetric> {
   let stats = {
-    let mut sys = sys.lock().unwrap();
-    crate::sbx::sample_host_stats(&mut sys)
+    let mut monitor = monitor.lock().unwrap();
+    crate::sbx::sample_host_stats(&mut monitor)
   };
 
   let conn = pool.get()?;
-  let metric = host_metrics::record(
-    &conn,
-    stats.cpu_percent,
-    stats.memory_percent,
-    stats.memory_used_mb,
-    stats.memory_total_mb,
-  )?;
+  let metric = host_metrics::record(&conn, &stats)?;
   host_metrics::prune_older_than(&conn, crate::db::models::now_millis() - HOST_METRICS_RETENTION_MS)?;
   Ok(metric)
 }

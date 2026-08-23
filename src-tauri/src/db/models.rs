@@ -60,6 +60,11 @@ pub struct HostMetric {
   pub memory_percent: f64,
   pub memory_used_mb: f64,
   pub memory_total_mb: f64,
+  pub disk_percent: f64,
+  pub disk_used_mb: f64,
+  pub disk_total_mb: f64,
+  pub network_rx_kb_per_sec: f64,
+  pub network_tx_kb_per_sec: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

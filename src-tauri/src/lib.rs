@@ -81,7 +81,7 @@ pub fn run() {
         }
       }
       app.manage(pool);
-      app.manage(std::sync::Mutex::new(sysinfo::System::new_all()));
+      app.manage(std::sync::Mutex::new(sbx::HostMonitor::new()));
 
       let show_item = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
       let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;

@@ -27,4 +27,9 @@ export interface HostMetric {
   memory_percent: number
   memory_used_mb: number
   memory_total_mb: number
+  disk_percent: number
+  disk_used_mb: number
+  disk_total_mb: number
+  network_rx_kb_per_sec: number
+  network_tx_kb_per_sec: number
 }

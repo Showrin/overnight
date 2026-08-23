@@ -187,6 +187,17 @@ pub fn migrations() -> Migrations<'static> {
     );
     CREATE INDEX ix_host_metrics_captured_at ON host_metrics(captured_at);
     ",
+  ), M::up(
+    "
+    -- Disk (aggregate space usage across all mounted disks -- sysinfo has
+    -- no cross-platform disk I/O throughput API) and network (throughput,
+    -- KB/s) added to the PC stats panel alongside CPU/memory.
+    ALTER TABLE host_metrics ADD COLUMN disk_percent REAL NOT NULL DEFAULT 0;
+    ALTER TABLE host_metrics ADD COLUMN disk_used_mb REAL NOT NULL DEFAULT 0;
+    ALTER TABLE host_metrics ADD COLUMN disk_total_mb REAL NOT NULL DEFAULT 0;
+    ALTER TABLE host_metrics ADD COLUMN network_rx_kb_per_sec REAL NOT NULL DEFAULT 0;
+    ALTER TABLE host_metrics ADD COLUMN network_tx_kb_per_sec REAL NOT NULL DEFAULT 0;
+    ",
   )])
 }
 
