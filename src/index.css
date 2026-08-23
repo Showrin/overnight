@@ -174,5 +174,25 @@
     }
   html {
     @apply font-sans;
+    color-scheme: dark;
+    }
+
+  ::-webkit-scrollbar {
+    width: 14px;
+    height: 14px;
+    }
+  ::-webkit-scrollbar-track {
+    background: var(--background);
+    }
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--border-strong);
+    border: 3px solid var(--background);
+    border-radius: 9999px;
+    }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--muted-foreground);
+    }
+  ::-webkit-scrollbar-corner {
+    background: var(--background);
     }
 }
