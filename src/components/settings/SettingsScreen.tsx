@@ -5,7 +5,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { PERMISSION_MODES } from '@/lib/permissionModes'
 import { useAppStore } from '@/store/useAppStore'
-import { AnthropicConfigForm } from './AnthropicConfigForm'
 import { JiraConfigForm, type JiraConfig } from './JiraConfigForm'
 
 export function SettingsScreen() {
@@ -70,8 +69,6 @@ export function SettingsScreen() {
           </Button>
         </CardContent>
       </Card>
-
-      <AnthropicConfigForm />
 
       {jiraConfig && (!jiraConfig.has_token || editingJira) ? (
         <JiraConfigForm
