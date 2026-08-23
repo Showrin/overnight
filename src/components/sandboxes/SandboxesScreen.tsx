@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
 import type { Project } from '@/components/projects/types'
 import { CreateSandboxDialog } from './CreateSandboxDialog'
 import { SandboxCard } from './SandboxCard'
@@ -92,16 +93,18 @@ export function SandboxesScreen() {
       </p>
       {error && <p className="text-sm text-destructive">{error}</p>}
 
-      {creating && (
-        <CreateSandboxDialog
-          projects={projects}
-          onCreated={() => {
-            setCreating(false)
-            loadSandboxes()
-          }}
-          onCancel={() => setCreating(false)}
-        />
-      )}
+      <Dialog open={creating} onOpenChange={setCreating}>
+        <DialogContent title="New sandbox">
+          <CreateSandboxDialog
+            projects={projects}
+            onCreated={() => {
+              setCreating(false)
+              loadSandboxes()
+            }}
+            onCancel={() => setCreating(false)}
+          />
+        </DialogContent>
+      </Dialog>
 
       {sandboxes.length === 0 && (
         <p className="text-sm text-muted-foreground">No sandboxes yet — click New Sandbox to start one.</p>

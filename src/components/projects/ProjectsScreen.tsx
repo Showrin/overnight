@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { ProjectForm } from './ProjectForm'
 import type { Project } from './types'
 
@@ -32,21 +33,22 @@ export function ProjectsScreen() {
     }
   }
 
-  if (editing) {
-    return (
-      <ProjectForm
-        initial={editing === 'new' ? null : editing}
-        onSaved={() => {
-          setEditing(null)
-          loadProjects()
-        }}
-        onCancel={() => setEditing(null)}
-      />
-    )
-  }
-
   return (
     <div className="flex w-full flex-col gap-4">
+      <Dialog open={editing != null} onOpenChange={(open) => !open && setEditing(null)}>
+        <DialogContent title={editing === 'new' ? 'New project' : 'Edit project'}>
+          {editing && (
+            <ProjectForm
+              initial={editing === 'new' ? null : editing}
+              onSaved={() => {
+                setEditing(null)
+                loadProjects()
+              }}
+              onCancel={() => setEditing(null)}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-medium">Projects</h1>
         <Button size="sm" onClick={() => setEditing('new')}>
