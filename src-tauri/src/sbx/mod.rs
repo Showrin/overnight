@@ -298,6 +298,38 @@ pub fn host_free_memory_mb() -> f64 {
   sys.available_memory() as f64 / (1024.0 * 1024.0)
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct HostStats {
+  pub cpu_percent: f64,
+  pub memory_percent: f64,
+  pub memory_used_mb: f64,
+  pub memory_total_mb: f64,
+}
+
+/// Samples current host-wide CPU/memory usage from a long-lived `System`.
+///
+/// The caller must reuse the same `System` instance across calls (not
+/// recreate it each time): `sysinfo` computes CPU usage as a delta between
+/// two refreshes, so a freshly-constructed `System` always reports 0% on
+/// its first refresh. Managed as Tauri app state, polled every 5s — well
+/// above `sysinfo::MINIMUM_CPU_UPDATE_INTERVAL` — this yields a meaningful
+/// reading on every call after the first.
+pub fn sample_host_stats(sys: &mut sysinfo::System) -> HostStats {
+  sys.refresh_cpu_usage();
+  sys.refresh_memory();
+
+  let memory_total_mb = sys.total_memory() as f64 / (1024.0 * 1024.0);
+  let memory_used_mb = sys.used_memory() as f64 / (1024.0 * 1024.0);
+  let memory_percent = if memory_total_mb > 0.0 { memory_used_mb / memory_total_mb * 100.0 } else { 0.0 };
+
+  HostStats {
+    cpu_percent: sys.global_cpu_usage() as f64,
+    memory_percent,
+    memory_used_mb,
+    memory_total_mb,
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;

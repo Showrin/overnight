@@ -14,6 +14,7 @@ pub mod activity;
 #[allow(dead_code)]
 pub mod container_metrics;
 pub mod error;
+pub mod host_metrics;
 pub mod jira_issues;
 pub mod metrics;
 pub mod migrations;

@@ -48,6 +48,8 @@ pub fn run() {
       commands::open_sandbox_vscode,
       commands::open_sandbox_terminal,
       commands::open_path_in_explorer,
+      commands::get_host_stats,
+      commands::get_host_stats_history,
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {
@@ -71,6 +73,7 @@ pub fn run() {
           "jira_issues",
           "projects",
           "sandboxes",
+          "host_metrics",
         ];
         for table in table_names {
           let count: i64 = conn.query_row(&format!("SELECT count(*) FROM {table}"), [], |row| row.get(0))?;
@@ -78,6 +81,7 @@ pub fn run() {
         }
       }
       app.manage(pool);
+      app.manage(std::sync::Mutex::new(sysinfo::System::new_all()));
 
       let show_item = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
       let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;

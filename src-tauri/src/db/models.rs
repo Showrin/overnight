@@ -53,6 +53,16 @@ pub struct Metric {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HostMetric {
+  pub id: String,
+  pub captured_at: i64,
+  pub cpu_percent: f64,
+  pub memory_percent: f64,
+  pub memory_used_mb: f64,
+  pub memory_total_mb: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContainerMetric {
   pub id: String,
   pub session_id: Option<String>,

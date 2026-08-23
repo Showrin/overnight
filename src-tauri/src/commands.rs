@@ -1,9 +1,11 @@
+use std::sync::Mutex;
+
 use serde::Serialize;
 use tauri::{AppHandle, State};
 
 use crate::db::error::{Error, Result};
-use crate::db::models::{JiraIssue, Project, Sandbox, Session, Task};
-use crate::db::{jira_issues, metrics, projects, sandboxes, sessions, settings, tasks, DbPool};
+use crate::db::models::{HostMetric, JiraIssue, Project, Sandbox, Session, Task};
+use crate::db::{host_metrics, jira_issues, metrics, projects, sandboxes, sessions, settings, tasks, DbPool};
 use crate::jira::{self, JiraClient};
 use crate::providers::claude_code::ClaudeCodeProvider;
 use crate::providers::AgentProvider;
@@ -485,6 +487,40 @@ pub fn get_sandbox_usage(pool: State<DbPool>, id: String) -> std::result::Result
   let conn = pool.get().map_err(|e| e.to_string())?;
   let (input_tokens, output_tokens) = metrics::total_tokens_for_sandbox(&conn, &id).map_err(|e| e.to_string())?;
   Ok(SandboxUsage { input_tokens, output_tokens })
+}
+
+const HOST_METRICS_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1000;
+
+/// Samples current host-wide CPU/memory usage, records it, and prunes
+/// samples older than `HOST_METRICS_RETENTION_MS`. Called on the same
+/// poll loop the frontend already uses for sandbox status, so this runs
+/// roughly every 5s (see `sample_host_stats`'s doc comment for why the
+/// `System` must be reused across calls rather than recreated here).
+#[tauri::command]
+pub fn get_host_stats(pool: State<DbPool>, sys: State<Mutex<sysinfo::System>>) -> Result<HostMetric> {
+  let stats = {
+    let mut sys = sys.lock().unwrap();
+    crate::sbx::sample_host_stats(&mut sys)
+  };
+
+  let conn = pool.get()?;
+  let metric = host_metrics::record(
+    &conn,
+    stats.cpu_percent,
+    stats.memory_percent,
+    stats.memory_used_mb,
+    stats.memory_total_mb,
+  )?;
+  host_metrics::prune_older_than(&conn, crate::db::models::now_millis() - HOST_METRICS_RETENTION_MS)?;
+  Ok(metric)
+}
+
+/// History for seeding the PC stats panel's charts on page load, before
+/// live polling (`get_host_stats`) takes over appending new points.
+#[tauri::command]
+pub fn get_host_stats_history(pool: State<DbPool>, since_ms: i64) -> Result<Vec<HostMetric>> {
+  let conn = pool.get()?;
+  host_metrics::list_since(&conn, since_ms)
 }
 
 /// Opens VS Code's Remote-SSH into the sandbox, running `sbx setup ssh`

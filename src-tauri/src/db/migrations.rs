@@ -172,6 +172,21 @@ pub fn migrations() -> Migrations<'static> {
     -- since that was undocumented app behavior, not a user choice.
     ALTER TABLE sandboxes ADD COLUMN permission_mode TEXT NOT NULL DEFAULT 'default';
     ",
+  ), M::up(
+    "
+    -- Host-wide CPU/memory samples for the Sandboxes page's PC stats panel.
+    -- Per-sandbox equivalents aren't possible yet (see container_metrics'
+    -- doc comment), so this only ever tracks the whole machine.
+    CREATE TABLE host_metrics (
+      id TEXT PRIMARY KEY,
+      captured_at INTEGER NOT NULL,
+      cpu_percent REAL NOT NULL,
+      memory_percent REAL NOT NULL,
+      memory_used_mb REAL NOT NULL,
+      memory_total_mb REAL NOT NULL
+    );
+    CREATE INDEX ix_host_metrics_captured_at ON host_metrics(captured_at);
+    ",
   )])
 }
 
@@ -197,6 +212,6 @@ mod tests {
         |row| row.get(0),
       )
       .unwrap();
-    assert_eq!(table_count, 9);
+    assert_eq!(table_count, 10);
   }
 }
