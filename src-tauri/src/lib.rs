@@ -37,6 +37,7 @@ pub fn run() {
       commands::save_settings,
       commands::start_plan_session,
       commands::sbx_health_check,
+      commands::init_sbx_policy,
       commands::list_sandboxes,
       commands::create_sandbox,
       commands::stop_sandbox,

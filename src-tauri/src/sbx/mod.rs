@@ -19,6 +19,8 @@ pub enum Error {
   Process(#[from] crate::process::Error),
   #[error("command failed: {0}")]
   CommandFailed(String),
+  #[error("sbx's global network policy hasn't been initialized yet — run sbx policy init <allow-all|balanced|deny-all>")]
+  PolicyNotInitialized,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -26,13 +28,24 @@ pub type Result<T> = std::result::Result<T, Error>;
 async fn run<R: Runtime>(app: &AppHandle<R>, args: &[&str]) -> Result<String> {
   let output = app.shell().command("sbx").args(args).output().await?;
   if !output.status.success() {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if stderr.contains("network policy has not been initialized") {
+      return Err(Error::PolicyNotInitialized);
+    }
     return Err(Error::CommandFailed(format!(
-      "sbx {args:?} exited with {:?}: {}",
+      "sbx {args:?} exited with {:?}: {stderr}",
       output.status.code(),
-      String::from_utf8_lossy(&output.stderr).trim()
     )));
   }
   Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// `sbx policy init <preset>` — one-time, machine-wide setup that answers
+/// the interactive network-policy prompt headlessly. `preset` must be one
+/// of `allow-all`, `balanced`, or `deny-all` (sbx's own accepted values).
+pub async fn policy_init<R: Runtime>(app: &AppHandle<R>, preset: &str) -> Result<()> {
+  run(app, &["policy", "init", preset]).await?;
+  Ok(())
 }
 
 /// Health check for the Sandboxes page. `sbx ls` is read-only, so (unlike
@@ -49,10 +62,9 @@ pub async fn health_check<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
 /// repo path; in clone mode `sbx` clones it into an isolated copy inside
 /// the sandbox VM itself rather than us managing a host-side clone folder.
 ///
-/// Note: if this is the very first sandbox `sbx create`/`sbx run` has ever
-/// created on this machine, `sbx` prompts interactively for a default
-/// network policy. That prompt has no headless answer here — run
-/// `sbx run claude` once yourself in a terminal first to clear it.
+/// If this machine's global network policy has never been set, this
+/// returns `Error::PolicyNotInitialized` — callers should prompt for a
+/// preset and call `policy_init` before retrying.
 pub async fn create<R: Runtime>(app: &AppHandle<R>, name: &str, clone: bool, workspace: &str) -> Result<()> {
   let mut args = vec!["create", "--name", name];
   if clone {

@@ -307,6 +307,19 @@ pub async fn sbx_health_check(app: AppHandle) -> std::result::Result<(), String>
   crate::sbx::health_check(&app).await.map_err(|e| e.to_string())
 }
 
+const VALID_NETWORK_POLICY_PRESETS: [&str; 3] = ["allow-all", "balanced", "deny-all"];
+
+/// One-time, machine-wide setup answering sbx's interactive network-policy
+/// prompt headlessly. The frontend calls this when `create_sandbox` fails
+/// with the "network policy hasn't been initialized" error.
+#[tauri::command]
+pub async fn init_sbx_policy(app: AppHandle, preset: String) -> std::result::Result<(), String> {
+  if !VALID_NETWORK_POLICY_PRESETS.contains(&preset.as_str()) {
+    return Err(format!("invalid network policy preset: {preset}"));
+  }
+  crate::sbx::policy_init(&app, &preset).await.map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn list_sandboxes(pool: State<'_, DbPool>) -> std::result::Result<Vec<Sandbox>, String> {
   let conn = pool.get().map_err(|e| e.to_string())?;

@@ -19,17 +19,38 @@ export function CreateSandboxDialog({
   const [mode, setMode] = useState<SandboxMode>('mount')
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [needsPolicyInit, setNeedsPolicyInit] = useState(false)
+  const [initializingPolicy, setInitializingPolicy] = useState(false)
 
   async function handleCreate() {
     setCreating(true)
     setError(null)
+    setNeedsPolicyInit(false)
     try {
       await invoke<Sandbox>('create_sandbox', { projectId, mode })
       onCreated()
     } catch (e) {
-      setError(String(e))
+      const message = String(e)
+      setError(message)
+      if (message.includes("network policy hasn't been initialized")) {
+        setNeedsPolicyInit(true)
+      }
     } finally {
       setCreating(false)
+    }
+  }
+
+  async function initPolicyAndRetry(preset: 'allow-all' | 'balanced' | 'deny-all') {
+    setInitializingPolicy(true)
+    setError(null)
+    try {
+      await invoke('init_sbx_policy', { preset })
+      setNeedsPolicyInit(false)
+      await handleCreate()
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setInitializingPolicy(false)
     }
   }
 
@@ -81,6 +102,27 @@ export function CreateSandboxDialog({
           </p>
         </div>
         {error && <p className="text-sm text-destructive">{error}</p>}
+
+        {needsPolicyInit && (
+          <div className="flex flex-col gap-2 rounded-lg border border-border p-2.5">
+            <p className="text-xs text-muted-foreground">
+              sbx needs a one-time network policy for this machine before it can create sandboxes. Balanced is a
+              good default — allows common dev services, blocks everything else.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="outline" disabled={initializingPolicy} onClick={() => initPolicyAndRetry('allow-all')}>
+                Open
+              </Button>
+              <Button size="sm" disabled={initializingPolicy} onClick={() => initPolicyAndRetry('balanced')}>
+                Balanced (recommended)
+              </Button>
+              <Button size="sm" variant="outline" disabled={initializingPolicy} onClick={() => initPolicyAndRetry('deny-all')}>
+                Locked down
+              </Button>
+            </div>
+          </div>
+        )}
+
         <div className="flex gap-2">
           <Button className="flex-1" onClick={handleCreate} disabled={creating || !projectId}>
             {creating ? 'Starting…' : 'Start sandbox'}
