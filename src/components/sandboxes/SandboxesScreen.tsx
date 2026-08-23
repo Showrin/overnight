@@ -100,7 +100,7 @@ export function SandboxesScreen() {
 
   return (
     <div className="flex w-full gap-6">
-      <div className="flex flex-1 flex-col gap-6">
+      <div className="flex flex-1 flex-col gap-6 pb-56 min-[820px]:pb-0">
         <h1 className="text-lg font-medium">Sandboxes</h1>
         <p className="text-xs text-muted-foreground">
           If this is the first sandbox created on this machine, `sbx` may prompt for a network policy the first time —
@@ -147,8 +147,12 @@ export function SandboxesScreen() {
         )}
       </div>
 
-      <div className="w-72 shrink-0">
+      <div className="hidden w-72 shrink-0 self-start min-[820px]:block min-[820px]:sticky min-[820px]:top-6">
         <HostStatsPanel />
+      </div>
+
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border-subtle bg-background p-4 min-[820px]:hidden">
+        <HostStatsPanel layout="bar" />
       </div>
     </div>
   )
