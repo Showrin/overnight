@@ -24,7 +24,7 @@ function App() {
       <div className="flex flex-1 overflow-hidden">
         <Sidebar current={screen} onNavigate={setScreen} collapsed={sidebarCollapsed} />
         <main className="flex flex-1 justify-center overflow-auto">
-          <div className="w-full max-w-[1024px] p-6">
+          <div className="@container w-full max-w-[1024px] p-6">
             {screen === 'dashboard' && <JiraIssueList />}
             {screen === 'projects' && <ProjectsScreen />}
             {screen === 'sandboxes' && <SandboxesScreen />}
