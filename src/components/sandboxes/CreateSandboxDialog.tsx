@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
+import { notify } from '@/lib/notify'
 import type { Project } from '@/components/projects/types'
 import type { Sandbox, SandboxMode } from './types'
 
@@ -28,6 +30,7 @@ export function CreateSandboxDialog({
     setNeedsPolicyInit(false)
     try {
       await invoke<Sandbox>('create_sandbox', { projectId, mode })
+      notify('Sandbox started', 'Your sandbox is up and running.')
       onCreated()
     } catch (e) {
       const message = String(e)
@@ -125,6 +128,7 @@ export function CreateSandboxDialog({
 
         <div className="flex gap-2">
           <Button className="flex-1" onClick={handleCreate} disabled={creating || !projectId}>
+            {creating && <Loader2 className="size-3.5 animate-spin" />}
             {creating ? 'Starting…' : 'Start sandbox'}
           </Button>
           <Button variant="outline" onClick={onCancel} disabled={creating}>

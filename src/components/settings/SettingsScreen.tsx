@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { AnthropicConfigForm } from './AnthropicConfigForm'
 import { JiraConfigForm, type JiraConfig } from './JiraConfigForm'
 
 interface AppSettings {
@@ -74,6 +75,8 @@ export function SettingsScreen() {
           </Button>
         </CardContent>
       </Card>
+
+      <AnthropicConfigForm />
 
       {jiraConfig && (!jiraConfig.has_token || editingJira) ? (
         <JiraConfigForm

@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { Loader2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { notify } from '@/lib/notify'
 import type { Sandbox, SandboxUsage } from './types'
 
 const USAGE_POLL_MS = 5000
+
+type BusyAction = 'start' | 'stop' | 'delete' | 'vscode' | 'terminal' | null
 
 export function SandboxCard({
   sandbox,
@@ -17,7 +21,7 @@ export function SandboxCard({
   onChanged: () => void
 }) {
   const [usage, setUsage] = useState<SandboxUsage | null>(null)
-  const [busy, setBusy] = useState(false)
+  const [busyAction, setBusyAction] = useState<BusyAction>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -41,16 +45,17 @@ export function SandboxCard({
     }
   }, [sandbox.id, sandbox.status])
 
-  async function run(action: () => Promise<unknown>) {
-    setBusy(true)
+  async function run(which: Exclude<BusyAction, null>, action: () => Promise<unknown>) {
+    setBusyAction(which)
     setError(null)
     try {
       await action()
+      if (which === 'start') notify('Sandbox started', `${projectName} is up and running.`)
       onChanged()
     } catch (e) {
       setError(String(e))
     } finally {
-      setBusy(false)
+      setBusyAction(null)
     }
   }
 
@@ -91,10 +96,22 @@ export function SandboxCard({
         <div className="flex flex-wrap gap-2">
           {sandbox.status === 'running' && (
             <>
-              <Button size="sm" variant="outline" disabled={busy} onClick={() => run(() => invoke('open_sandbox_vscode', { id: sandbox.id }))}>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busyAction != null}
+                onClick={() => run('vscode', () => invoke('open_sandbox_vscode', { id: sandbox.id }))}
+              >
+                {busyAction === 'vscode' && <Loader2 className="size-3.5 animate-spin" />}
                 Open in VS Code
               </Button>
-              <Button size="sm" variant="outline" disabled={busy} onClick={() => run(() => invoke('open_sandbox_terminal', { id: sandbox.id }))}>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busyAction != null}
+                onClick={() => run('terminal', () => invoke('open_sandbox_terminal', { id: sandbox.id }))}
+              >
+                {busyAction === 'terminal' && <Loader2 className="size-3.5 animate-spin" />}
                 Terminal
               </Button>
               {sandbox.host_port != null && (
@@ -102,17 +119,35 @@ export function SandboxCard({
                   Open in browser
                 </Button>
               )}
-              <Button size="sm" variant="outline" disabled={busy} onClick={() => run(() => invoke('stop_sandbox', { id: sandbox.id }))}>
-                Stop
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busyAction != null}
+                onClick={() => run('stop', () => invoke('stop_sandbox', { id: sandbox.id }))}
+              >
+                {busyAction === 'stop' && <Loader2 className="size-3.5 animate-spin" />}
+                {busyAction === 'stop' ? 'Stopping…' : 'Stop'}
               </Button>
             </>
           )}
           {sandbox.status === 'stopped' && (
-            <Button size="sm" variant="outline" disabled={busy} onClick={() => run(() => invoke('start_sandbox', { id: sandbox.id }))}>
-              Start
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busyAction != null}
+              onClick={() => run('start', () => invoke('start_sandbox', { id: sandbox.id }))}
+            >
+              {busyAction === 'start' && <Loader2 className="size-3.5 animate-spin" />}
+              {busyAction === 'start' ? 'Starting…' : 'Start'}
             </Button>
           )}
-          <Button size="sm" variant="destructive" disabled={busy} onClick={() => run(() => invoke('delete_sandbox', { id: sandbox.id }))}>
+          <Button
+            size="sm"
+            variant="destructive"
+            disabled={busyAction != null}
+            onClick={() => run('delete', () => invoke('delete_sandbox', { id: sandbox.id }))}
+          >
+            {busyAction === 'delete' && <Loader2 className="size-3.5 animate-spin" />}
             Delete
           </Button>
         </div>

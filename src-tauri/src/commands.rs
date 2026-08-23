@@ -320,6 +320,14 @@ pub async fn init_sbx_policy(app: AppHandle, preset: String) -> std::result::Res
   crate::sbx::policy_init(&app, &preset).await.map_err(|e| e.to_string())
 }
 
+/// Stores the user's Anthropic API key as a global sbx secret so Claude
+/// Code sessions inside every sandbox authenticate automatically instead
+/// of needing an interactive `/login`.
+#[tauri::command]
+pub async fn set_anthropic_api_key(app: AppHandle, token: String) -> std::result::Result<(), String> {
+  crate::sbx::set_anthropic_secret(&app, &token).await.map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn list_sandboxes(pool: State<'_, DbPool>) -> std::result::Result<Vec<Sandbox>, String> {
   let conn = pool.get().map_err(|e| e.to_string())?;
@@ -408,8 +416,6 @@ pub async fn stop_sandbox(app: AppHandle, pool: State<'_, DbPool>, id: String) -
   sandboxes::update_status(&conn, &id, "stopped", None, None).map_err(|e| e.to_string())
 }
 
-// Best-effort: see the doc comment on sbx::resume for why this isn't
-// verified against a real sbx install.
 #[tauri::command]
 pub async fn start_sandbox(app: AppHandle, pool: State<'_, DbPool>, id: String) -> std::result::Result<Sandbox, String> {
   let pool = pool.inner().clone();
@@ -417,15 +423,10 @@ pub async fn start_sandbox(app: AppHandle, pool: State<'_, DbPool>, id: String) 
     let conn = pool.get().map_err(|e| e.to_string())?;
     sandboxes::get(&conn, &id).map_err(|e| e.to_string())?
   };
-  let name = sandbox.sbx_name.clone().ok_or_else(|| "sandbox has no sbx sandbox to start".to_string())?;
-  let workspace = {
-    let conn = pool.get().map_err(|e| e.to_string())?;
-    let project = projects::get(&conn, &sandbox.project_id).map_err(|e| e.to_string())?;
-    project.repo_path
-  };
+  let name = sandbox.sbx_name.ok_or_else(|| "sandbox has no sbx sandbox to start".to_string())?;
 
   check_free_memory()?;
-  crate::sbx::resume(&app, &name, sandbox.mode == "clone", &workspace).await.map_err(|e| e.to_string())?;
+  crate::sbx::resume(&app, &name).map_err(|e| e.to_string())?;
 
   let conn = pool.get().map_err(|e| e.to_string())?;
   sandboxes::update_status(&conn, &id, "running", None, None).map_err(|e| e.to_string())
@@ -474,12 +475,25 @@ pub fn open_sandbox_vscode(pool: State<DbPool>, id: String) -> std::result::Resu
   let name = sandbox.sbx_name.ok_or_else(|| "sandbox isn't running".to_string())?;
   let remote = format!("ssh-remote+{name}.sbx");
 
+  // `code` is a .cmd shim on Windows; CreateProcessW (what
+  // std::process::Command uses) can't execute batch files directly, so it
+  // has to go through cmd.exe like the terminal launch below does.
+  #[cfg(target_os = "windows")]
+  let mut cmd = {
+    let mut cmd = std::process::Command::new("cmd");
+    cmd.arg("/C").arg("code");
+    cmd
+  };
+  #[cfg(not(target_os = "windows"))]
   let mut cmd = std::process::Command::new("code");
+
   cmd.arg("--remote").arg(&remote);
   if let Some(folder) = sandbox.folder_path {
     cmd.arg(folder);
   }
-  cmd.spawn().map_err(|e| e.to_string())?;
+  cmd
+    .spawn()
+    .map_err(|e| format!("failed to launch VS Code ({e}) — make sure `code` is on your PATH (VS Code's \"Shell Command: Install 'code' command in PATH\")"))?;
   Ok(())
 }
 

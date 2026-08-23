@@ -48,6 +48,15 @@ pub async fn policy_init<R: Runtime>(app: &AppHandle<R>, preset: &str) -> Result
   Ok(())
 }
 
+/// `sbx secret set anthropic -t <token>` — stores the Anthropic API key
+/// globally (OS keychain), so every sandbox's Claude Code session
+/// authenticates via the host-side proxy instead of needing an interactive
+/// `/login` inside each sandbox.
+pub async fn set_anthropic_secret<R: Runtime>(app: &AppHandle<R>, token: &str) -> Result<()> {
+  run(app, &["secret", "set", "anthropic", "-t", token]).await?;
+  Ok(())
+}
+
 /// Health check for the Sandboxes page. `sbx ls` is read-only, so (unlike
 /// `sbx run`/`sbx create`) it shouldn't trigger the interactive first-run
 /// network-policy prompt — it errors cleanly if `sbx` isn't installed or
@@ -81,14 +90,20 @@ pub async fn stop<R: Runtime>(app: &AppHandle<R>, name: &str) -> Result<()> {
   Ok(())
 }
 
-/// Best-effort resume of a stopped sandbox. `sbx` has no documented plain
-/// "start" command — `sbx run` attaches interactively (fine for one-shot
-/// agent invocations, wrong for "just start it in the background"), and
-/// it's unconfirmed whether re-running `sbx create` against an existing
-/// name is idempotent. This is that best guess; revise once verified
-/// against a real `sbx` install.
-pub async fn resume<R: Runtime>(app: &AppHandle<R>, name: &str, clone: bool, workspace: &str) -> Result<()> {
-  create(app, name, clone, workspace).await
+/// Resumes a stopped sandbox. `sbx` has no plain "start" — re-running
+/// `sbx create` against an existing name errors ("already exists, use
+/// sbx run --name ... to connect"), confirming `sbx run --name <name>` is
+/// the actual reconnect path. `sbx run` attaches interactively (starts the
+/// VM if needed, then attaches to the agent session), so this spawns it
+/// without awaiting completion rather than using `run()`'s `.output()` —
+/// otherwise this call would block until the agent session ends. The
+/// spawned process is intentionally not consumed further; dropping the
+/// handle doesn't kill it; it keeps the VM (and its agent session) running
+/// in the background the same way `sbx run` would from a terminal.
+pub fn resume<R: Runtime>(app: &AppHandle<R>, name: &str) -> Result<()> {
+  let args = vec!["run".to_string(), "--name".to_string(), name.to_string()];
+  crate::process::spawn(app, "sbx", &args, None)?;
+  Ok(())
 }
 
 /// Force-removes the sandbox and its VM (used by explicit sandbox Delete).

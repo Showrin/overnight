@@ -38,6 +38,7 @@ pub fn run() {
       commands::start_plan_session,
       commands::sbx_health_check,
       commands::init_sbx_policy,
+      commands::set_anthropic_api_key,
       commands::list_sandboxes,
       commands::create_sandbox,
       commands::stop_sandbox,
