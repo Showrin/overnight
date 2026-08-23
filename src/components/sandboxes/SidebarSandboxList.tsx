@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { ChevronsUpDown, Code, Loader2, Play, Square, TerminalSquare } from 'lucide-react'
 import type { Screen } from '@/components/sidebar'
+import { notify } from '@/lib/notify'
 import { useAppStore } from '@/store/useAppStore'
 import type { Sandbox } from './types'
 
@@ -19,6 +20,9 @@ export function SidebarSandboxList({ onNavigate }: { onNavigate: (screen: Screen
     setBusy({ id: sandbox.id, action })
     try {
       await invoker()
+      const title = sandbox.name ?? projects.find((p) => p.id === sandbox.project_id)?.name ?? 'Sandbox'
+      if (action === 'start') notify('Sandbox started', `${title} is up and running.`)
+      if (action === 'stop') notify('Sandbox stopped', `${title} has been stopped.`)
       await loadSandboxes()
     } catch {
       // Best-effort — surfacing errors here would need its own UI; the full
