@@ -5,10 +5,13 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { notify } from '@/lib/notify'
 import { PERMISSION_MODES } from '@/lib/permissionModes'
 import type { Project } from '@/components/projects/types'
 import type { Sandbox, SandboxMode } from './types'
+
+const DEFAULT_PERMISSION_MODE = '__settings_default__'
 
 function ErrorDetails({ message }: { message: string }) {
   const [copied, setCopied] = useState(false)
@@ -103,18 +106,18 @@ export function CreateSandboxDialog({
       <CardContent className="flex flex-col gap-3">
         <div className="flex flex-col gap-1">
           <Label htmlFor="sandbox-project">Project</Label>
-          <select
-            id="sandbox-project"
-            value={projectId}
-            onChange={(e) => setProjectId(e.target.value)}
-            className="h-8 rounded-lg border border-border bg-background px-2.5 text-sm"
-          >
-            {projects.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.name}
-              </option>
-            ))}
-          </select>
+          <Select value={projectId} onValueChange={setProjectId}>
+            <SelectTrigger id="sandbox-project">
+              <SelectValue placeholder="Select a project" />
+            </SelectTrigger>
+            <SelectContent>
+              {projects.map((project) => (
+                <SelectItem key={project.id} value={project.id}>
+                  {project.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         <div className="flex flex-col gap-1">
           <Label htmlFor="sandbox-name">Name (optional)</Label>
@@ -127,19 +130,24 @@ export function CreateSandboxDialog({
         </div>
         <div className="flex flex-col gap-1">
           <Label htmlFor="sandbox-permission-mode">Permission mode</Label>
-          <select
-            id="sandbox-permission-mode"
-            value={permissionMode}
-            onChange={(e) => setPermissionMode(e.target.value)}
-            className="h-8 rounded-lg border border-border bg-background px-2.5 text-sm"
+          <Select
+            value={permissionMode || DEFAULT_PERMISSION_MODE}
+            onValueChange={(value) =>
+              setPermissionMode(value === DEFAULT_PERMISSION_MODE ? '' : value)
+            }
           >
-            <option value="">Use Settings default</option>
-            {PERMISSION_MODES.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger id="sandbox-permission-mode">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={DEFAULT_PERMISSION_MODE}>Use Settings default</SelectItem>
+              {PERMISSION_MODES.map((m) => (
+                <SelectItem key={m} value={m}>
+                  {m}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         <div className="flex flex-col gap-1">
           <Label>Mode</Label>

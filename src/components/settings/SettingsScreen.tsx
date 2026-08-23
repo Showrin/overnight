@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { PERMISSION_MODES } from '@/lib/permissionModes'
 import { AnthropicConfigForm } from './AnthropicConfigForm'
 import { JiraConfigForm, type JiraConfig } from './JiraConfigForm'
@@ -9,9 +10,6 @@ import { JiraConfigForm, type JiraConfig } from './JiraConfigForm'
 interface AppSettings {
   default_claude_permission_mode: string
 }
-
-const selectClassName =
-  'h-8 rounded-lg border border-border bg-background px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50'
 
 export function SettingsScreen() {
   const [permissionMode, setPermissionMode] = useState<string>('default')
@@ -57,17 +55,18 @@ export function SettingsScreen() {
           <CardTitle>Default Claude permission mode</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-2">
-          <select
-            className={selectClassName}
-            value={permissionMode}
-            onChange={(e) => setPermissionMode(e.target.value)}
-          >
-            {PERMISSION_MODES.map((mode) => (
-              <option key={mode} value={mode}>
-                {mode}
-              </option>
-            ))}
-          </select>
+          <Select value={permissionMode} onValueChange={setPermissionMode}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PERMISSION_MODES.map((mode) => (
+                <SelectItem key={mode} value={mode}>
+                  {mode}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           {modeError && <p className="text-sm text-destructive">{modeError}</p>}
           <Button onClick={handleSaveMode} disabled={savingMode}>
             {savingMode ? 'Saving…' : 'Save'}
