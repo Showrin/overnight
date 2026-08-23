@@ -1,13 +1,16 @@
 /*
- * Design tokens (OVN-58) — Supabase-inspired dark-native theme.
+ * Design tokens (OVN-58) — reference-dashboard-inspired dark-native theme.
  *
  * Icon convention: lucide-react exclusively, default 24px / strokeWidth 1.5
  * for content icons. The titlebar's chrome icons (logo, window controls) are
  * a deliberate, documented exception at a much smaller size (size-3 to
  * size-3.5) since they're window chrome, not content.
  *
- * Elevation is communicated entirely through border contrast (--border-subtle
- * / --border / --border-strong), never drop shadows.
+ * Elevation is communicated via soft shadows (--shadow-sm/--shadow-md/
+ * --shadow-lg), calibrated for a near-black background where shadows read
+ * faintly on their own — cards pair a shadow with a subtle border
+ * (--border-subtle) rather than relying on shadow alone. Hairline dividers
+ * still use the --border-subtle/--border/--border-strong contrast scale.
  */
 @import "tailwindcss";
 @import "tw-animate-css";
@@ -42,6 +45,8 @@
     --color-destructive: var(--destructive);
     --color-warning: var(--warning);
     --color-warning-foreground: var(--warning-foreground);
+    --color-success: var(--success);
+    --color-success-foreground: var(--success-foreground);
     --color-accent-foreground: var(--accent-foreground);
     --color-accent: var(--accent);
     --color-muted-foreground: var(--muted-foreground);
@@ -68,6 +73,11 @@
     --radius-2xl: 1rem;
     --radius-3xl: 1.25rem;
     --radius-4xl: 1.5rem;
+    /* Shadow scale — soft, low-opacity black shadows for a near-black
+       background, paired with --border-subtle on elevated surfaces. */
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);
+    --shadow-md: 0 4px 12px -2px rgb(0 0 0 / 0.4), 0 2px 4px -2px rgb(0 0 0 / 0.3);
+    --shadow-lg: 0 12px 24px -4px rgb(0 0 0 / 0.45), 0 4px 8px -4px rgb(0 0 0 / 0.3);
 }
 
 :root {
@@ -78,9 +88,9 @@
     --card-foreground: #11181c;
     --popover: #ffffff;
     --popover-foreground: #11181c;
-    --primary: #3ecf8e;
-    --primary-hover: #249361;
-    --primary-foreground: #0a0a0a;
+    --primary: #6366f1;
+    --primary-hover: #4f46e5;
+    --primary-foreground: #fafafa;
     --secondary: oklch(0.97 0 0);
     --secondary-foreground: #11181c;
     --muted: oklch(0.97 0 0);
@@ -88,67 +98,71 @@
     --accent: oklch(0.97 0 0);
     --accent-foreground: #11181c;
     --destructive: #e5484d;
-    --warning: #f5a623;
+    --warning: #f97316;
     --warning-foreground: #1c1c1c;
+    --success: #22c55e;
+    --success-foreground: #052e16;
     --border-subtle: oklch(0.94 0 0);
     --border: oklch(0.922 0 0);
     --border-strong: oklch(0.85 0 0);
     --input: oklch(0.922 0 0);
-    --ring: #3ecf8e;
-    --chart-1: #3ecf8e;
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: #e5484d;
-    --chart-5: oklch(0.269 0 0);
+    --ring: #6366f1;
+    --chart-1: #6366f1;
+    --chart-2: #f97316;
+    --chart-3: #22c55e;
+    --chart-4: oklch(0.556 0 0);
+    --chart-5: #11181c;
     --radius: 0.5rem;
     --sidebar: #f1f2f3;
     --sidebar-foreground: #11181c;
-    --sidebar-primary: #3ecf8e;
-    --sidebar-primary-foreground: #0a0a0a;
+    --sidebar-primary: #6366f1;
+    --sidebar-primary-foreground: #fafafa;
     --sidebar-accent: oklch(0.97 0 0);
     --sidebar-accent-foreground: #11181c;
     --sidebar-border: oklch(0.922 0 0);
-    --sidebar-ring: #3ecf8e;
+    --sidebar-ring: #6366f1;
 }
 
 .dark {
-    --background: #1f1f1f;
-    --background-alt: #171717;
-    --foreground: #fafafa;
-    --card: #2a2a2a;
-    --card-foreground: #fafafa;
-    --popover: #2a2a2a;
-    --popover-foreground: #fafafa;
-    --primary: #3ecf8e;
-    --primary-hover: #249361;
-    --primary-foreground: #0a0a0a;
-    --secondary: #2e2e2e;
-    --secondary-foreground: #fafafa;
-    --muted: #262626;
-    --muted-foreground: #a1a1a1;
-    --accent: #262626;
-    --accent-foreground: #fafafa;
+    --background: #0f0f12;
+    --background-alt: #141417;
+    --foreground: #f5f5f7;
+    --card: #1a1a1f;
+    --card-foreground: #f5f5f7;
+    --popover: #1a1a1f;
+    --popover-foreground: #f5f5f7;
+    --primary: #6366f1;
+    --primary-hover: #4f46e5;
+    --primary-foreground: #fafafa;
+    --secondary: #202026;
+    --secondary-foreground: #f5f5f7;
+    --muted: #1c1c22;
+    --muted-foreground: #8b8b95;
+    --accent: #1f1f26;
+    --accent-foreground: #f5f5f7;
     --destructive: #e5484d;
-    --warning: #f5a623;
-    --warning-foreground: #1c1c1c;
-    --border-subtle: #242424;
-    --border: #2e2e2e;
-    --border-strong: #363636;
-    --input: #2e2e2e;
-    --ring: #3ecf8e;
-    --chart-1: #3ecf8e;
-    --chart-2: #a1a1a1;
-    --chart-3: #6e6e6e;
-    --chart-4: #e5484d;
-    --chart-5: #fafafa;
-    --sidebar: #171717;
-    --sidebar-foreground: #fafafa;
-    --sidebar-primary: #3ecf8e;
-    --sidebar-primary-foreground: #0a0a0a;
-    --sidebar-accent: #262626;
-    --sidebar-accent-foreground: #fafafa;
-    --sidebar-border: #2e2e2e;
-    --sidebar-ring: #3ecf8e;
+    --warning: #f97316;
+    --warning-foreground: #fff7ed;
+    --success: #22c55e;
+    --success-foreground: #f0fdf4;
+    --border-subtle: #1e1e24;
+    --border: #2a2a33;
+    --border-strong: #35353f;
+    --input: #2a2a33;
+    --ring: #6366f1;
+    --chart-1: #6366f1;
+    --chart-2: #f97316;
+    --chart-3: #22c55e;
+    --chart-4: #8b8b95;
+    --chart-5: #f5f5f7;
+    --sidebar: #141417;
+    --sidebar-foreground: #f5f5f7;
+    --sidebar-primary: #6366f1;
+    --sidebar-primary-foreground: #fafafa;
+    --sidebar-accent: #1f1f26;
+    --sidebar-accent-foreground: #f5f5f7;
+    --sidebar-border: #2a2a33;
+    --sidebar-ring: #6366f1;
 }
 
 @layer base {
