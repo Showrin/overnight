@@ -1,13 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { Loader2 } from 'lucide-react'
+import { Code, ExternalLink, Loader2, Play, Square, TerminalSquare, Trash2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { notify } from '@/lib/notify'
-import type { Sandbox, SandboxUsage } from './types'
-
-const USAGE_POLL_MS = 5000
+import type { Sandbox } from './types'
 
 type BusyAction = 'start' | 'stop' | 'delete' | 'vscode' | 'terminal' | null
 
@@ -20,30 +18,8 @@ export function SandboxCard({
   projectName: string
   onChanged: () => void
 }) {
-  const [usage, setUsage] = useState<SandboxUsage | null>(null)
   const [busyAction, setBusyAction] = useState<BusyAction>(null)
   const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (sandbox.status !== 'running') return
-    let cancelled = false
-
-    async function poll() {
-      try {
-        const u = await invoke<SandboxUsage>('get_sandbox_usage', { id: sandbox.id })
-        if (!cancelled) setUsage(u)
-      } catch {
-        // Best-effort — a single missed poll shouldn't show as a card error.
-      }
-    }
-
-    poll()
-    const interval = setInterval(poll, USAGE_POLL_MS)
-    return () => {
-      cancelled = true
-      clearInterval(interval)
-    }
-  }, [sandbox.id, sandbox.status])
 
   async function run(which: Exclude<BusyAction, null>, action: () => Promise<unknown>) {
     setBusyAction(which)
@@ -87,14 +63,6 @@ export function SandboxCard({
       <CardContent className="flex flex-col gap-3 text-sm text-muted-foreground">
         {sandbox.folder_path && <span className="truncate">{sandbox.folder_path}</span>}
 
-        {sandbox.status === 'running' && (
-          <div className="flex flex-wrap gap-2">
-            <Badge variant="outline">
-              tokens {usage ? (usage.input_tokens + usage.output_tokens).toLocaleString() : '—'}
-            </Badge>
-          </div>
-        )}
-
         {error && <p className="text-destructive">{error}</p>}
 
         <div className="flex flex-wrap gap-2">
@@ -106,7 +74,11 @@ export function SandboxCard({
                 disabled={busyAction != null}
                 onClick={() => run('vscode', () => invoke('open_sandbox_vscode', { id: sandbox.id }))}
               >
-                {busyAction === 'vscode' && <Loader2 className="size-3.5 animate-spin" />}
+                {busyAction === 'vscode' ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Code className="size-3.5" />
+                )}
                 Open in VS Code
               </Button>
               <Button
@@ -115,11 +87,16 @@ export function SandboxCard({
                 disabled={busyAction != null}
                 onClick={() => run('terminal', () => invoke('open_sandbox_terminal', { id: sandbox.id }))}
               >
-                {busyAction === 'terminal' && <Loader2 className="size-3.5 animate-spin" />}
+                {busyAction === 'terminal' ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <TerminalSquare className="size-3.5" />
+                )}
                 Terminal
               </Button>
               {sandbox.host_port != null && (
                 <Button size="sm" variant="outline" onClick={openInBrowser}>
+                  <ExternalLink className="size-3.5" />
                   Open in browser
                 </Button>
               )}
@@ -129,7 +106,11 @@ export function SandboxCard({
                 disabled={busyAction != null}
                 onClick={() => run('stop', () => invoke('stop_sandbox', { id: sandbox.id }))}
               >
-                {busyAction === 'stop' && <Loader2 className="size-3.5 animate-spin" />}
+                {busyAction === 'stop' ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Square className="size-3.5" />
+                )}
                 {busyAction === 'stop' ? 'Stopping…' : 'Stop'}
               </Button>
             </>
@@ -141,7 +122,11 @@ export function SandboxCard({
               disabled={busyAction != null}
               onClick={() => run('start', () => invoke('start_sandbox', { id: sandbox.id }))}
             >
-              {busyAction === 'start' && <Loader2 className="size-3.5 animate-spin" />}
+              {busyAction === 'start' ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Play className="size-3.5" />
+              )}
               {busyAction === 'start' ? 'Starting…' : 'Start'}
             </Button>
           )}
@@ -151,7 +136,11 @@ export function SandboxCard({
             disabled={busyAction != null}
             onClick={() => run('delete', () => invoke('delete_sandbox', { id: sandbox.id }))}
           >
-            {busyAction === 'delete' && <Loader2 className="size-3.5 animate-spin" />}
+            {busyAction === 'delete' ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Trash2 className="size-3.5" />
+            )}
             Delete
           </Button>
         </div>
