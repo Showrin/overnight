@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { notify } from '@/lib/notify'
+import { useAppStore } from '@/store/useAppStore'
 import type { Sandbox } from './types'
 
 type BusyAction = 'start' | 'stop' | 'delete' | 'vscode' | 'terminal' | null
@@ -18,6 +19,9 @@ export function SandboxCard({
   projectName: string
   onChanged: () => void
 }) {
+  const projectRepoPath = useAppStore(
+    (s) => s.projects.find((p) => p.id === sandbox.project_id)?.repo_path
+  )
   const [busyAction, setBusyAction] = useState<BusyAction>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -60,12 +64,26 @@ export function SandboxCard({
           </Badge>
         </div>
       </CardHeader>
-      <CardContent className="flex flex-col gap-3 text-sm text-muted-foreground">
-        {sandbox.folder_path && <span className="truncate">{sandbox.folder_path}</span>}
+      <CardContent className="flex flex-col gap-1 text-sm text-muted-foreground">
+        <span className="truncate font-mono text-xs" title={sandbox.id}>
+          {sandbox.id}
+        </span>
+        {projectRepoPath && (
+          <span className="truncate">
+            <span className="text-xs text-muted-foreground/70">Project folder: </span>
+            {projectRepoPath}
+          </span>
+        )}
+        {sandbox.folder_path && (
+          <span className="truncate">
+            <span className="text-xs text-muted-foreground/70">Sandbox folder: </span>
+            {sandbox.folder_path}
+          </span>
+        )}
 
         {error && <p className="text-destructive">{error}</p>}
 
-        <div className="flex flex-wrap gap-2">
+        <div className="mt-1 flex flex-wrap gap-2">
           {sandbox.status === 'running' && (
             <>
               <Button
