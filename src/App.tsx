@@ -8,12 +8,16 @@ import { SettingsScreen } from '@/components/settings/SettingsScreen'
 
 function App() {
   const [screen, setScreen] = useState<Screen>('dashboard')
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
   return (
     <div className="flex h-screen flex-col bg-background">
-      <Titlebar />
+      <Titlebar
+        sidebarCollapsed={sidebarCollapsed}
+        onToggleSidebar={() => setSidebarCollapsed((collapsed) => !collapsed)}
+      />
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar current={screen} onNavigate={setScreen} />
+        <Sidebar current={screen} onNavigate={setScreen} collapsed={sidebarCollapsed} />
         <main className="flex flex-1 justify-center overflow-auto">
           <div className="w-full max-w-[1024px] p-6">
             {screen === 'dashboard' && <JiraIssueList />}

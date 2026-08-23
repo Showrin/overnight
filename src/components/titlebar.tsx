@@ -1,11 +1,17 @@
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { Minus, Square, X } from 'lucide-react'
+import { Minus, PanelLeft, Square, X } from 'lucide-react'
 import logoIcon from '@/assets/logo-icon.svg'
 import { LogoWordmark } from '@/components/logo-wordmark'
 
 const appWindow = getCurrentWindow()
 
-export function Titlebar() {
+export function Titlebar({
+  sidebarCollapsed,
+  onToggleSidebar,
+}: {
+  sidebarCollapsed: boolean
+  onToggleSidebar: () => void
+}) {
   return (
     <header
       data-tauri-drag-region
@@ -14,6 +20,15 @@ export function Titlebar() {
       <div data-tauri-drag-region className="flex items-center gap-2">
         <img src={logoIcon} alt="" className="h-6 w-auto rounded-[5px]" />
         <LogoWordmark className="h-3.5 w-auto text-foreground" />
+        <button
+          type="button"
+          aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          aria-pressed={sidebarCollapsed}
+          onClick={onToggleSidebar}
+          className="flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+        >
+          <PanelLeft className="size-3.5" strokeWidth={1.5} />
+        </button>
       </div>
       <div className="flex h-full items-stretch">
         <button

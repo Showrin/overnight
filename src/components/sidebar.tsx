@@ -1,5 +1,4 @@
 import { Box, FolderGit2, LayoutDashboard, Settings } from 'lucide-react'
-import logoIcon from '@/assets/logo-icon.svg'
 
 export type Screen = 'dashboard' | 'projects' | 'sandboxes' | 'settings'
 
@@ -26,30 +25,37 @@ const groups: { label: string; items: NavItem[] }[] = [
 export function Sidebar({
   current,
   onNavigate,
+  collapsed,
 }: {
   current: Screen
   onNavigate: (screen: Screen) => void
+  collapsed: boolean
 }) {
   return (
-    <nav className="flex w-52 shrink-0 flex-col border-r border-sidebar-border bg-sidebar">
-      <div className="flex items-center gap-2 border-b border-sidebar-border px-3 py-3">
-        <img src={logoIcon} alt="" className="h-6 w-auto rounded-[5px]" />
-        <span className="text-sm font-medium text-sidebar-foreground">Overnight</span>
-      </div>
+    <nav
+      className={`flex shrink-0 flex-col border-r border-sidebar-border bg-sidebar transition-[width] ${
+        collapsed ? 'w-14' : 'w-52'
+      }`}
+    >
       <div className="flex flex-1 flex-col gap-4 overflow-auto p-2">
         {groups.map((group) => (
           <div key={group.label} className="flex flex-col gap-1">
-            <span className="px-2.5 text-xs font-medium tracking-wide text-muted-foreground uppercase">
-              {group.label}
-            </span>
+            {!collapsed && (
+              <span className="px-2.5 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+                {group.label}
+              </span>
+            )}
             {group.items.map(({ screen, label, icon: Icon }) => {
               const isActive = current === screen
               return (
                 <button
                   key={screen}
                   type="button"
+                  title={collapsed ? label : undefined}
                   onClick={() => onNavigate(screen)}
                   className={`relative flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition-colors ${
+                    collapsed ? 'justify-center' : ''
+                  } ${
                     isActive
                       ? 'bg-sidebar-accent text-sidebar-accent-foreground shadow-sm'
                       : 'text-sidebar-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground'
@@ -58,17 +64,19 @@ export function Sidebar({
                   {isActive && (
                     <span className="absolute top-1 bottom-1 left-0 w-0.5 rounded-full bg-primary" />
                   )}
-                  <Icon className="size-4" strokeWidth={1.5} />
-                  {label}
+                  <Icon className="size-4 shrink-0" strokeWidth={1.5} />
+                  {!collapsed && label}
                 </button>
               )
             })}
           </div>
         ))}
       </div>
-      <div className="border-t border-sidebar-border px-3 py-2.5 text-xs text-muted-foreground">
-        Overnight v0.0.0
-      </div>
+      {!collapsed && (
+        <div className="border-t border-sidebar-border px-3 py-2.5 text-xs text-muted-foreground">
+          Overnight v0.0.0
+        </div>
+      )}
     </nav>
   )
 }
