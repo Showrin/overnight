@@ -147,6 +147,57 @@ fn parse_host_port(output: &str, sandbox_port: u16) -> Option<u16> {
   })
 }
 
+/// Looks up the in-VM workspace path `sbx` reports for `name` via `sbx ls`'s
+/// WORKSPACE column — the same path a plain `sbx exec`/`sbx run` attach
+/// lands you in by default (confirmed against real output: terminal opens
+/// there with no path argument of our own). On Windows, `sbx ls` echoes
+/// this back in raw Windows form (`F:\works\personal\remind-me`) even for
+/// a clone-mode sandbox — confirmed by a failed VS Code connection whose
+/// error message quoted that exact unmodified path — so it still needs
+/// the same drive-letter-to-POSIX translation a mount-mode host path
+/// would, regardless of mode.
+pub async fn workspace_path<R: Runtime>(app: &AppHandle<R>, name: &str) -> Result<Option<String>> {
+  let output = run(app, &["ls"]).await?;
+  Ok(parse_workspace_path(&output, name).map(|path| expand_home(&windows_path_to_posix(&path))))
+}
+
+/// Converts a Windows path (`F:\works\personal\remind-me`) to the POSIX
+/// form sbx/ssh use inside the sandbox VM (`/f/works/personal/remind-me`).
+/// A no-op on any path that isn't already in that drive-letter form (e.g.
+/// already-POSIX paths from a non-Windows host, or `~`-relative ones).
+fn windows_path_to_posix(path: &str) -> String {
+  let mut chars = path.chars();
+  match (chars.next(), chars.next()) {
+    (Some(drive), Some(':')) if drive.is_ascii_alphabetic() => {
+      let rest = chars.as_str().replace('\\', "/");
+      let rest = rest.strip_prefix('/').unwrap_or(&rest);
+      format!("/{}/{rest}", drive.to_ascii_lowercase())
+    }
+    _ => path.to_string(),
+  }
+}
+
+fn parse_workspace_path(output: &str, name: &str) -> Option<String> {
+  output.lines().find_map(|line| {
+    let mut tokens = line.split_whitespace();
+    if tokens.next()? != name {
+      return None;
+    }
+    tokens.last().map(str::to_string)
+  })
+}
+
+/// `sbx ls` can report the agent's home-relative shorthand (`~` or
+/// `~/my-project`, per the docs) instead of an absolute path. URIs don't
+/// do shell tilde-expansion, so this expands it against the documented
+/// sandbox home (`/home/agent`) before it's used to build a folder URI.
+fn expand_home(path: &str) -> String {
+  match path.strip_prefix('~') {
+    Some(rest) => format!("/home/agent{rest}"),
+    None => path.to_string(),
+  }
+}
+
 /// `sbx run --name <name> claude -- <claude-args>` — attaches to (and if
 /// needed starts) the agent session. Args after `--` are appended to
 /// Claude Code's default startup flags per the sbx docs, so passing
@@ -190,5 +241,42 @@ mod tests {
   #[test]
   fn parse_host_port_handles_empty_output() {
     assert_eq!(parse_host_port("", 3000), None);
+  }
+
+  #[test]
+  fn parses_workspace_path_from_ls_table() {
+    let output = "SANDBOX         AGENT   STATUS   PORTS                    WORKSPACE\nmy-sandbox      claude  running  127.0.0.1:8080->3000/tcp /home/user/proj";
+    assert_eq!(parse_workspace_path(output, "my-sandbox"), Some("/home/user/proj".to_string()));
+    assert_eq!(parse_workspace_path(output, "other-sandbox"), None);
+  }
+
+  #[test]
+  fn parses_workspace_path_with_no_ports_column() {
+    let output = "SANDBOX     AGENT    STATUS    PORTS   WORKSPACE\nmy-sandbox  claude   running           ~/my-project";
+    assert_eq!(parse_workspace_path(output, "my-sandbox"), Some("~/my-project".to_string()));
+  }
+
+  #[test]
+  fn parse_workspace_path_handles_empty_output() {
+    assert_eq!(parse_workspace_path("", "my-sandbox"), None);
+  }
+
+  #[test]
+  fn expands_home_shorthand() {
+    assert_eq!(expand_home("~/my-project"), "/home/agent/my-project");
+    assert_eq!(expand_home("~"), "/home/agent");
+    assert_eq!(expand_home("/home/user/proj"), "/home/user/proj");
+  }
+
+  #[test]
+  fn converts_windows_path_to_posix() {
+    assert_eq!(windows_path_to_posix(r"F:\works\personal\remind-me"), "/f/works/personal/remind-me");
+    assert_eq!(windows_path_to_posix(r"C:\Users\showr"), "/c/Users/showr");
+  }
+
+  #[test]
+  fn leaves_non_windows_paths_alone() {
+    assert_eq!(windows_path_to_posix("/home/user/project"), "/home/user/project");
+    assert_eq!(windows_path_to_posix("~/my-project"), "~/my-project");
   }
 }

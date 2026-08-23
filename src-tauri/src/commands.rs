@@ -462,31 +462,14 @@ pub fn get_sandbox_usage(pool: State<DbPool>, id: String) -> std::result::Result
   Ok(SandboxUsage { input_tokens, output_tokens })
 }
 
-/// Converts a Windows path (`F:\works\personal\remind-me`) to the POSIX
-/// form sbx/ssh use inside the sandbox (`/f/works/personal/remind-me`).
-/// Confirmed against a running sandbox's shell, which lands a mount-mode
-/// terminal at exactly this path with no `cd` needed — VS Code needs the
-/// same translated path since it can't resolve the raw Windows one.
-#[cfg(target_os = "windows")]
-fn windows_path_to_posix(path: &str) -> String {
-  let mut chars = path.chars();
-  match (chars.next(), chars.next()) {
-    (Some(drive), Some(':')) => {
-      let rest = chars.as_str().replace('\\', "/");
-      let rest = rest.strip_prefix('/').unwrap_or(&rest);
-      format!("/{}/{rest}", drive.to_ascii_lowercase())
-    }
-    _ => path.replace('\\', "/"),
-  }
-}
-
 /// Opens VS Code's Remote-SSH into the sandbox, running `sbx setup ssh`
 /// first so the `<name>.sbx` SSH host is always registered (no manual
-/// one-time setup required). For mount-mode sandboxes the host repo path
-/// is also valid inside the VM (sbx preserves absolute paths, translated
-/// to POSIX form on Windows hosts — see `windows_path_to_posix`), so we
-/// pass it directly; clone mode has no host-visible path, so VS Code
-/// opens without one and the user navigates manually.
+/// one-time setup required). The folder to open is asked from `sbx`
+/// itself (`sbx ls`'s WORKSPACE column) rather than read from our own DB
+/// row — that's the same path a plain `sbx exec`/`sbx run` attach lands
+/// you in by default, and it's correct for both mount mode (host repo
+/// path) and clone mode (in-VM clone path) without us having to track or
+/// translate it ourselves.
 #[tauri::command]
 pub async fn open_sandbox_vscode(app: AppHandle, pool: State<'_, DbPool>, id: String) -> std::result::Result<(), String> {
   let sandbox = {
@@ -500,16 +483,17 @@ pub async fn open_sandbox_vscode(app: AppHandle, pool: State<'_, DbPool>, id: St
   // resolves — documented as safe to re-run, so this replaces requiring
   // the user to run `sbx setup ssh` manually once beforehand.
   crate::sbx::setup_ssh(&app).await.map_err(|e| e.to_string())?;
+  let workspace_path = crate::sbx::workspace_path(&app, &name).await.map_err(|e| e.to_string())?;
+  log::info!("open_sandbox_vscode: sbx ls reports workspace path {workspace_path:?}");
 
-  // `code` is a .cmd shim on Windows; CreateProcessW (what
-  // std::process::Command uses) can't execute batch files directly, so it
-  // has to go through cmd.exe like the terminal launch below does.
+  // `code` is a .cmd shim on Windows. Naming it bare ("code") makes
+  // CreateProcessW fail to find it at all ("program not found"); routing
+  // through `cmd /C code ...` finds it but corrupts multi-flag argument
+  // lines like `--folder-uri <uri>` somewhere in that double hop. Naming
+  // the file explicitly ("code.cmd") lets CreateProcessW resolve and run
+  // it directly in one hop, with Rust's normal argv handling intact.
   #[cfg(target_os = "windows")]
-  let mut cmd = {
-    let mut cmd = std::process::Command::new("cmd");
-    cmd.arg("/C").arg("code");
-    cmd
-  };
+  let mut cmd = std::process::Command::new("code.cmd");
   #[cfg(not(target_os = "windows"))]
   let mut cmd = std::process::Command::new("code");
 
@@ -517,22 +501,31 @@ pub async fn open_sandbox_vscode(app: AppHandle, pool: State<'_, DbPool>, id: St
   // string, unlike `--remote <host> <path>` which passes the path as a
   // separate bare positional arg — safer on Windows, where a leading `/`
   // in a plain CLI arg can be mis-parsed as a switch character.
-  match sandbox.folder_path {
-    Some(folder) => {
-      #[cfg(target_os = "windows")]
-      let posix_path = windows_path_to_posix(&folder);
-      #[cfg(not(target_os = "windows"))]
-      let posix_path = folder;
-      cmd.arg("--folder-uri").arg(format!("vscode-remote://{remote}{posix_path}"));
+  match workspace_path {
+    Some(path) => {
+      cmd.arg("--folder-uri").arg(format!("vscode-remote://{remote}{path}"));
     }
     None => {
       cmd.arg("--remote").arg(&remote);
     }
   }
-  cmd
-    .spawn()
-    .map_err(|e| format!("failed to launch VS Code ({e}) — make sure `code` is on your PATH (VS Code's \"Shell Command: Install 'code' command in PATH\")"))?;
-  Ok(())
+  log::info!(
+    "open_sandbox_vscode: spawning {:?} {:?}",
+    cmd.get_program(),
+    cmd.get_args().collect::<Vec<_>>()
+  );
+  match cmd.spawn() {
+    Ok(child) => {
+      log::info!("open_sandbox_vscode: spawned pid {:?}", child.id());
+      Ok(())
+    }
+    Err(e) => {
+      log::error!("open_sandbox_vscode: spawn failed: {e}");
+      Err(format!(
+        "failed to launch VS Code ({e}) — make sure `code` is on your PATH (VS Code's \"Shell Command: Install 'code' command in PATH\")"
+      ))
+    }
+  }
 }
 
 #[tauri::command]
@@ -563,20 +556,4 @@ pub fn open_sandbox_terminal(pool: State<DbPool>, id: String) -> std::result::Re
   }
 
   Ok(())
-}
-
-#[cfg(all(test, target_os = "windows"))]
-mod tests {
-  use super::*;
-
-  #[test]
-  fn converts_windows_path_to_posix() {
-    assert_eq!(windows_path_to_posix(r"F:\works\personal\remind-me"), "/f/works/personal/remind-me");
-    assert_eq!(windows_path_to_posix(r"C:\Users\showr"), "/c/Users/showr");
-  }
-
-  #[test]
-  fn leaves_already_posix_paths_alone() {
-    assert_eq!(windows_path_to_posix("/home/user/project"), "/home/user/project");
-  }
 }
