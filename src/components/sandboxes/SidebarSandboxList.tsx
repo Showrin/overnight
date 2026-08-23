@@ -1,44 +1,25 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { ChevronsUpDown, Code, Loader2, Play, Square, TerminalSquare } from 'lucide-react'
 import type { Screen } from '@/components/sidebar'
-import type { Project } from '@/components/projects/types'
+import { useAppStore } from '@/store/useAppStore'
 import type { Sandbox } from './types'
 
-const POLL_MS = 5000
 const MAX_VISIBLE = 4
 
 type BusyAction = 'start' | 'stop' | 'vscode' | 'terminal' | null
 
 export function SidebarSandboxList({ onNavigate }: { onNavigate: (screen: Screen) => void }) {
-  const [sandboxes, setSandboxes] = useState<Sandbox[]>([])
-  const [projects, setProjects] = useState<Project[]>([])
+  const sandboxes = useAppStore((s) => s.sandboxes)
+  const projects = useAppStore((s) => s.projects)
+  const loadSandboxes = useAppStore((s) => s.loadSandboxes)
   const [busy, setBusy] = useState<{ id: string; action: BusyAction } | null>(null)
-
-  async function load() {
-    try {
-      const [sandboxList, projectList] = await Promise.all([
-        invoke<Sandbox[]>('list_sandboxes'),
-        invoke<Project[]>('list_projects'),
-      ])
-      setSandboxes(sandboxList)
-      setProjects(projectList)
-    } catch {
-      // Best-effort — the sidebar shouldn't surface errors for this preview list.
-    }
-  }
-
-  useEffect(() => {
-    load()
-    const interval = setInterval(load, POLL_MS)
-    return () => clearInterval(interval)
-  }, [])
 
   async function run(sandbox: Sandbox, action: Exclude<BusyAction, null>, invoker: () => Promise<unknown>) {
     setBusy({ id: sandbox.id, action })
     try {
       await invoker()
-      await load()
+      await loadSandboxes()
     } catch {
       // Best-effort — surfacing errors here would need its own UI; the full
       // Sandboxes screen already shows detailed error state.
@@ -116,7 +97,7 @@ export function SidebarSandboxList({ onNavigate }: { onNavigate: (screen: Screen
                   () => invoke(isRunning ? 'stop_sandbox' : 'start_sandbox', { id: sandbox.id })
                 )
               }
-              className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
+              className="flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
             >
               {isBusy && (busy?.action === 'start' || busy?.action === 'stop') ? (
                 <Loader2 className="size-3 animate-spin" />

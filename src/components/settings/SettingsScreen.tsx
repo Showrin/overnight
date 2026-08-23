@@ -4,14 +4,13 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { PERMISSION_MODES } from '@/lib/permissionModes'
+import { useAppStore } from '@/store/useAppStore'
 import { AnthropicConfigForm } from './AnthropicConfigForm'
 import { JiraConfigForm, type JiraConfig } from './JiraConfigForm'
 
-interface AppSettings {
-  default_claude_permission_mode: string
-}
-
 export function SettingsScreen() {
+  const settings = useAppStore((s) => s.settings)
+  const saveSettings = useAppStore((s) => s.saveSettings)
   const [permissionMode, setPermissionMode] = useState<string>('default')
   const [savingMode, setSavingMode] = useState(false)
   const [modeError, setModeError] = useState<string | null>(null)
@@ -19,10 +18,9 @@ export function SettingsScreen() {
   const [jiraConfig, setJiraConfig] = useState<JiraConfig | null>(null)
   const [editingJira, setEditingJira] = useState(false)
 
-  async function loadSettings() {
-    const s = await invoke<AppSettings>('get_settings')
-    setPermissionMode(s.default_claude_permission_mode)
-  }
+  useEffect(() => {
+    if (settings) setPermissionMode(settings.default_claude_permission_mode)
+  }, [settings])
 
   async function loadJiraConfig() {
     const c = await invoke<JiraConfig>('get_jira_config')
@@ -30,7 +28,6 @@ export function SettingsScreen() {
   }
 
   useEffect(() => {
-    loadSettings()
     loadJiraConfig()
   }, [])
 
@@ -38,7 +35,7 @@ export function SettingsScreen() {
     setSavingMode(true)
     setModeError(null)
     try {
-      await invoke('save_settings', { defaultClaudePermissionMode: permissionMode })
+      await saveSettings(permissionMode)
     } catch (e) {
       setModeError(String(e))
     } finally {

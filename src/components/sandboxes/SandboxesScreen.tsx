@@ -2,18 +2,17 @@ import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
-import type { Project } from '@/components/projects/types'
+import { useAppStore } from '@/store/useAppStore'
 import { CreateSandboxDialog } from './CreateSandboxDialog'
 import { SandboxCard } from './SandboxCard'
-import type { Sandbox } from './types'
 
 export function SandboxesScreen() {
+  const sandboxes = useAppStore((s) => s.sandboxes)
+  const projects = useAppStore((s) => s.projects)
+  const loadSandboxes = useAppStore((s) => s.loadSandboxes)
   const [sbxError, setSbxError] = useState<string | null>(null)
   const [checkingSbx, setCheckingSbx] = useState(true)
-  const [sandboxes, setSandboxes] = useState<Sandbox[]>([])
-  const [projects, setProjects] = useState<Project[]>([])
   const [creating, setCreating] = useState(false)
-  const [error, setError] = useState<string | null>(null)
 
   async function checkSbx() {
     setCheckingSbx(true)
@@ -27,23 +26,8 @@ export function SandboxesScreen() {
     }
   }
 
-  async function loadSandboxes() {
-    setError(null)
-    try {
-      const [sandboxList, projectList] = await Promise.all([
-        invoke<Sandbox[]>('list_sandboxes'),
-        invoke<Project[]>('list_projects'),
-      ])
-      setSandboxes(sandboxList)
-      setProjects(projectList)
-    } catch (e) {
-      setError(String(e))
-    }
-  }
-
   useEffect(() => {
     checkSbx()
-    loadSandboxes()
   }, [])
 
   function projectName(projectId: string) {
@@ -91,12 +75,10 @@ export function SandboxesScreen() {
         If this is the first sandbox created on this machine, `sbx` may prompt for a network policy the first time —
         run <code>sbx run claude</code> once yourself in a terminal beforehand if creation seems stuck.
       </p>
-      {error && <p className="text-sm text-destructive">{error}</p>}
 
       <Dialog open={creating} onOpenChange={setCreating}>
         <DialogContent title="New sandbox">
           <CreateSandboxDialog
-            projects={projects}
             onCreated={() => {
               setCreating(false)
               loadSandboxes()

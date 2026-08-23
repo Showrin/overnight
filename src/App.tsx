@@ -1,14 +1,19 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Titlebar } from '@/components/titlebar'
 import { Sidebar, type Screen } from '@/components/sidebar'
 import { JiraIssueList } from '@/components/dashboard/JiraIssueList'
 import { ProjectsScreen } from '@/components/projects/ProjectsScreen'
 import { SandboxesScreen } from '@/components/sandboxes/SandboxesScreen'
 import { SettingsScreen } from '@/components/settings/SettingsScreen'
+import { initAppStore } from '@/store/useAppStore'
 
 function App() {
   const [screen, setScreen] = useState<Screen>('dashboard')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+
+  useEffect(() => {
+    initAppStore()
+  }, [])
 
   return (
     <div className="flex h-screen flex-col bg-background">

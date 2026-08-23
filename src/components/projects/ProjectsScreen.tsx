@@ -1,26 +1,19 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { useAppStore } from '@/store/useAppStore'
 import { ProjectForm } from './ProjectForm'
 import type { Project } from './types'
 
 export function ProjectsScreen() {
-  const [projects, setProjects] = useState<Project[]>([])
+  const projects = useAppStore((s) => s.projects)
+  const loadProjects = useAppStore((s) => s.loadProjects)
   const [editing, setEditing] = useState<Project | 'new' | null>(null)
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-
-  async function loadProjects() {
-    const list = await invoke<Project[]>('list_projects')
-    setProjects(list)
-  }
-
-  useEffect(() => {
-    loadProjects()
-  }, [])
 
   async function handleDelete(id: string) {
     setError(null)

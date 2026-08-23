@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { notify } from '@/lib/notify'
 import { PERMISSION_MODES } from '@/lib/permissionModes'
-import type { Project } from '@/components/projects/types'
+import { useAppStore } from '@/store/useAppStore'
 import type { Sandbox, SandboxMode } from './types'
 
 const DEFAULT_PERMISSION_MODE = '__settings_default__'
@@ -43,14 +43,13 @@ function ErrorDetails({ message }: { message: string }) {
 }
 
 export function CreateSandboxDialog({
-  projects,
   onCreated,
   onCancel,
 }: {
-  projects: Project[]
   onCreated: () => void
   onCancel: () => void
 }) {
+  const projects = useAppStore((s) => s.projects)
   const [projectId, setProjectId] = useState(projects[0]?.id ?? '')
   const [name, setName] = useState('')
   const [permissionMode, setPermissionMode] = useState('')
