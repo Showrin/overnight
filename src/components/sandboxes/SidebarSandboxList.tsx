@@ -39,7 +39,7 @@ export function SidebarSandboxList({ onNavigate }: { onNavigate: (screen: Screen
 
   return (
     <div className="flex flex-col gap-1 border-t border-sidebar-border p-2">
-      <span className="px-2.5 text-xs font-medium tracking-wide text-muted-foreground uppercase">Sandboxes</span>
+      <span className="px-2.5 text-xs font-normal text-muted-foreground">Sandboxes</span>
       {visible.map((sandbox) => {
         const projectName = projects.find((p) => p.id === sandbox.project_id)?.name ?? 'Unknown project'
         const isRunning = sandbox.status === 'running'

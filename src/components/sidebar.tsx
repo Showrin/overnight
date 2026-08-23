@@ -42,9 +42,7 @@ export function Sidebar({
         {groups.map((group) => (
           <div key={group.label} className="flex flex-col gap-1">
             {!collapsed && (
-              <span className="px-2.5 text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                {group.label}
-              </span>
+              <span className="px-2.5 text-xs font-normal text-muted-foreground">{group.label}</span>
             )}
             {group.items.map(({ screen, label, icon: Icon }) => {
               const isActive = current === screen
