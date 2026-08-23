@@ -1,9 +1,11 @@
 import { create } from 'zustand'
 import { invoke } from '@tauri-apps/api/core'
 import type { Project } from '@/components/projects/types'
-import type { Sandbox } from '@/components/sandboxes/types'
+import type { HostMetric, Sandbox } from '@/components/sandboxes/types'
 
 const SANDBOX_POLL_MS = 5000
+const HOST_STATS_HISTORY_SEED_MS = 24 * 60 * 60 * 1000
+const HOST_STATS_HISTORY_MAX_POINTS = 500
 
 export interface AppSettings {
   default_claude_permission_mode: string
@@ -13,17 +15,23 @@ interface AppStore {
   projects: Project[]
   sandboxes: Sandbox[]
   settings: AppSettings | null
+  hostStats: HostMetric | null
+  hostStatsHistory: HostMetric[]
 
   loadProjects: () => Promise<void>
   loadSandboxes: () => Promise<void>
   loadSettings: () => Promise<void>
   saveSettings: (defaultClaudePermissionMode: string) => Promise<void>
+  loadHostStatsHistory: () => Promise<void>
+  loadHostStats: () => Promise<void>
 }
 
-export const useAppStore = create<AppStore>((set) => ({
+export const useAppStore = create<AppStore>((set, get) => ({
   projects: [],
   sandboxes: [],
   settings: null,
+  hostStats: null,
+  hostStatsHistory: [],
 
   async loadProjects() {
     const projects = await invoke<Project[]>('list_projects')
@@ -44,6 +52,18 @@ export const useAppStore = create<AppStore>((set) => ({
     await invoke('save_settings', { defaultClaudePermissionMode })
     set({ settings: { default_claude_permission_mode: defaultClaudePermissionMode } })
   },
+
+  async loadHostStatsHistory() {
+    const history = await invoke<HostMetric[]>('get_host_stats_history', {
+      sinceMs: Date.now() - HOST_STATS_HISTORY_SEED_MS,
+    })
+    set({ hostStatsHistory: history.slice(-HOST_STATS_HISTORY_MAX_POINTS) })
+  },
+
+  async loadHostStats() {
+    const stats = await invoke<HostMetric>('get_host_stats')
+    set({ hostStats: stats, hostStatsHistory: [...get().hostStatsHistory, stats].slice(-HOST_STATS_HISTORY_MAX_POINTS) })
+  },
 }))
 
 let initialized = false
@@ -61,5 +81,9 @@ export function initAppStore() {
   useAppStore.getState().loadProjects()
   useAppStore.getState().loadSandboxes()
   useAppStore.getState().loadSettings()
-  setInterval(() => useAppStore.getState().loadSandboxes(), SANDBOX_POLL_MS)
+  useAppStore.getState().loadHostStatsHistory()
+  setInterval(() => {
+    useAppStore.getState().loadSandboxes()
+    useAppStore.getState().loadHostStats()
+  }, SANDBOX_POLL_MS)
 }

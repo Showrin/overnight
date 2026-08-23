@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { useAppStore } from '@/store/useAppStore'
 import { CreateSandboxDialog } from './CreateSandboxDialog'
+import { HostStatsPanel } from './HostStatsPanel'
 import { SandboxCard } from './SandboxCard'
 import type { Sandbox } from './types'
 
@@ -98,51 +99,57 @@ export function SandboxesScreen() {
   const orphanSandboxes = sandboxes.filter((sb) => !projects.some((p) => p.id === sb.project_id))
 
   return (
-    <div className="flex w-full flex-col gap-6">
-      <h1 className="text-lg font-medium">Sandboxes</h1>
-      <p className="text-xs text-muted-foreground">
-        If this is the first sandbox created on this machine, `sbx` may prompt for a network policy the first time —
-        run <code>sbx run claude</code> once yourself in a terminal beforehand if creation seems stuck.
-      </p>
+    <div className="flex w-full gap-6">
+      <div className="flex flex-1 flex-col gap-6">
+        <h1 className="text-lg font-medium">Sandboxes</h1>
+        <p className="text-xs text-muted-foreground">
+          If this is the first sandbox created on this machine, `sbx` may prompt for a network policy the first time —
+          run <code>sbx run claude</code> once yourself in a terminal beforehand if creation seems stuck.
+        </p>
 
-      <Dialog open={creatingForProjectId != null} onOpenChange={(open) => !open && setCreatingForProjectId(null)}>
-        <DialogContent title="New sandbox">
-          {creatingForProjectId && (
-            <CreateSandboxDialog
-              defaultProjectId={creatingForProjectId}
-              onCreated={() => {
-                setCreatingForProjectId(null)
-                loadSandboxes()
-              }}
-              onCancel={() => setCreatingForProjectId(null)}
-            />
-          )}
-        </DialogContent>
-      </Dialog>
+        <Dialog open={creatingForProjectId != null} onOpenChange={(open) => !open && setCreatingForProjectId(null)}>
+          <DialogContent title="New sandbox">
+            {creatingForProjectId && (
+              <CreateSandboxDialog
+                defaultProjectId={creatingForProjectId}
+                onCreated={() => {
+                  setCreatingForProjectId(null)
+                  loadSandboxes()
+                }}
+                onCancel={() => setCreatingForProjectId(null)}
+              />
+            )}
+          </DialogContent>
+        </Dialog>
 
-      {projects.length === 0 && (
-        <p className="text-sm text-muted-foreground">Create a project first, then start a sandbox for it.</p>
-      )}
+        {projects.length === 0 && (
+          <p className="text-sm text-muted-foreground">Create a project first, then start a sandbox for it.</p>
+        )}
 
-      {projects.map((project) => (
-        <SandboxGroup
-          key={project.id}
-          title={project.name}
-          projectName={project.name}
-          sandboxes={sandboxes.filter((sb) => sb.project_id === project.id)}
-          onAddNew={() => setCreatingForProjectId(project.id)}
-          onChanged={loadSandboxes}
-        />
-      ))}
+        {projects.map((project) => (
+          <SandboxGroup
+            key={project.id}
+            title={project.name}
+            projectName={project.name}
+            sandboxes={sandboxes.filter((sb) => sb.project_id === project.id)}
+            onAddNew={() => setCreatingForProjectId(project.id)}
+            onChanged={loadSandboxes}
+          />
+        ))}
 
-      {orphanSandboxes.length > 0 && (
-        <SandboxGroup
-          title="Unknown project"
-          projectName="Unknown project"
-          sandboxes={orphanSandboxes}
-          onChanged={loadSandboxes}
-        />
-      )}
+        {orphanSandboxes.length > 0 && (
+          <SandboxGroup
+            title="Unknown project"
+            projectName="Unknown project"
+            sandboxes={orphanSandboxes}
+            onChanged={loadSandboxes}
+          />
+        )}
+      </div>
+
+      <div className="w-72 shrink-0">
+        <HostStatsPanel />
+      </div>
     </div>
   )
 }

@@ -19,3 +19,12 @@ export interface SandboxUsage {
   input_tokens: number
   output_tokens: number
 }
+
+export interface HostMetric {
+  id: string
+  captured_at: number
+  cpu_percent: number
+  memory_percent: number
+  memory_used_mb: number
+  memory_total_mb: number
+}
