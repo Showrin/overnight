@@ -462,12 +462,31 @@ pub fn get_sandbox_usage(pool: State<DbPool>, id: String) -> std::result::Result
   Ok(SandboxUsage { input_tokens, output_tokens })
 }
 
+/// Converts a Windows path (`F:\works\personal\remind-me`) to the POSIX
+/// form sbx/ssh use inside the sandbox (`/f/works/personal/remind-me`).
+/// Confirmed against a running sandbox's shell, which lands a mount-mode
+/// terminal at exactly this path with no `cd` needed — VS Code needs the
+/// same translated path since it can't resolve the raw Windows one.
+#[cfg(target_os = "windows")]
+fn windows_path_to_posix(path: &str) -> String {
+  let mut chars = path.chars();
+  match (chars.next(), chars.next()) {
+    (Some(drive), Some(':')) => {
+      let rest = chars.as_str().replace('\\', "/");
+      let rest = rest.strip_prefix('/').unwrap_or(&rest);
+      format!("/{}/{rest}", drive.to_ascii_lowercase())
+    }
+    _ => path.replace('\\', "/"),
+  }
+}
+
 /// Opens VS Code's Remote-SSH into the sandbox, running `sbx setup ssh`
 /// first so the `<name>.sbx` SSH host is always registered (no manual
 /// one-time setup required). For mount-mode sandboxes the host repo path
-/// is also valid inside the VM (sbx preserves absolute paths), so we pass
-/// it directly; clone mode has no host-visible path, so VS Code opens
-/// without one and the user navigates manually.
+/// is also valid inside the VM (sbx preserves absolute paths, translated
+/// to POSIX form on Windows hosts — see `windows_path_to_posix`), so we
+/// pass it directly; clone mode has no host-visible path, so VS Code
+/// opens without one and the user navigates manually.
 #[tauri::command]
 pub async fn open_sandbox_vscode(app: AppHandle, pool: State<'_, DbPool>, id: String) -> std::result::Result<(), String> {
   let sandbox = {
@@ -496,6 +515,9 @@ pub async fn open_sandbox_vscode(app: AppHandle, pool: State<'_, DbPool>, id: St
 
   cmd.arg("--remote").arg(&remote);
   if let Some(folder) = sandbox.folder_path {
+    #[cfg(target_os = "windows")]
+    cmd.arg(windows_path_to_posix(&folder));
+    #[cfg(not(target_os = "windows"))]
     cmd.arg(folder);
   }
   cmd
@@ -532,4 +554,20 @@ pub fn open_sandbox_terminal(pool: State<DbPool>, id: String) -> std::result::Re
   }
 
   Ok(())
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn converts_windows_path_to_posix() {
+    assert_eq!(windows_path_to_posix(r"F:\works\personal\remind-me"), "/f/works/personal/remind-me");
+    assert_eq!(windows_path_to_posix(r"C:\Users\showr"), "/c/Users/showr");
+  }
+
+  #[test]
+  fn leaves_already_posix_paths_alone() {
+    assert_eq!(windows_path_to_posix("/home/user/project"), "/home/user/project");
+  }
 }
