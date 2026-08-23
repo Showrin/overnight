@@ -21,6 +21,8 @@ pub enum Error {
   CommandFailed(String),
   #[error("sbx's global network policy hasn't been initialized yet — run sbx policy init <allow-all|balanced|deny-all>")]
   PolicyNotInitialized,
+  #[error("{0}")]
+  ContainerStartFailed(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -32,12 +34,48 @@ async fn run<R: Runtime>(app: &AppHandle<R>, args: &[&str]) -> Result<String> {
     if stderr.contains("network policy has not been initialized") {
       return Err(Error::PolicyNotInitialized);
     }
+    if stderr.contains("failed to run sandbox container") {
+      return Err(Error::ContainerStartFailed(container_start_failed_message(&stderr)));
+    }
     return Err(Error::CommandFailed(format!(
       "sbx {args:?} exited with {:?}: {stderr}",
       output.status.code(),
     )));
   }
   Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// sbx runs agents in its own microVMs rather than plain Docker containers,
+/// so this specific failure (image pull succeeds, but the VM itself won't
+/// start) almost always means the host's hardware virtualization isn't
+/// available to sbx — confirmed against a real repro where the cause was
+/// Windows Hypervisor Platform being disabled (a hard prerequisite per
+/// sbx's own install docs) despite Docker Desktop itself running fine.
+/// Bakes in the exact check/fix commands per OS so the UI can surface them
+/// directly instead of just the raw sbx error.
+fn container_start_failed_message(stderr: &str) -> String {
+  #[cfg(target_os = "windows")]
+  let platform_hint = "This usually means Windows Hypervisor Platform is disabled — sbx requires it \
+    even if Docker Desktop itself is running fine. Check it in an elevated (Run as administrator) \
+    PowerShell:\n\n\
+    Get-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform\n\n\
+    If State shows Disabled, enable it in the same elevated window and reboot:\n\n\
+    Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform -All";
+  #[cfg(target_os = "macos")]
+  let platform_hint = "This usually means sbx can't get hardware virtualization on this Mac — sbx \
+    requires Apple silicon and macOS Sonoma (14) or later. Confirm both, then retry.";
+  #[cfg(target_os = "linux")]
+  let platform_hint = "This usually means KVM isn't available to sbx. Check with:\n\n\
+    lsmod | grep kvm\n\n\
+    If that's empty, run `kvm-ok` for diagnostics, and confirm your user is in the kvm group:\n\n\
+    sudo usermod -aG kvm $USER";
+  #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+  let platform_hint = "This usually means hardware virtualization isn't available to sbx on this host.";
+
+  format!(
+    "sbx failed to start the sandbox's virtual machine (the image pulled fine, but the container \
+     itself wouldn't start). {platform_hint}\n\nRaw sbx output: {stderr}"
+  )
 }
 
 /// `sbx setup ssh` — (re)generates the managed `Host *.sbx` block in the
@@ -229,6 +267,14 @@ mod tests {
   #[test]
   fn reports_free_memory() {
     assert!(host_free_memory_mb() > 0.0);
+  }
+
+  #[test]
+  fn container_start_failed_message_includes_raw_stderr_and_a_platform_hint() {
+    let message = container_start_failed_message("ERROR: failed to run sandbox container");
+    assert!(message.contains("ERROR: failed to run sandbox container"));
+    #[cfg(target_os = "windows")]
+    assert!(message.contains("HypervisorPlatform"));
   }
 
   #[test]

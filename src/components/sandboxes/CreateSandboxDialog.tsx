@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { Loader2 } from 'lucide-react'
+import { Copy, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -8,6 +8,35 @@ import { Label } from '@/components/ui/label'
 import { notify } from '@/lib/notify'
 import type { Project } from '@/components/projects/types'
 import type { Sandbox, SandboxMode } from './types'
+
+function ErrorDetails({ message }: { message: string }) {
+  const [copied, setCopied] = useState(false)
+
+  if (!message.includes('\n')) {
+    return <p className="text-sm text-destructive">{message}</p>
+  }
+
+  async function copy() {
+    await navigator.clipboard.writeText(message)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-destructive">Sandbox couldn't start</p>
+        <Button size="sm" variant="outline" onClick={copy} type="button">
+          <Copy className="size-3.5" />
+          {copied ? 'Copied' : 'Copy'}
+        </Button>
+      </div>
+      <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-muted p-2.5 text-xs text-foreground">
+        {message}
+      </pre>
+    </div>
+  )
+}
 
 export function CreateSandboxDialog({
   projects,
@@ -115,7 +144,7 @@ export function CreateSandboxDialog({
               : 'Clones the project\'s repo into an isolated copy inside the sandbox itself. Your local folder is untouched. Multiple clone-mode sandboxes can run per project.'}
           </p>
         </div>
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        {error && <ErrorDetails message={error} />}
 
         {needsPolicyInit && (
           <div className="flex flex-col gap-2 rounded-lg border border-border p-2.5">
