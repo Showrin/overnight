@@ -1,4 +1,5 @@
 import { Box, FolderGit2, LayoutDashboard, Settings } from 'lucide-react'
+import { SidebarSandboxList } from '@/components/sandboxes/SidebarSandboxList'
 
 export type Screen = 'dashboard' | 'projects' | 'sandboxes' | 'settings'
 
@@ -72,6 +73,7 @@ export function Sidebar({
           </div>
         ))}
       </div>
+      {!collapsed && <SidebarSandboxList onNavigate={onNavigate} />}
       {!collapsed && (
         <div className="border-t border-sidebar-border px-3 py-2.5 text-xs text-muted-foreground">
           Overnight v0.0.0
