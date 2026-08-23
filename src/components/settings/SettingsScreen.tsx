@@ -47,10 +47,10 @@ export function SettingsScreen() {
   }
 
   return (
-    <div className="flex w-full max-w-2xl flex-col gap-4 p-6">
+    <div className="flex w-full flex-col gap-4">
       <h1 className="text-lg font-medium">Settings</h1>
 
-      <Card className="w-96">
+      <Card className="w-full">
         <CardHeader>
           <CardTitle>Default Claude permission mode</CardTitle>
         </CardHeader>
@@ -86,7 +86,7 @@ export function SettingsScreen() {
           onCancel={jiraConfig.has_token ? () => setEditingJira(false) : undefined}
         />
       ) : jiraConfig ? (
-        <Card className="w-96">
+        <Card className="w-full">
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle>Jira</CardTitle>
             <Button size="sm" variant="outline" onClick={() => setEditingJira(true)}>

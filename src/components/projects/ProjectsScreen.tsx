@@ -34,21 +34,19 @@ export function ProjectsScreen() {
 
   if (editing) {
     return (
-      <div className="p-6">
-        <ProjectForm
-          initial={editing === 'new' ? null : editing}
-          onSaved={() => {
-            setEditing(null)
-            loadProjects()
-          }}
-          onCancel={() => setEditing(null)}
-        />
-      </div>
+      <ProjectForm
+        initial={editing === 'new' ? null : editing}
+        onSaved={() => {
+          setEditing(null)
+          loadProjects()
+        }}
+        onCancel={() => setEditing(null)}
+      />
     )
   }
 
   return (
-    <div className="flex w-full max-w-2xl flex-col gap-4 p-6">
+    <div className="flex w-full flex-col gap-4">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-medium">Projects</h1>
         <Button size="sm" onClick={() => setEditing('new')}>

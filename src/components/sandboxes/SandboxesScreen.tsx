@@ -51,7 +51,7 @@ export function SandboxesScreen() {
 
   if (checkingSbx) {
     return (
-      <div className="flex w-full flex-1 items-center justify-center p-6">
+      <div className="flex w-full items-center justify-center">
         <p className="text-sm text-muted-foreground">Checking sbx…</p>
       </div>
     )
@@ -59,7 +59,7 @@ export function SandboxesScreen() {
 
   if (sbxError) {
     return (
-      <div className="flex w-full flex-1 items-center justify-center p-6">
+      <div className="flex w-full items-center justify-center">
         <div className="flex max-w-md flex-col items-center gap-3 text-center">
           <h1 className="text-lg font-medium">sbx isn't available</h1>
           <p className="text-sm text-muted-foreground">
@@ -76,7 +76,7 @@ export function SandboxesScreen() {
   }
 
   return (
-    <div className="flex w-full max-w-3xl flex-col gap-4 p-6">
+    <div className="flex w-full flex-col gap-4">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-medium">Sandboxes</h1>
         <Button size="sm" onClick={() => setCreating(true)} disabled={projects.length === 0}>

@@ -62,7 +62,7 @@ export function JiraIssueList() {
 
   if (!config.has_token) {
     return (
-      <Card className="w-96">
+      <Card className="w-full">
         <CardHeader>
           <CardTitle>Jira issues</CardTitle>
         </CardHeader>
@@ -76,7 +76,7 @@ export function JiraIssueList() {
   }
 
   return (
-    <Card className="w-96">
+    <Card className="w-full">
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle>Jira issues</CardTitle>
         <Button size="sm" onClick={handleSync} disabled={syncing}>

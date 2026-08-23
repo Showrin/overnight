@@ -48,7 +48,7 @@ export function JiraConfigForm({
   }
 
   return (
-    <Card className="w-96">
+    <Card className="w-full">
       <CardHeader>
         <CardTitle>Connect Jira</CardTitle>
       </CardHeader>

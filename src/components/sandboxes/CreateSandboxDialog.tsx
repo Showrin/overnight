@@ -99,7 +99,7 @@ export function CreateSandboxDialog({
   }
 
   return (
-    <Card className="w-96">
+    <Card className="w-full">
       <CardHeader>
         <CardTitle>New sandbox</CardTitle>
       </CardHeader>

@@ -14,15 +14,13 @@ function App() {
       <Titlebar />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar current={screen} onNavigate={setScreen} />
-        <main className="flex flex-1 overflow-auto">
-          {screen === 'dashboard' && (
-            <div className="flex flex-1 items-center justify-center">
-              <JiraIssueList />
-            </div>
-          )}
-          {screen === 'projects' && <ProjectsScreen />}
-          {screen === 'sandboxes' && <SandboxesScreen />}
-          {screen === 'settings' && <SettingsScreen />}
+        <main className="flex flex-1 justify-center overflow-auto">
+          <div className="w-full max-w-[1024px] p-6">
+            {screen === 'dashboard' && <JiraIssueList />}
+            {screen === 'projects' && <ProjectsScreen />}
+            {screen === 'sandboxes' && <SandboxesScreen />}
+            {screen === 'settings' && <SettingsScreen />}
+          </div>
         </main>
       </div>
     </div>

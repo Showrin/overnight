@@ -81,7 +81,7 @@ export function ProjectForm({
   }
 
   return (
-    <Card className="w-96">
+    <Card className="w-full">
       <CardHeader>
         <CardTitle>{initial ? 'Edit project' : 'New project'}</CardTitle>
       </CardHeader>

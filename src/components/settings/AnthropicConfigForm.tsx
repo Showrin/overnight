@@ -28,7 +28,7 @@ export function AnthropicConfigForm() {
   }
 
   return (
-    <Card className="w-96">
+    <Card className="w-full">
       <CardHeader>
         <CardTitle>Anthropic API key</CardTitle>
       </CardHeader>
