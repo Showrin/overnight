@@ -54,7 +54,7 @@ export function SandboxCard({
 
   async function copyInfoCommand() {
     if (!sandbox.sbx_name) return
-    await navigator.clipboard.writeText(`sbx info ${sandbox.sbx_name}`)
+    await navigator.clipboard.writeText(sandbox.sbx_name)
     setCopiedInfo(true)
     setTimeout(() => setCopiedInfo(false), 1500)
   }
@@ -64,11 +64,13 @@ export function SandboxCard({
   }
 
   return (
-    <Card size="sm">
-      <CardHeader className="gap-0.5">
+    <Card className="gap-6" size="sm">
+      <CardHeader className="gap-1.5">
         <div className="flex items-center gap-2">
           <CardTitle>{sandbox.name ?? projectName}</CardTitle>
-          <Badge variant={statusBadgeVariant(sandbox.status)}>{sandbox.status}</Badge>
+          <Badge variant={statusBadgeVariant(sandbox.status)}>
+            {sandbox.status}
+          </Badge>
         </div>
         {sandbox.sbx_name && (
           <button
@@ -77,21 +79,30 @@ export function SandboxCard({
             title="Copy `sbx info` command"
             className="w-fit text-left text-xs text-muted-foreground hover:text-foreground hover:underline"
           >
-            {copiedInfo ? 'Copied!' : sandbox.sbx_name}
+            {copiedInfo ? "Copied!" : sandbox.sbx_name}
           </button>
         )}
       </CardHeader>
-      <CardContent className="flex flex-col gap-2 text-sm text-muted-foreground">
+      <CardContent className="flex flex-col gap-6 text-sm text-muted-foreground">
         <div className="grid grid-cols-3 gap-4">
           <div className="flex min-w-0 flex-col gap-0.5">
-            <span className="text-xs text-muted-foreground/70">Permission Mode</span>
-            <Badge variant={permissionBadgeVariant(sandbox.permission_mode)} className="w-fit">
+            <span className="text-xs text-muted-foreground/70">
+              Permission Mode
+            </span>
+            <Badge
+              variant={permissionBadgeVariant(sandbox.permission_mode)}
+              className="w-fit"
+            >
               {sandbox.permission_mode}
             </Badge>
           </div>
           <div className="flex min-w-0 flex-col gap-0.5">
-            <span className="text-xs text-muted-foreground/70">Project Attachment</span>
-            <span className="text-sm text-foreground">{sandbox.mode === 'clone' ? 'Cloned' : 'Mounted'}</span>
+            <span className="text-xs text-muted-foreground/70">
+              Project Attachment
+            </span>
+            <span className="text-sm text-foreground">
+              {sandbox.mode === "clone" ? "Cloned" : "Mounted"}
+            </span>
           </div>
           <div className="flex min-w-0 flex-col gap-0.5">
             <span className="text-xs text-muted-foreground/70">Location</span>
@@ -113,15 +124,19 @@ export function SandboxCard({
         {error && <p className="text-destructive">{error}</p>}
 
         <div className="flex flex-wrap gap-2">
-          {sandbox.status === 'running' && (
+          {sandbox.status === "running" && (
             <>
               <Button
                 size="sm"
                 variant="outline"
                 disabled={busyAction != null}
-                onClick={() => run('vscode', () => invoke('open_sandbox_vscode', { id: sandbox.id }))}
+                onClick={() =>
+                  run("vscode", () =>
+                    invoke("open_sandbox_vscode", { id: sandbox.id }),
+                  )
+                }
               >
-                {busyAction === 'vscode' ? (
+                {busyAction === "vscode" ? (
                   <Loader2 className="size-3.5 animate-spin" />
                 ) : (
                   <Code className="size-3.5" />
@@ -132,9 +147,13 @@ export function SandboxCard({
                 size="sm"
                 variant="outline"
                 disabled={busyAction != null}
-                onClick={() => run('terminal', () => invoke('open_sandbox_terminal', { id: sandbox.id }))}
+                onClick={() =>
+                  run("terminal", () =>
+                    invoke("open_sandbox_terminal", { id: sandbox.id }),
+                  )
+                }
               >
-                {busyAction === 'terminal' ? (
+                {busyAction === "terminal" ? (
                   <Loader2 className="size-3.5 animate-spin" />
                 ) : (
                   <TerminalSquare className="size-3.5" />
@@ -151,39 +170,45 @@ export function SandboxCard({
                 size="sm"
                 variant="outline"
                 disabled={busyAction != null}
-                onClick={() => run('stop', () => invoke('stop_sandbox', { id: sandbox.id }))}
+                onClick={() =>
+                  run("stop", () => invoke("stop_sandbox", { id: sandbox.id }))
+                }
               >
-                {busyAction === 'stop' ? (
+                {busyAction === "stop" ? (
                   <Loader2 className="size-3.5 animate-spin" />
                 ) : (
                   <Square className="size-3.5" />
                 )}
-                {busyAction === 'stop' ? 'Stopping…' : 'Stop'}
+                {busyAction === "stop" ? "Stopping…" : "Stop"}
               </Button>
             </>
           )}
-          {sandbox.status === 'stopped' && (
+          {sandbox.status === "stopped" && (
             <Button
               size="sm"
               variant="outline"
               disabled={busyAction != null}
-              onClick={() => run('start', () => invoke('start_sandbox', { id: sandbox.id }))}
+              onClick={() =>
+                run("start", () => invoke("start_sandbox", { id: sandbox.id }))
+              }
             >
-              {busyAction === 'start' ? (
+              {busyAction === "start" ? (
                 <Loader2 className="size-3.5 animate-spin" />
               ) : (
                 <Play className="size-3.5" />
               )}
-              {busyAction === 'start' ? 'Starting…' : 'Start'}
+              {busyAction === "start" ? "Starting…" : "Start"}
             </Button>
           )}
           <Button
             size="sm"
             variant="destructive"
             disabled={busyAction != null}
-            onClick={() => run('delete', () => invoke('delete_sandbox', { id: sandbox.id }))}
+            onClick={() =>
+              run("delete", () => invoke("delete_sandbox", { id: sandbox.id }))
+            }
           >
-            {busyAction === 'delete' ? (
+            {busyAction === "delete" ? (
               <Loader2 className="size-3.5 animate-spin" />
             ) : (
               <Trash2 className="size-3.5" />
@@ -193,5 +218,5 @@ export function SandboxCard({
         </div>
       </CardContent>
     </Card>
-  )
+  );
 }
