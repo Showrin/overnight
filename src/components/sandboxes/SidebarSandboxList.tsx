@@ -63,7 +63,7 @@ export function SidebarSandboxList({ onNavigate }: { onNavigate: (screen: Screen
         return (
           <div
             key={sandbox.id}
-            className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-sidebar-foreground hover:bg-sidebar-accent/60"
+            className="flex items-center gap-1 rounded-md px-2 py-1.5 text-sm text-sidebar-foreground hover:bg-sidebar-accent/60"
           >
             <span className="flex-1 truncate" title={sandbox.name ?? projectName}>
               {sandbox.name ?? projectName}
@@ -78,7 +78,7 @@ export function SidebarSandboxList({ onNavigate }: { onNavigate: (screen: Screen
                   onClick={() =>
                     run(sandbox, 'vscode', () => invoke('open_sandbox_vscode', { id: sandbox.id }))
                   }
-                  className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
+                  className="flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
                 >
                   {isBusy && busy?.action === 'vscode' ? (
                     <Loader2 className="size-3 animate-spin" />
@@ -94,7 +94,7 @@ export function SidebarSandboxList({ onNavigate }: { onNavigate: (screen: Screen
                   onClick={() =>
                     run(sandbox, 'terminal', () => invoke('open_sandbox_terminal', { id: sandbox.id }))
                   }
-                  className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
+                  className="flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
                 >
                   {isBusy && busy?.action === 'terminal' ? (
                     <Loader2 className="size-3 animate-spin" />
