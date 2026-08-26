@@ -1,15 +1,11 @@
-import { Box, FolderGit2, LayoutDashboard, Settings } from 'lucide-react'
+import { Box, FolderGit2, Settings } from 'lucide-react'
 import { SidebarSandboxList } from '@/components/sandboxes/SidebarSandboxList'
 
 export type Screen = 'dashboard' | 'projects' | 'sandboxes' | 'settings'
 
-type NavItem = { screen: Screen; label: string; icon: typeof LayoutDashboard }
+type NavItem = { screen: Screen; label: string; icon: typeof Settings }
 
 const groups: { label: string; items: NavItem[] }[] = [
-  {
-    label: 'Overview',
-    items: [{ screen: 'dashboard', label: 'Dashboard', icon: LayoutDashboard }],
-  },
   {
     label: 'Workspace',
     items: [

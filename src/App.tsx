@@ -8,7 +8,7 @@ import { SettingsScreen } from '@/components/settings/SettingsScreen'
 import { initAppStore } from '@/store/useAppStore'
 
 function App() {
-  const [screen, setScreen] = useState<Screen>('dashboard')
+  const [screen, setScreen] = useState<Screen>('projects')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
   useEffect(() => {

@@ -7,6 +7,8 @@ import { PERMISSION_MODES } from '@/lib/permissionModes'
 import { useAppStore } from '@/store/useAppStore'
 import { JiraConfigForm, type JiraConfig } from './JiraConfigForm'
 
+const SHOW_JIRA_SETTINGS = false
+
 export function SettingsScreen() {
   const settings = useAppStore((s) => s.settings)
   const saveSettings = useAppStore((s) => s.saveSettings)
@@ -70,7 +72,7 @@ export function SettingsScreen() {
         </CardContent>
       </Card>
 
-      {jiraConfig && (!jiraConfig.has_token || editingJira) ? (
+      {SHOW_JIRA_SETTINGS && jiraConfig && (!jiraConfig.has_token || editingJira) ? (
         <JiraConfigForm
           initial={jiraConfig}
           onSaved={() => {
@@ -79,7 +81,7 @@ export function SettingsScreen() {
           }}
           onCancel={jiraConfig.has_token ? () => setEditingJira(false) : undefined}
         />
-      ) : jiraConfig ? (
+      ) : SHOW_JIRA_SETTINGS && jiraConfig ? (
         <Card className="w-full">
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle>Jira</CardTitle>
