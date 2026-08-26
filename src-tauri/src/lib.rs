@@ -83,6 +83,17 @@ pub fn run() {
       app.manage(pool);
       app.manage(std::sync::Mutex::new(sbx::HostMonitor::new()));
 
+      if let Some(window) = app.get_webview_window("main") {
+        if let Ok(Some(monitor)) = window.primary_monitor() {
+          let screen_size = monitor.size();
+          let width = (screen_size.width as f64 * 0.7) as u32;
+          let height = (screen_size.height as f64 * 0.7) as u32;
+          let _ = window.set_size(tauri::PhysicalSize::new(width, height));
+          let _ = window.center();
+        }
+        let _ = window.show();
+      }
+
       let show_item = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
       let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
       let tray_menu = Menu::with_items(app, &[&show_item, &quit_item])?;
