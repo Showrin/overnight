@@ -13,6 +13,17 @@ function App() {
 
   useEffect(() => {
     initAppStore()
+
+    const splash = document.getElementById('splash')
+    if (splash) {
+      const MIN_SPLASH_MS = 2500
+      const remaining = Math.max(0, MIN_SPLASH_MS - performance.now())
+      const timer = setTimeout(() => {
+        splash.classList.add('splash-hidden')
+        splash.addEventListener('transitionend', () => splash.remove(), { once: true })
+      }, remaining)
+      return () => clearTimeout(timer)
+    }
   }, [])
 
   return (
