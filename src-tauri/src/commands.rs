@@ -475,12 +475,21 @@ fn resolve_extra_clone_targets(
     let matches = glob::glob(&full_pattern.to_string_lossy()).map_err(|e| format!("invalid glob pattern {pattern:?}: {e}"))?;
     for entry in matches {
       let host_path = entry.map_err(|e| e.to_string())?;
-      let relative = host_path.strip_prefix(repo_path).unwrap_or(&host_path);
-      let relative_posix = relative
-        .components()
-        .map(|c| c.as_os_str().to_string_lossy().into_owned())
-        .collect::<Vec<_>>()
-        .join("/");
+      // A pattern outside repo_path (picked via the folder/file browser)
+      // has no meaningful path relative to the repo — drop it straight into
+      // the clone root under its own name rather than recreating its whole
+      // host directory hierarchy there.
+      let relative_posix = match host_path.strip_prefix(repo_path) {
+        Ok(relative) => relative
+          .components()
+          .map(|c| c.as_os_str().to_string_lossy().into_owned())
+          .collect::<Vec<_>>()
+          .join("/"),
+        Err(_) => host_path
+          .file_name()
+          .map(|n| n.to_string_lossy().into_owned())
+          .ok_or_else(|| format!("cannot determine a destination name for {host_path:?}"))?,
+      };
       targets.push((host_path, relative_posix));
     }
   }
@@ -508,6 +517,24 @@ mod extra_clone_paths_tests {
     assert_eq!(relative, vec![".env", "config/local.json"]);
 
     fs::remove_dir_all(&dir).unwrap();
+  }
+
+  #[test]
+  fn path_outside_repo_lands_at_clone_root_under_its_own_name() {
+    let repo_dir = std::env::temp_dir().join(format!("overnight-extra-clone-repo-{}", uuid::Uuid::new_v4()));
+    let outside_dir = std::env::temp_dir().join(format!("overnight-extra-clone-outside-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&repo_dir).unwrap();
+    fs::create_dir_all(outside_dir.join("cache")).unwrap();
+    fs::write(outside_dir.join("cache").join("token"), "secret").unwrap();
+
+    let patterns = vec![outside_dir.to_string_lossy().into_owned()];
+    let targets = resolve_extra_clone_targets(&repo_dir, &patterns).unwrap();
+
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].1, outside_dir.file_name().unwrap().to_string_lossy());
+
+    fs::remove_dir_all(&repo_dir).unwrap();
+    fs::remove_dir_all(&outside_dir).unwrap();
   }
 
   #[test]
