@@ -2634,6 +2634,7 @@ name = "overnight"
 version = "0.1.0"
 dependencies = [
  "futures",
+ "glob",
  "keyring",
  "log",
  "r2d2",

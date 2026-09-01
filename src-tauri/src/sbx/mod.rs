@@ -171,6 +171,24 @@ pub async fn set_claude_default_permission_mode<R: Runtime>(app: &AppHandle<R>, 
   Ok(())
 }
 
+/// `sbx cp <local> <name>:<remote>` — copies a single file or directory
+/// from the host into a running sandbox's filesystem (directory copies are
+/// recursive per the docs). Used to bring `extra_clone_paths` — files git
+/// ignores, like `.env`, that a clone-mode `sbx create --clone` therefore
+/// doesn't carry over — into the sandbox after it's created. Nested file
+/// destinations need their parent directory to exist first; see `mkdir`.
+pub async fn cp<R: Runtime>(app: &AppHandle<R>, local_path: &str, name: &str, remote_path: &str) -> Result<()> {
+  run(app, &["cp", local_path, &format!("{name}:{remote_path}")]).await?;
+  Ok(())
+}
+
+/// `sbx exec -d <name> mkdir -p <path>` — ensures a directory exists inside
+/// the sandbox before `cp`-ing a file into it.
+pub async fn mkdir<R: Runtime>(app: &AppHandle<R>, name: &str, path: &str) -> Result<()> {
+  run(app, &["exec", "-d", name, "mkdir", "-p", path]).await?;
+  Ok(())
+}
+
 pub async fn stop<R: Runtime>(app: &AppHandle<R>, name: &str) -> Result<()> {
   run(app, &["stop", name]).await?;
   Ok(())

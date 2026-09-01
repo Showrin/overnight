@@ -418,6 +418,9 @@ async fn provision_sandbox(
 ) -> std::result::Result<Sandbox, String> {
   let name = sbx_name_for(&sandbox.id);
   crate::sbx::create(app, &name, mode == "clone", &project.repo_path).await.map_err(|e| e.to_string())?;
+  if mode == "clone" {
+    copy_extra_clone_paths(app, &name, project).await?;
+  }
   crate::sbx::set_claude_default_permission_mode(app, &name, &sandbox.permission_mode)
     .await
     .map_err(|e| e.to_string())?;
@@ -427,6 +430,96 @@ async fn provision_sandbox(
   let conn = pool.get().map_err(|e| e.to_string())?;
   sandboxes::update_status(&conn, &sandbox.id, "running", Some(&name), host_port.map(i64::from))
     .map_err(|e| e.to_string())
+}
+
+/// Clone mode's `sbx create --clone` clones the git-tracked contents of
+/// `project.repo_path` into an isolated copy inside the sandbox VM — files
+/// git ignores (`.env`, local config, etc.) don't come along, which is
+/// exactly what `project.extra_clone_paths`' glob patterns are for. Each
+/// match is copied in afterward via `sbx cp`, preserving its path relative
+/// to `repo_path`.
+async fn copy_extra_clone_paths(app: &AppHandle, name: &str, project: &Project) -> std::result::Result<(), String> {
+  if project.extra_clone_paths.is_empty() {
+    return Ok(());
+  }
+  let workspace = crate::sbx::workspace_path(app, name)
+    .await
+    .map_err(|e| e.to_string())?
+    .ok_or_else(|| "could not resolve the sandbox's in-VM workspace path".to_string())?;
+  let repo_path = std::path::Path::new(&project.repo_path);
+  let targets = resolve_extra_clone_targets(repo_path, &project.extra_clone_paths)?;
+
+  for (host_path, relative_posix) in targets {
+    let remote_path = format!("{workspace}/{relative_posix}");
+    if let Some((parent, _)) = relative_posix.rsplit_once('/') {
+      crate::sbx::mkdir(app, name, &format!("{workspace}/{parent}")).await.map_err(|e| e.to_string())?;
+    }
+    crate::sbx::cp(app, &host_path.to_string_lossy(), name, &remote_path).await.map_err(|e| e.to_string())?;
+  }
+  Ok(())
+}
+
+/// Expands `patterns` (glob patterns relative to `repo_path`) against the
+/// host filesystem and pairs each match with its path relative to
+/// `repo_path`, in POSIX form (`/`-separated — the sandbox VM is always
+/// POSIX regardless of host OS). Split out from `copy_extra_clone_paths` as
+/// the one part of that flow that's pure/host-only and so can be unit
+/// tested without a real `sbx` install.
+fn resolve_extra_clone_targets(
+  repo_path: &std::path::Path,
+  patterns: &[String],
+) -> std::result::Result<Vec<(std::path::PathBuf, String)>, String> {
+  let mut targets = Vec::new();
+  for pattern in patterns {
+    let full_pattern = repo_path.join(pattern);
+    let matches = glob::glob(&full_pattern.to_string_lossy()).map_err(|e| format!("invalid glob pattern {pattern:?}: {e}"))?;
+    for entry in matches {
+      let host_path = entry.map_err(|e| e.to_string())?;
+      let relative = host_path.strip_prefix(repo_path).unwrap_or(&host_path);
+      let relative_posix = relative
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/");
+      targets.push((host_path, relative_posix));
+    }
+  }
+  Ok(targets)
+}
+
+#[cfg(test)]
+mod extra_clone_paths_tests {
+  use super::resolve_extra_clone_targets;
+  use std::fs;
+
+  #[test]
+  fn resolves_glob_patterns_to_repo_relative_posix_paths() {
+    let dir = std::env::temp_dir().join(format!("overnight-extra-clone-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(dir.join("config")).unwrap();
+    fs::write(dir.join(".env"), "SECRET=1").unwrap();
+    fs::write(dir.join("config").join("local.json"), "{}").unwrap();
+    fs::write(dir.join("tracked.rs"), "// not matched").unwrap();
+
+    let patterns = vec![".env".to_string(), "config/*.json".to_string()];
+    let mut targets = resolve_extra_clone_targets(&dir, &patterns).unwrap();
+    targets.sort_by(|a, b| a.1.cmp(&b.1));
+
+    let relative: Vec<&str> = targets.iter().map(|(_, r)| r.as_str()).collect();
+    assert_eq!(relative, vec![".env", "config/local.json"]);
+
+    fs::remove_dir_all(&dir).unwrap();
+  }
+
+  #[test]
+  fn no_matches_yields_empty_targets() {
+    let dir = std::env::temp_dir().join(format!("overnight-extra-clone-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&dir).unwrap();
+
+    let targets = resolve_extra_clone_targets(&dir, &["nonexistent/*.env".to_string()]).unwrap();
+    assert!(targets.is_empty());
+
+    fs::remove_dir_all(&dir).unwrap();
+  }
 }
 
 #[tauri::command]
