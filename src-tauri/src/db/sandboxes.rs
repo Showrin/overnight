@@ -29,11 +29,20 @@ pub fn create(
 ) -> Result<Sandbox> {
   let id = new_id();
   let now = now_millis();
-  conn.execute(
+  let result = conn.execute(
     "INSERT INTO sandboxes (id, project_id, mode, status, folder_path, name, permission_mode, created_at)
      VALUES (?1, ?2, ?3, 'starting', ?4, ?5, ?6, ?7)",
     params![id, project_id, mode, folder_path, name, permission_mode, now],
-  )?;
+  );
+  // ux_sandboxes_active_mount_per_project closes the race between callers'
+  // pre-insert checks; surface it as the same error those checks return.
+  if let Err(e) = result {
+    return Err(if e.sqlite_extended_error_code() == Some(rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE) {
+      Error::DuplicateMountSandbox
+    } else {
+      Error::Sqlite(e)
+    });
+  }
   get(conn, &id)
 }
 
@@ -168,6 +177,21 @@ mod tests {
     let sandbox = create(&conn, &project_id, "clone", None, None, "bypassPermissions").unwrap();
     assert_eq!(sandbox.permission_mode, "bypassPermissions");
     assert_eq!(get(&conn, &sandbox.id).unwrap().permission_mode, "bypassPermissions");
+  }
+
+  #[test]
+  fn concurrent_mount_create_is_rejected_by_db_constraint() {
+    let conn = test_conn();
+    let project_id = make_project(&conn);
+
+    create(&conn, &project_id, "mount", None, None, "default").unwrap();
+    let second = create(&conn, &project_id, "mount", None, None, "default");
+    assert!(matches!(second, Err(Error::DuplicateMountSandbox)));
+
+    // Clone mode and other projects are unaffected by the partial index.
+    create(&conn, &project_id, "clone", None, None, "default").unwrap();
+    let other_project_id = make_project(&conn);
+    create(&conn, &other_project_id, "mount", None, None, "default").unwrap();
   }
 
   #[test]

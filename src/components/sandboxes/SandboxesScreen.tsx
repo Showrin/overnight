@@ -14,12 +14,14 @@ function SandboxGroup({
   sandboxes,
   projectName,
   onAddNew,
+  addNewDisabled,
   onChanged,
 }: {
   title: string
   sandboxes: Sandbox[]
   projectName: string
   onAddNew?: () => void
+  addNewDisabled?: boolean
   onChanged: () => void
 }) {
   return (
@@ -27,9 +29,15 @@ function SandboxGroup({
       <div className="flex items-center justify-between">
         <span className="text-xs font-normal text-muted-foreground">{title}</span>
         {onAddNew && (
-          <Button size="sm" variant="outline" onClick={onAddNew}>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onAddNew}
+            disabled={addNewDisabled}
+            title={addNewDisabled ? 'A mount-mode sandbox is already running for this project' : undefined}
+          >
             <Plus className="size-3.5" />
-            Add New
+            {addNewDisabled ? 'Sandbox running' : 'Add New'}
           </Button>
         )}
       </div>
@@ -126,16 +134,23 @@ export function SandboxesScreen() {
           <p className="text-sm text-muted-foreground">Create a project first, then start a sandbox for it.</p>
         )}
 
-        {projects.map((project) => (
-          <SandboxGroup
-            key={project.id}
-            title={project.name}
-            projectName={project.name}
-            sandboxes={sandboxes.filter((sb) => sb.project_id === project.id)}
-            onAddNew={() => setCreatingForProjectId(project.id)}
-            onChanged={loadSandboxes}
-          />
-        ))}
+        {projects.map((project) => {
+          const projectSandboxes = sandboxes.filter((sb) => sb.project_id === project.id)
+          const hasActiveMount = projectSandboxes.some(
+            (sb) => sb.mode === 'mount' && (sb.status === 'starting' || sb.status === 'running')
+          )
+          return (
+            <SandboxGroup
+              key={project.id}
+              title={project.name}
+              projectName={project.name}
+              sandboxes={projectSandboxes}
+              onAddNew={() => setCreatingForProjectId(project.id)}
+              addNewDisabled={hasActiveMount}
+              onChanged={loadSandboxes}
+            />
+          )
+        })}
 
         {orphanSandboxes.length > 0 && (
           <SandboxGroup

@@ -16,6 +16,8 @@ pub enum Error {
   InvalidRepoPath(String),
   #[error("invalid value: {0}")]
   InvalidValue(String),
+  #[error("a mount-mode sandbox is already running for this project")]
+  DuplicateMountSandbox,
 }
 
 // Tauri commands require their Err type to implement Serialize to cross IPC.
