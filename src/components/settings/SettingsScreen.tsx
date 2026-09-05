@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { open } from '@tauri-apps/plugin-dialog'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -12,15 +13,21 @@ const SHOW_JIRA_SETTINGS = false
 export function SettingsScreen() {
   const settings = useAppStore((s) => s.settings)
   const saveSettings = useAppStore((s) => s.saveSettings)
+  const saveSkillFolders = useAppStore((s) => s.saveSkillFolders)
   const [permissionMode, setPermissionMode] = useState<string>('default')
   const [savingMode, setSavingMode] = useState(false)
   const [modeError, setModeError] = useState<string | null>(null)
+
+  const [skillFolders, setSkillFolders] = useState<string[]>([])
+  const [savingSkillFolders, setSavingSkillFolders] = useState(false)
+  const [skillFoldersError, setSkillFoldersError] = useState<string | null>(null)
 
   const [jiraConfig, setJiraConfig] = useState<JiraConfig | null>(null)
   const [editingJira, setEditingJira] = useState(false)
 
   useEffect(() => {
     if (settings) setPermissionMode(settings.default_claude_permission_mode)
+    if (settings) setSkillFolders(settings.skill_folders)
   }, [settings])
 
   async function loadJiraConfig() {
@@ -41,6 +48,29 @@ export function SettingsScreen() {
       setModeError(String(e))
     } finally {
       setSavingMode(false)
+    }
+  }
+
+  async function addSkillFolders() {
+    const selection = await open({ directory: true, multiple: true })
+    if (!selection) return
+    const paths = Array.isArray(selection) ? selection : [selection]
+    setSkillFolders((existing) => [...existing, ...paths.filter((p) => !existing.includes(p))])
+  }
+
+  function removeSkillFolder(path: string) {
+    setSkillFolders((existing) => existing.filter((p) => p !== path))
+  }
+
+  async function handleSaveSkillFolders() {
+    setSavingSkillFolders(true)
+    setSkillFoldersError(null)
+    try {
+      await saveSkillFolders(skillFolders)
+    } catch (e) {
+      setSkillFoldersError(String(e))
+    } finally {
+      setSavingSkillFolders(false)
     }
   }
 
@@ -68,6 +98,40 @@ export function SettingsScreen() {
           {modeError && <p className="text-sm text-destructive">{modeError}</p>}
           <Button onClick={handleSaveMode} disabled={savingMode}>
             {savingMode ? 'Saving…' : 'Save'}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card className="w-full">
+        <CardHeader>
+          <CardTitle>Skill folders</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2">
+          <Button type="button" variant="outline" onClick={addSkillFolders}>
+            Add folder(s)
+          </Button>
+          {skillFolders.length > 0 && (
+            <ul className="flex flex-col gap-1">
+              {skillFolders.map((path) => (
+                <li
+                  key={path}
+                  className="flex items-center justify-between gap-2 rounded-lg border border-border px-2.5 py-1 text-sm"
+                >
+                  <span className="truncate">{path}</span>
+                  <button
+                    type="button"
+                    onClick={() => removeSkillFolder(path)}
+                    className="text-muted-foreground hover:text-destructive"
+                  >
+                    Remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {skillFoldersError && <p className="text-sm text-destructive">{skillFoldersError}</p>}
+          <Button onClick={handleSaveSkillFolders} disabled={savingSkillFolders}>
+            {savingSkillFolders ? 'Saving…' : 'Save'}
           </Button>
         </CardContent>
       </Card>

@@ -9,6 +9,7 @@ const HOST_STATS_HISTORY_MAX_POINTS = 500
 
 export interface AppSettings {
   default_claude_permission_mode: string
+  skill_folders: string[]
 }
 
 interface AppStore {
@@ -22,6 +23,7 @@ interface AppStore {
   loadSandboxes: () => Promise<void>
   loadSettings: () => Promise<void>
   saveSettings: (defaultClaudePermissionMode: string) => Promise<void>
+  saveSkillFolders: (folders: string[]) => Promise<void>
   loadHostStatsHistory: () => Promise<void>
   loadHostStats: () => Promise<void>
 }
@@ -50,7 +52,22 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   async saveSettings(defaultClaudePermissionMode) {
     await invoke('save_settings', { defaultClaudePermissionMode })
-    set({ settings: { default_claude_permission_mode: defaultClaudePermissionMode } })
+    set((state) => ({
+      settings: {
+        default_claude_permission_mode: defaultClaudePermissionMode,
+        skill_folders: state.settings?.skill_folders ?? [],
+      },
+    }))
+  },
+
+  async saveSkillFolders(folders) {
+    await invoke('save_skill_folders', { folders })
+    set((state) => ({
+      settings: {
+        default_claude_permission_mode: state.settings?.default_claude_permission_mode ?? 'default',
+        skill_folders: folders,
+      },
+    }))
   },
 
   async loadHostStatsHistory() {

@@ -4,6 +4,7 @@ mod jira;
 mod process;
 mod providers;
 mod sbx;
+mod skills;
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
@@ -35,6 +36,7 @@ pub fn run() {
       commands::delete_project,
       commands::get_settings,
       commands::save_settings,
+      commands::save_skill_folders,
       commands::start_plan_session,
       commands::sbx_health_check,
       commands::init_sbx_policy,

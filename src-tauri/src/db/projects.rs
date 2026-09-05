@@ -17,21 +17,13 @@ fn row_to_project(row: &rusqlite::Row) -> rusqlite::Result<Project> {
   })
 }
 
-pub fn create(
-  conn: &Connection,
-  name: &str,
-  repo_path: &str,
-  plans_path: Option<&str>,
-  dev_server_port: Option<i64>,
-  extra_clone_paths: &[String],
-) -> Result<Project> {
+pub fn create(conn: &Connection, name: &str, repo_path: &str, plans_path: Option<&str>, dev_server_port: Option<i64>) -> Result<Project> {
   let id = new_id();
   let now = now_millis();
-  let extra_clone_paths_raw = serde_json::to_string(extra_clone_paths)?;
   conn.execute(
-    "INSERT INTO projects (id, name, repo_path, plans_path, dev_server_port, extra_clone_paths, created_at, updated_at)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
-    params![id, name, repo_path, plans_path, dev_server_port, extra_clone_paths_raw, now],
+    "INSERT INTO projects (id, name, repo_path, plans_path, dev_server_port, created_at, updated_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+    params![id, name, repo_path, plans_path, dev_server_port, now],
   )?;
   get(conn, &id)
 }
@@ -51,23 +43,13 @@ pub fn list(conn: &Connection) -> Result<Vec<Project>> {
   Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
-pub fn update(
-  conn: &Connection,
-  id: &str,
-  name: &str,
-  repo_path: &str,
-  plans_path: Option<&str>,
-  dev_server_port: Option<i64>,
-  extra_clone_paths: &[String],
-) -> Result<Project> {
+pub fn update(conn: &Connection, id: &str, name: &str, repo_path: &str, plans_path: Option<&str>, dev_server_port: Option<i64>) -> Result<Project> {
   let now = now_millis();
-  let extra_clone_paths_raw = serde_json::to_string(extra_clone_paths)?;
   let changed = conn.execute(
     "UPDATE projects
-     SET name = ?1, repo_path = ?2, plans_path = ?3, dev_server_port = ?4,
-         extra_clone_paths = ?5, updated_at = ?6
-     WHERE id = ?7",
-    params![name, repo_path, plans_path, dev_server_port, extra_clone_paths_raw, now, id],
+     SET name = ?1, repo_path = ?2, plans_path = ?3, dev_server_port = ?4, updated_at = ?5
+     WHERE id = ?6",
+    params![name, repo_path, plans_path, dev_server_port, now, id],
   )?;
   if changed == 0 {
     return Err(Error::NotFound);
@@ -88,18 +70,13 @@ mod tests {
   use super::*;
   use crate::db::migrations::test_conn;
 
-  fn sample_paths() -> Vec<String> {
-    vec!["*.env".to_string(), "docs/**".to_string()]
-  }
-
   #[test]
   fn create_get_list_update_delete() {
     let conn = test_conn();
 
-    let project = create(&conn, "Overnight", "/repo/overnight", None, Some(5173), &sample_paths()).unwrap();
+    let project = create(&conn, "Overnight", "/repo/overnight", None, Some(5173)).unwrap();
     assert_eq!(project.name, "Overnight");
     assert_eq!(project.dev_server_port, Some(5173));
-    assert_eq!(project.extra_clone_paths, sample_paths());
 
     let fetched = get(&conn, &project.id).unwrap();
     assert_eq!(fetched.id, project.id);
@@ -107,20 +84,10 @@ mod tests {
     let all = list(&conn).unwrap();
     assert_eq!(all.len(), 1);
 
-    let updated = update(
-      &conn,
-      &project.id,
-      "Overnight Renamed",
-      "/repo/overnight",
-      Some(".agent/plans"),
-      Some(5174),
-      &[],
-    )
-    .unwrap();
+    let updated = update(&conn, &project.id, "Overnight Renamed", "/repo/overnight", Some(".agent/plans"), Some(5174)).unwrap();
     assert_eq!(updated.name, "Overnight Renamed");
     assert_eq!(updated.plans_path.as_deref(), Some(".agent/plans"));
     assert_eq!(updated.dev_server_port, Some(5174));
-    assert!(updated.extra_clone_paths.is_empty());
     assert!(updated.updated_at >= project.updated_at);
 
     delete(&conn, &project.id).unwrap();
@@ -131,17 +98,14 @@ mod tests {
   fn missing_id_operations_return_not_found() {
     let conn = test_conn();
     assert!(matches!(get(&conn, "missing"), Err(Error::NotFound)));
-    assert!(matches!(
-      update(&conn, "missing", "x", "/repo", None, None, &[]),
-      Err(Error::NotFound)
-    ));
+    assert!(matches!(update(&conn, "missing", "x", "/repo", None, None), Err(Error::NotFound)));
     assert!(matches!(delete(&conn, "missing"), Err(Error::NotFound)));
   }
 
   #[test]
   fn deleting_project_nulls_task_project_id() {
     let conn = test_conn();
-    let project = create(&conn, "Overnight", "/repo/overnight", None, None, &[]).unwrap();
+    let project = create(&conn, "Overnight", "/repo/overnight", None, None).unwrap();
     let task = crate::db::tasks::create(&conn, "Do work", None, None, "todo", None).unwrap();
     conn
       .execute(

@@ -84,9 +84,6 @@ export function ProjectsScreen() {
                   {project.dev_server_port != null && (
                     <Badge variant="outline">port {project.dev_server_port}</Badge>
                   )}
-                  {project.extra_clone_paths.length > 0 && (
-                    <Badge variant="outline">{project.extra_clone_paths.length} clone pattern(s)</Badge>
-                  )}
                 </div>
                 {projectSandboxes.length > 0 && (
                   <div className="flex flex-col gap-1 border-t border-border-subtle pt-2">

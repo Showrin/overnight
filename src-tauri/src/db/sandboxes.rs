@@ -96,7 +96,7 @@ mod tests {
   use crate::db::migrations::test_conn;
 
   fn make_project(conn: &Connection) -> String {
-    crate::db::projects::create(conn, "Overnight", "/repo/overnight", None, None, &[]).unwrap().id
+    crate::db::projects::create(conn, "Overnight", "/repo/overnight", None, None).unwrap().id
   }
 
   #[test]
