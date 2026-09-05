@@ -300,8 +300,58 @@ fn check_free_memory() -> std::result::Result<(), String> {
   Ok(())
 }
 
-fn sbx_name_for(sandbox_id: &str) -> String {
-  format!("overnight-{sandbox_id}")
+/// Sanitizes a user-provided sandbox name for `sbx create --name`:
+/// whitespace becomes `-`, everything else unsafe for a CLI/DNS-ish
+/// identifier is dropped.
+fn sanitize_sbx_name(name: &str) -> String {
+  name
+    .trim()
+    .chars()
+    .map(|c| if c.is_whitespace() { '-' } else { c })
+    .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+    .collect()
+}
+
+/// Base name to try first: the sanitized user-provided name, or
+/// `<project-name>-<4-char-id>` (from `sandbox_id`) when none was given.
+fn base_sbx_name(user_name: Option<&str>, project_name: &str, sandbox_id: &str) -> String {
+  match user_name.map(str::trim).filter(|n| !n.is_empty()) {
+    Some(n) => sanitize_sbx_name(n),
+    None => {
+      let suffix: String = sandbox_id.chars().filter(char::is_ascii_alphanumeric).take(4).collect();
+      format!("{}-{suffix}", sanitize_sbx_name(project_name))
+    }
+  }
+}
+
+/// `sbx create --name <name>` fails with "... already exists, use sbx run
+/// --name ... to connect" on collision (see `sbx::resume`'s doc comment).
+fn is_name_conflict(err: &str) -> bool {
+  err.contains("already exists")
+}
+
+const MAX_NAME_ATTEMPTS: u32 = 50;
+
+/// Finds a unique sbx sandbox name by calling `try_create` with `base`,
+/// then `base-2`, `base-3`, ... on each name-conflict error, until it
+/// succeeds or fails for an unrelated reason. Leans on `sbx`'s own
+/// uniqueness enforcement rather than pre-checking a name list — TOCTOU-safe
+/// by construction, since the name is only "taken" once `sbx` itself accepts
+/// it.
+async fn resolve_unique_sbx_name<F, Fut>(base: &str, mut try_create: F) -> std::result::Result<String, String>
+where
+  F: FnMut(String) -> Fut,
+  Fut: std::future::Future<Output = std::result::Result<(), String>>,
+{
+  for attempt in 1..=MAX_NAME_ATTEMPTS {
+    let candidate = if attempt == 1 { base.to_string() } else { format!("{base}-{attempt}") };
+    match try_create(candidate.clone()).await {
+      Ok(()) => return Ok(candidate),
+      Err(e) if is_name_conflict(&e) => continue,
+      Err(e) => return Err(e),
+    }
+  }
+  Err(format!("could not find a free sandbox name based on {base:?} after {MAX_NAME_ATTEMPTS} attempts"))
 }
 
 #[tauri::command]
@@ -416,8 +466,12 @@ async fn provision_sandbox(
   sandbox: &Sandbox,
   mode: &str,
 ) -> std::result::Result<Sandbox, String> {
-  let name = sbx_name_for(&sandbox.id);
-  crate::sbx::create(app, &name, mode == "clone", &project.repo_path).await.map_err(|e| e.to_string())?;
+  let base_name = base_sbx_name(sandbox.name.as_deref(), &project.name, &sandbox.id);
+  let clone = mode == "clone";
+  let name = resolve_unique_sbx_name(&base_name, |candidate| async move {
+    crate::sbx::create(app, &candidate, clone, &project.repo_path).await.map_err(|e| e.to_string())
+  })
+  .await?;
   if mode == "clone" {
     copy_extra_clone_paths(app, &name, project).await?;
   }
@@ -546,6 +600,61 @@ mod extra_clone_paths_tests {
     assert!(targets.is_empty());
 
     fs::remove_dir_all(&dir).unwrap();
+  }
+}
+
+#[cfg(test)]
+mod sbx_naming_tests {
+  use super::{base_sbx_name, resolve_unique_sbx_name};
+  use std::sync::Mutex;
+
+  #[test]
+  fn sanitizes_whitespace_and_unsafe_characters() {
+    assert_eq!(base_sbx_name(Some("my sandbox!!"), "overnight", "irrelevant"), "my-sandbox");
+    assert_eq!(base_sbx_name(Some("  tabs\tand\nnewlines  "), "overnight", "irrelevant"), "tabs-and-newlines");
+  }
+
+  #[test]
+  fn falls_back_to_project_name_and_4_char_id() {
+    assert_eq!(base_sbx_name(None, "Overnight", "ab12-cd34"), "Overnight-ab12");
+    assert_eq!(base_sbx_name(Some("   "), "Overnight", "ab12-cd34"), "Overnight-ab12");
+  }
+
+  #[tokio::test]
+  async fn succeeds_immediately_when_name_is_free() {
+    let name = resolve_unique_sbx_name("my-sandbox", |candidate| async move {
+      assert_eq!(candidate, "my-sandbox");
+      Ok(())
+    })
+    .await
+    .unwrap();
+    assert_eq!(name, "my-sandbox");
+  }
+
+  #[tokio::test]
+  async fn retries_with_bumped_suffix_on_name_conflict() {
+    let taken = Mutex::new(vec!["my-sandbox".to_string(), "my-sandbox-2".to_string()]);
+    let name = resolve_unique_sbx_name("my-sandbox", |candidate| {
+      let is_taken = taken.lock().unwrap().contains(&candidate);
+      async move {
+        if is_taken {
+          Err("sandbox \"x\" already exists, use sbx run --name x to connect".to_string())
+        } else {
+          Ok(())
+        }
+      }
+    })
+    .await
+    .unwrap();
+    assert_eq!(name, "my-sandbox-3");
+  }
+
+  #[tokio::test]
+  async fn propagates_unrelated_errors_without_retrying() {
+    let err = resolve_unique_sbx_name("my-sandbox", |_candidate| async move { Err("network policy not set".to_string()) })
+      .await
+      .unwrap_err();
+    assert_eq!(err, "network policy not set");
   }
 }
 
