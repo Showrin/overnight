@@ -1,6 +1,7 @@
 mod commands;
 mod db;
 mod jira;
+mod notifications;
 mod process;
 mod providers;
 mod sbx;
@@ -50,6 +51,7 @@ pub fn run() {
       commands::open_path_in_explorer,
       commands::get_host_stats,
       commands::get_host_stats_history,
+      notifications::notify,
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {

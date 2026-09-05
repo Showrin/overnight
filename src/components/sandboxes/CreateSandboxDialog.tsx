@@ -66,13 +66,13 @@ export function CreateSandboxDialog({
     setError(null)
     setNeedsPolicyInit(false)
     try {
-      await invoke<Sandbox>('create_sandbox', {
+      const sandbox = await invoke<Sandbox>('create_sandbox', {
         projectId,
         mode,
         name: name.trim() || null,
         permissionMode: permissionMode || null,
       })
-      notify('Sandbox started', 'Your sandbox is up and running.')
+      notify('Sandbox started', 'Your sandbox is up and running.', sandbox.id)
       onCreated()
     } catch (e) {
       const message = String(e)
