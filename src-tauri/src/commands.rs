@@ -424,12 +424,34 @@ async fn provision_sandbox(
   crate::sbx::set_claude_default_permission_mode(app, &name, &sandbox.permission_mode)
     .await
     .map_err(|e| e.to_string())?;
+  sync_git_identity(app, &name).await;
   crate::sbx::publish_port(app, &name, SANDBOX_PORT).await.map_err(|e| e.to_string())?;
   let host_port = crate::sbx::host_port(app, &name, SANDBOX_PORT).await.map_err(|e| e.to_string())?;
 
   let conn = pool.get().map_err(|e| e.to_string())?;
   sandboxes::update_status(&conn, &sandbox.id, "running", Some(&name), host_port.map(i64::from))
     .map_err(|e| e.to_string())
+}
+
+/// Pushes the host's global git identity into a freshly created sandbox.
+/// `sbx` never imports host `$HOME` config, so a fresh sandbox otherwise
+/// has none. Best-effort: no host identity, or any push failure, is
+/// silently skipped rather than failing sandbox creation.
+async fn sync_git_identity(app: &AppHandle, name: &str) {
+  for key in ["user.name", "user.email"] {
+    if let Some(value) = host_git_config(key) {
+      let _ = crate::sbx::set_git_config(app, name, key, &value).await;
+    }
+  }
+}
+
+fn host_git_config(key: &str) -> Option<String> {
+  let output = std::process::Command::new("git").args(["config", "--global", key]).output().ok()?;
+  if !output.status.success() {
+    return None;
+  }
+  let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+  (!value.is_empty()).then_some(value)
 }
 
 /// Clone mode's `sbx create --clone` clones the git-tracked contents of

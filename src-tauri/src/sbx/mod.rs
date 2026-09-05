@@ -171,6 +171,21 @@ pub async fn set_claude_default_permission_mode<R: Runtime>(app: &AppHandle<R>, 
   Ok(())
 }
 
+/// `sbx exec -d <name> git config --global <key> <value>` — pushes one
+/// host git identity field into a sandbox. `sbx` doesn't import host
+/// `$HOME` config, so a fresh sandbox otherwise has none. This write is
+/// immediate and idempotent, unlike `set_claude_default_permission_mode`'s
+/// persistent-shell-file trick.
+pub async fn set_git_config<R: Runtime>(app: &AppHandle<R>, name: &str, key: &str, value: &str) -> Result<()> {
+  let args = git_config_exec_args(name, key, value);
+  run(app, &args.iter().map(String::as_str).collect::<Vec<_>>()).await?;
+  Ok(())
+}
+
+fn git_config_exec_args(name: &str, key: &str, value: &str) -> Vec<String> {
+  ["exec", "-d", name, "git", "config", "--global", key, value].map(String::from).to_vec()
+}
+
 /// `sbx cp <local> <name>:<remote>` — copies a single file or directory
 /// from the host into a running sandbox's filesystem (directory copies are
 /// recursive per the docs). Used to bring `extra_clone_paths` — files git
@@ -465,5 +480,13 @@ mod tests {
   fn leaves_non_windows_paths_alone() {
     assert_eq!(windows_path_to_posix("/home/user/project"), "/home/user/project");
     assert_eq!(windows_path_to_posix("~/my-project"), "~/my-project");
+  }
+
+  #[test]
+  fn builds_git_config_exec_args() {
+    assert_eq!(
+      git_config_exec_args("my-sandbox", "user.name", "Jane Doe"),
+      vec!["exec", "-d", "my-sandbox", "git", "config", "--global", "user.name", "Jane Doe"]
+    );
   }
 }
