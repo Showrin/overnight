@@ -34,29 +34,6 @@ function branchSyncStatusLabel(status: BranchSyncOutcome['status']): string {
   }
 }
 
-// Formats a past unix-ms timestamp as "3 minutes ago"-style relative text,
-// using the platform's own `Intl.RelativeTimeFormat` rather than a new
-// dependency for one caption.
-function formatRelativeTime(pastMs: number): string {
-  const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
-  const divisions: [Intl.RelativeTimeFormatUnit, number][] = [
-    ['second', 60],
-    ['minute', 60],
-    ['hour', 24],
-    ['day', 30],
-    ['month', 12],
-    ['year', Infinity],
-  ]
-  let duration = (pastMs - Date.now()) / 1000
-  for (const [unit, amount] of divisions) {
-    if (Math.abs(duration) < amount) {
-      return rtf.format(Math.round(duration), unit)
-    }
-    duration /= amount
-  }
-  return rtf.format(Math.round(duration), 'year')
-}
-
 export function SandboxCard({
   sandbox,
   projectName,
