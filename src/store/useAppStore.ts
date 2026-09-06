@@ -5,6 +5,9 @@ import type { HostMetric, Sandbox } from '@/components/sandboxes/types'
 import type { NetworkPolicySettings } from '@/lib/networkPolicy'
 
 const SANDBOX_POLL_MS = 5000
+// Orphan adoption shells out to `sbx ls` itself, so it runs far less often
+// than the plain DB-backed sandbox poll above (~20s instead of every 5s).
+const ORPHAN_ADOPTION_TICK_INTERVAL = 4
 const HOST_STATS_HISTORY_SEED_MS = 24 * 60 * 60 * 1000
 const HOST_STATS_HISTORY_MAX_POINTS = 500
 
@@ -137,8 +140,29 @@ export function initAppStore() {
   useAppStore.getState().loadDefaultTerminalHost()
   useAppStore.getState().loadNetworkPolicyPreset()
   useAppStore.getState().loadHostStatsHistory()
+  let tick = 0
   setInterval(() => {
+    tick += 1
     useAppStore.getState().loadSandboxes()
     useAppStore.getState().loadHostStats()
+    if (tick % ORPHAN_ADOPTION_TICK_INTERVAL === 0) {
+      adoptOrphanSandboxes()
+    }
   }, SANDBOX_POLL_MS)
+}
+
+/**
+ * Finds sandboxes `sbx ls` knows about with no matching DB row and creates
+ * entries for them, then refreshes both sandboxes (the new rows) and
+ * projects (a first adoption may have just lazily created the
+ * "Unassigned" project). Best-effort — a failure here (e.g. `sbx` not on
+ * PATH) shouldn't break the rest of the poll loop.
+ */
+async function adoptOrphanSandboxes() {
+  try {
+    await invoke('adopt_orphan_sandboxes')
+    await Promise.all([useAppStore.getState().loadSandboxes(), useAppStore.getState().loadProjects()])
+  } catch (e) {
+    console.error('adoptOrphanSandboxes failed:', e)
+  }
 }

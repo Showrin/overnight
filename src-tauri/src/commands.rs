@@ -615,6 +615,193 @@ pub async fn list_sandboxes(pool: State<'_, DbPool>) -> std::result::Result<Vec<
   sandboxes::list(&conn).map_err(|e| e.to_string())
 }
 
+/// True when `repo_path` (a project's host-side checkout, host-native form)
+/// and `workspace_path` (an `sbx ls` row, already POSIX-normalized/`~`
+/// -expanded by `sbx::list_all`) refer to the same directory — a
+/// mount-mode-style match, same idea as `create_sandbox` binding a
+/// mount-mode sandbox straight to `project.repo_path`. Normalizes
+/// `repo_path` through the same drive-letter conversion so this still
+/// matches on a Windows host, and ignores a trailing slash either side.
+fn repo_path_matches_workspace(repo_path: &str, workspace_path: &str) -> bool {
+  fn normalize(path: &str) -> String {
+    crate::sbx::windows_path_to_posix(path).trim_end_matches('/').to_string()
+  }
+  !repo_path.is_empty() && normalize(repo_path) == normalize(workspace_path)
+}
+
+/// Finds sandboxes `sbx ls` knows about with no matching `sandboxes` row
+/// (by `sbx_name`) and creates one for each — so sandboxes created or left
+/// behind outside the app still show up and can be managed. Deliberately
+/// one-directional: never touches an existing DB row whose sandbox has
+/// disappeared from `sbx ls` (a different, out-of-scope feature). Polled
+/// periodically by the frontend (every 4th sandbox-poll tick), not on
+/// every tick, since it shells out to `sbx ls` itself.
+#[tauri::command]
+pub async fn adopt_orphan_sandboxes(app: AppHandle, pool: State<'_, DbPool>) -> std::result::Result<Vec<Sandbox>, String> {
+  let rows = crate::sbx::list_all(&app).await.map_err(|e| e.to_string())?;
+  adopt_orphan_sandboxes_from_rows(pool.inner(), rows)
+}
+
+/// Core of `adopt_orphan_sandboxes`, decoupled from `AppHandle` (mirrors
+/// `stop_sandbox_with`'s split) so it's testable against a real DB pool
+/// with hand-built `SbxListRow`s, without a real `sbx` install.
+fn adopt_orphan_sandboxes_from_rows(pool: &DbPool, rows: Vec<crate::sbx::SbxListRow>) -> std::result::Result<Vec<Sandbox>, String> {
+  let mut adopted = Vec::new();
+
+  for row in rows {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    if sandboxes::find_by_sbx_name(&conn, &row.sbx_name).map_err(|e| e.to_string())?.is_some() {
+      continue;
+    }
+
+    let known_projects = projects::list(&conn).map_err(|e| e.to_string())?;
+    let matched_project = row
+      .workspace_path
+      .as_deref()
+      .and_then(|workspace| known_projects.iter().find(|p| repo_path_matches_workspace(&p.repo_path, workspace)));
+
+    // Matched: bind it as a mount-mode sandbox against the project's own
+    // repo_path, same shape create_sandbox uses for mount mode. No match
+    // (e.g. a clone-mode sandbox, whose clone lives inside the VM with no
+    // host-visible path) — fall back to the lazily created "Unassigned"
+    // project rather than a dangling/sentinel project id.
+    let (project_id, mode, folder_path) = match matched_project {
+      Some(project) => (project.id.clone(), "mount", Some(project.repo_path.clone())),
+      None => {
+        let unassigned = match projects::get_or_create_unassigned(&conn) {
+          Ok(project) => project,
+          Err(e) => {
+            log::warn!("adopt_orphan_sandboxes: could not resolve Unassigned project for {}: {e}", row.sbx_name);
+            continue;
+          }
+        };
+        (unassigned.id, "clone", None)
+      }
+    };
+
+    // Insert via the normal creation path (status "starting", no
+    // sbx_name), then immediately finalize with what sbx ls actually
+    // reported — mirrors create_sandbox's create-then-update_status shape,
+    // and lets the DB's per-project uniqueness constraints still apply. A
+    // constraint hit here (e.g. a real active mount sandbox already
+    // tracked for the matched project) skips this one row rather than
+    // failing the whole adoption pass.
+    let created = match sandboxes::create(&conn, &project_id, mode, folder_path.as_deref(), None, DEFAULT_CLAUDE_PERMISSION_MODE) {
+      Ok(sandbox) => sandbox,
+      Err(e) => {
+        log::warn!("adopt_orphan_sandboxes: could not create a row for {}: {e}", row.sbx_name);
+        continue;
+      }
+    };
+
+    match sandboxes::update_status(&conn, &created.id, &row.status, Some(&row.sbx_name), None) {
+      Ok(updated) => adopted.push(updated),
+      Err(e) => log::warn!("adopt_orphan_sandboxes: could not finalize adopted row for {}: {e}", row.sbx_name),
+    }
+  }
+
+  Ok(adopted)
+}
+
+#[cfg(test)]
+mod adopt_orphan_sandboxes_tests {
+  use super::*;
+  use crate::sbx::SbxListRow;
+  use r2d2_sqlite::SqliteConnectionManager;
+
+  fn test_pool() -> DbPool {
+    let path = std::env::temp_dir().join(format!("overnight-adopt-orphan-{}", uuid::Uuid::new_v4()));
+    let mut conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+    crate::db::migrations::migrations().to_latest(&mut conn).unwrap();
+    drop(conn);
+    let manager = SqliteConnectionManager::file(&path).with_init(|conn| conn.execute_batch("PRAGMA foreign_keys = ON;"));
+    r2d2::Pool::builder().max_size(2).build(manager).unwrap()
+  }
+
+  fn row(sbx_name: &str, status: &str, workspace_path: Option<&str>) -> SbxListRow {
+    SbxListRow { sbx_name: sbx_name.to_string(), status: status.to_string(), workspace_path: workspace_path.map(String::from) }
+  }
+
+  #[test]
+  fn matches_repo_path_ignoring_trailing_slash() {
+    assert!(repo_path_matches_workspace("/repo/overnight", "/repo/overnight"));
+    assert!(repo_path_matches_workspace("/repo/overnight/", "/repo/overnight"));
+    assert!(!repo_path_matches_workspace("/repo/other", "/repo/overnight"));
+    assert!(!repo_path_matches_workspace("", "/repo/overnight"));
+  }
+
+  #[test]
+  fn adopts_sandbox_matching_a_known_project_as_mount_mode() {
+    let pool = test_pool();
+    let conn = pool.get().unwrap();
+    let project = projects::create(&conn, "Overnight", "/repo/overnight", None, None).unwrap();
+    drop(conn);
+
+    let adopted =
+      adopt_orphan_sandboxes_from_rows(&pool, vec![row("found-sandbox", "running", Some("/repo/overnight"))]).unwrap();
+
+    assert_eq!(adopted.len(), 1);
+    assert_eq!(adopted[0].project_id, project.id);
+    assert_eq!(adopted[0].mode, "mount");
+    assert_eq!(adopted[0].folder_path.as_deref(), Some("/repo/overnight"));
+    assert_eq!(adopted[0].status, "running");
+    assert_eq!(adopted[0].sbx_name.as_deref(), Some("found-sandbox"));
+    assert_eq!(adopted[0].permission_mode, DEFAULT_CLAUDE_PERMISSION_MODE);
+  }
+
+  #[test]
+  fn adopts_unmatched_sandbox_into_unassigned_project_as_clone_mode() {
+    let pool = test_pool();
+
+    let adopted =
+      adopt_orphan_sandboxes_from_rows(&pool, vec![row("clone-sandbox", "stopped", None)]).unwrap();
+
+    assert_eq!(adopted.len(), 1);
+    assert_eq!(adopted[0].project_id, crate::db::projects::UNASSIGNED_PROJECT_ID);
+    assert_eq!(adopted[0].mode, "clone");
+    assert_eq!(adopted[0].folder_path, None);
+    assert_eq!(adopted[0].status, "stopped");
+
+    let conn = pool.get().unwrap();
+    let unassigned = projects::list(&conn).unwrap();
+    assert_eq!(unassigned.len(), 1);
+    assert_eq!(unassigned[0].id, crate::db::projects::UNASSIGNED_PROJECT_ID);
+  }
+
+  #[test]
+  fn skips_sandboxes_already_known_by_sbx_name() {
+    let pool = test_pool();
+    let conn = pool.get().unwrap();
+    let project = projects::create(&conn, "Overnight", "/repo/overnight", None, None).unwrap();
+    let existing = sandboxes::create(&conn, &project.id, "mount", None, None, "default").unwrap();
+    sandboxes::update_status(&conn, &existing.id, "running", Some("already-known"), None).unwrap();
+    drop(conn);
+
+    let adopted =
+      adopt_orphan_sandboxes_from_rows(&pool, vec![row("already-known", "running", Some("/repo/overnight"))]).unwrap();
+
+    assert!(adopted.is_empty());
+    let conn = pool.get().unwrap();
+    assert_eq!(sandboxes::list(&conn).unwrap().len(), 1);
+  }
+
+  #[test]
+  fn one_bad_row_does_not_block_others() {
+    let pool = test_pool();
+
+    let adopted = adopt_orphan_sandboxes_from_rows(
+      &pool,
+      vec![row("first-sandbox", "running", None), row("second-sandbox", "stopped", None)],
+    )
+    .unwrap();
+
+    assert_eq!(adopted.len(), 2);
+    let names: Vec<_> = adopted.iter().filter_map(|s| s.sbx_name.clone()).collect();
+    assert_eq!(names, vec!["first-sandbox", "second-sandbox"]);
+  }
+}
+
 #[tauri::command]
 pub async fn create_sandbox(
   app: AppHandle,

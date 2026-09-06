@@ -433,7 +433,7 @@ pub async fn workspace_path<R: Runtime>(app: &AppHandle<R>, name: &str) -> Resul
 /// form sbx/ssh use inside the sandbox VM (`/f/works/personal/remind-me`).
 /// A no-op on any path that isn't already in that drive-letter form (e.g.
 /// already-POSIX paths from a non-Windows host, or `~`-relative ones).
-fn windows_path_to_posix(path: &str) -> String {
+pub(crate) fn windows_path_to_posix(path: &str) -> String {
   let mut chars = path.chars();
   match (chars.next(), chars.next()) {
     (Some(drive), Some(':')) if drive.is_ascii_alphabetic() => {
@@ -464,6 +464,65 @@ fn expand_home(path: &str) -> String {
     Some(rest) => format!("/home/agent{rest}"),
     None => path.to_string(),
   }
+}
+
+/// One row of `sbx ls` output, for callers that need every sandbox `sbx`
+/// knows about rather than looking up a single name (see `list_all`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SbxListRow {
+  pub sbx_name: String,
+  pub status: String,
+  /// Same POSIX-normalized/`~`-expanded form `workspace_path` returns for a
+  /// single lookup — `None` when the row has no WORKSPACE column value to
+  /// parse (should be rare; degrades gracefully rather than erroring).
+  pub workspace_path: Option<String>,
+}
+
+/// Lists every sandbox `sbx ls` reports, not just one by name — generalizes
+/// `parse_sandbox_status`/`parse_workspace_path`'s single-row lookups for
+/// the orphan-adoption check, which needs to compare *all* rows against the
+/// app's DB at once.
+///
+/// **UNVERIFIED**: same caveat as `parse_policy_rules` — no real `sbx`
+/// install is available in this dev environment, so it's unconfirmed
+/// whether `sbx ls` lists stopped sandboxes alongside running ones (the
+/// orphan-adoption feature only works for stopped sandboxes too if it
+/// does). The parser itself degrades to an empty list rather than
+/// misparsing if the real layout differs.
+pub async fn list_all<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<SbxListRow>> {
+  let output = run(app, &["ls"]).await?;
+  Ok(
+    parse_sandbox_rows(&output)
+      .into_iter()
+      .map(|row| SbxListRow {
+        workspace_path: row.workspace_path.map(|path| expand_home(&windows_path_to_posix(&path))),
+        ..row
+      })
+      .collect(),
+  )
+}
+
+/// Parses every non-header row of `sbx ls` output using the same
+/// fixed-position layout `parse_sandbox_status`/`parse_workspace_path`
+/// already assume (`SANDBOX AGENT STATUS [PORTS] WORKSPACE`): first token
+/// is the name, third is status, last is the workspace path — but only
+/// when there are more than 3 tokens, so a row with no workspace column
+/// doesn't misread its own status token as a path.
+fn parse_sandbox_rows(output: &str) -> Vec<SbxListRow> {
+  output
+    .lines()
+    .filter(|line| !line.trim().is_empty())
+    .filter_map(|line| {
+      let tokens: Vec<&str> = line.split_whitespace().collect();
+      if tokens.len() < 3 || tokens[0].eq_ignore_ascii_case("SANDBOX") {
+        return None;
+      }
+      let sbx_name = tokens[0].to_string();
+      let status = tokens[2].to_string();
+      let workspace_path = (tokens.len() > 3).then(|| tokens[tokens.len() - 1].to_string());
+      Some(SbxListRow { sbx_name, status, workspace_path })
+    })
+    .collect()
 }
 
 /// Extracts the STATUS column for `name` from `sbx ls` output (same table
@@ -680,6 +739,58 @@ mod tests {
   #[test]
   fn parse_sandbox_status_handles_empty_output() {
     assert_eq!(parse_sandbox_status("", "my-sandbox"), None);
+  }
+
+  #[test]
+  fn parses_every_row_from_ls_table() {
+    let output = "SANDBOX         AGENT   STATUS   PORTS                    WORKSPACE\n\
+                   my-sandbox      claude  running  127.0.0.1:8080->3000/tcp /home/user/proj\n\
+                   other-sandbox   claude  stopped                          ~/other-project";
+    let rows = parse_sandbox_rows(output);
+    assert_eq!(
+      rows,
+      vec![
+        SbxListRow {
+          sbx_name: "my-sandbox".to_string(),
+          status: "running".to_string(),
+          workspace_path: Some("/home/user/proj".to_string()),
+        },
+        SbxListRow {
+          sbx_name: "other-sandbox".to_string(),
+          status: "stopped".to_string(),
+          workspace_path: Some("~/other-project".to_string()),
+        },
+      ]
+    );
+  }
+
+  #[test]
+  fn parse_sandbox_rows_skips_rows_with_no_workspace_column() {
+    let output = "SANDBOX      STATUS\nmy-sandbox   running";
+    // Only 2 tokens (no AGENT column here either) — degrades to nothing
+    // rather than misreading STATUS as the name/workspace.
+    assert_eq!(parse_sandbox_rows(output), Vec::new());
+  }
+
+  #[test]
+  fn parse_sandbox_rows_handles_empty_output() {
+    assert_eq!(parse_sandbox_rows(""), Vec::new());
+  }
+
+  #[test]
+  fn list_all_normalizes_workspace_paths() {
+    let output = "SANDBOX         AGENT   STATUS   PORTS  WORKSPACE\n\
+                   win-sandbox     claude  running         F:\\works\\proj\n\
+                   tilde-sandbox   claude  running         ~/my-project";
+    let rows = parse_sandbox_rows(output)
+      .into_iter()
+      .map(|row| SbxListRow {
+        workspace_path: row.workspace_path.map(|path| expand_home(&windows_path_to_posix(&path))),
+        ..row
+      })
+      .collect::<Vec<_>>();
+    assert_eq!(rows[0].workspace_path.as_deref(), Some("/f/works/proj"));
+    assert_eq!(rows[1].workspace_path.as_deref(), Some("/home/agent/my-project"));
   }
 
   #[test]

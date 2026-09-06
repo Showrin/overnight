@@ -75,6 +75,17 @@ pub fn list_for_project(conn: &Connection, project_id: &str) -> Result<Vec<Sandb
   Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
+/// Looks up a sandbox row by its `sbx` CLI identity rather than our own
+/// `id` — the orphan-adoption check's definition of "already known" is "a
+/// row with this `sbx_name` exists", not any particular row id.
+pub fn find_by_sbx_name(conn: &Connection, sbx_name: &str) -> Result<Option<Sandbox>> {
+  match conn.query_row("SELECT * FROM sandboxes WHERE sbx_name = ?1", params![sbx_name], row_to_sandbox) {
+    Ok(sandbox) => Ok(Some(sandbox)),
+    Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+    Err(e) => Err(Error::Sqlite(e)),
+  }
+}
+
 /// Updates lifecycle status. `sbx_name`/`host_port` are only applied
 /// when `Some` (e.g. once `sbx create` succeeds), leaving prior values
 /// intact otherwise. `stopped_at` is set automatically when `status` is
@@ -291,6 +302,19 @@ mod tests {
   fn set_network_preset_override_missing_id_returns_not_found() {
     let conn = test_conn();
     assert!(matches!(set_network_preset_override(&conn, "missing", Some("open")), Err(Error::NotFound)));
+  }
+
+  #[test]
+  fn finds_sandbox_by_sbx_name() {
+    let conn = test_conn();
+    let project_id = make_project(&conn);
+    let sandbox = create(&conn, &project_id, "mount", None, None, "default").unwrap();
+    update_status(&conn, &sandbox.id, "running", Some("my-sbx-name"), None).unwrap();
+
+    let found = find_by_sbx_name(&conn, "my-sbx-name").unwrap();
+    assert_eq!(found.map(|s| s.id), Some(sandbox.id));
+
+    assert!(find_by_sbx_name(&conn, "no-such-name").unwrap().is_none());
   }
 
   #[test]

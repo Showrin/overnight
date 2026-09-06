@@ -65,6 +65,38 @@ pub fn delete(conn: &Connection, id: &str) -> Result<()> {
   Ok(())
 }
 
+/// Fixed id for the singleton "Unassigned" project — never a
+/// dangling/sentinel id since `sandboxes.project_id` is `NOT NULL
+/// REFERENCES projects(id) ON DELETE CASCADE` (foreign keys are enforced),
+/// so orphan-adopted sandboxes with no matching project need a real row.
+pub const UNASSIGNED_PROJECT_ID: &str = "unassigned";
+
+/// Returns the singleton "Unassigned" project, creating it the first time
+/// it's needed (e.g. the first orphan-adopted sandbox with no matching
+/// `repo_path`) rather than requiring it to exist up front. `repo_path` is
+/// deliberately empty — this project never backs a real host checkout, so
+/// nothing should read it expecting a usable path (adopted sandboxes
+/// assigned here are always `mode = "clone"` with no `folder_path`).
+pub fn get_or_create_unassigned(conn: &Connection) -> Result<Project> {
+  if let Ok(project) = get(conn, UNASSIGNED_PROJECT_ID) {
+    return Ok(project);
+  }
+  let now = now_millis();
+  let result = conn.execute(
+    "INSERT INTO projects (id, name, repo_path, plans_path, dev_server_port, created_at, updated_at)
+     VALUES (?1, 'Unassigned', '', NULL, NULL, ?2, ?2)",
+    params![UNASSIGNED_PROJECT_ID, now],
+  );
+  // Tolerate a concurrent creator winning the race (primary key conflict) —
+  // any other failure still propagates.
+  if let Err(e) = result {
+    if e.sqlite_extended_error_code() != Some(rusqlite::ffi::SQLITE_CONSTRAINT_PRIMARYKEY) {
+      return Err(Error::Sqlite(e));
+    }
+  }
+  get(conn, UNASSIGNED_PROJECT_ID)
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -100,6 +132,22 @@ mod tests {
     assert!(matches!(get(&conn, "missing"), Err(Error::NotFound)));
     assert!(matches!(update(&conn, "missing", "x", "/repo", None, None), Err(Error::NotFound)));
     assert!(matches!(delete(&conn, "missing"), Err(Error::NotFound)));
+  }
+
+  #[test]
+  fn get_or_create_unassigned_is_a_singleton() {
+    let conn = test_conn();
+
+    let first = get_or_create_unassigned(&conn).unwrap();
+    assert_eq!(first.id, UNASSIGNED_PROJECT_ID);
+    assert_eq!(first.name, "Unassigned");
+
+    let second = get_or_create_unassigned(&conn).unwrap();
+    assert_eq!(second.id, first.id);
+    assert_eq!(second.created_at, first.created_at);
+
+    let all = list(&conn).unwrap();
+    assert_eq!(all.len(), 1);
   }
 
   #[test]

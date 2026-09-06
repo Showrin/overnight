@@ -55,6 +55,7 @@ pub fn run() {
       commands::set_sandbox_network_preset_override,
       commands::set_anthropic_api_key,
       commands::list_sandboxes,
+      commands::adopt_orphan_sandboxes,
       commands::create_sandbox,
       commands::stop_sandbox,
       commands::start_sandbox,
