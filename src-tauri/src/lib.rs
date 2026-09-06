@@ -69,6 +69,8 @@ pub fn run() {
       commands::open_path_in_explorer,
       commands::get_host_stats,
       commands::get_host_stats_history,
+      commands::get_sandbox_resource_usage,
+      commands::get_sandbox_resource_history,
       notifications::notify,
     ])
     .setup(|app| {
@@ -102,6 +104,7 @@ pub fn run() {
       }
       app.manage(pool);
       app.manage(std::sync::Mutex::new(sbx::HostMonitor::new()));
+      app.manage(std::sync::Mutex::new(sbx::SandboxMonitor::new()));
 
       if let Some(window) = app.get_webview_window("main") {
         if let Ok(Some(monitor)) = window.primary_monitor() {

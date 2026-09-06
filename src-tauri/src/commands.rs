@@ -4,8 +4,8 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
 use crate::db::error::{Error, Result};
-use crate::db::models::{HostMetric, JiraIssue, Project, Sandbox, Session, Task};
-use crate::db::{host_metrics, jira_issues, metrics, projects, sandboxes, sessions, settings, tasks, DbPool};
+use crate::db::models::{ContainerMetric, HostMetric, JiraIssue, Project, Sandbox, Session, Task};
+use crate::db::{container_metrics, host_metrics, jira_issues, metrics, projects, sandboxes, sessions, settings, tasks, DbPool};
 use crate::jira::{self, JiraClient};
 use crate::providers::claude_code::ClaudeCodeProvider;
 use crate::providers::AgentProvider;
@@ -1241,6 +1241,61 @@ pub fn get_host_stats(pool: State<DbPool>, monitor: State<Mutex<crate::sbx::Host
 pub fn get_host_stats_history(pool: State<DbPool>, since_ms: i64) -> Result<Vec<HostMetric>> {
   let conn = pool.get()?;
   host_metrics::list_since(&conn, since_ms)
+}
+
+/// Backs the Metrics tab's live polling: samples this sandbox's
+/// CPU/memory/network usage via one `sbx exec` round trip
+/// (`sbx::sample_resource_usage`), persists it, and prunes rows older
+/// than `HOST_METRICS_RETENTION_MS` (reused as-is — one global retention
+/// window for both host-wide and per-sandbox metrics). Only callable
+/// while `status == "running"`: a stopped sandbox has no `/proc` to read.
+/// Deliberately has no app-wide poll of its own — the Metrics tab starts
+/// and clears its own 5s interval on mount/unmount, so this only runs
+/// while that sandbox's detail page is actually open (see
+/// `SandboxMetricsTab.tsx`), unlike `get_host_stats`'s single shared
+/// app-wide poll.
+#[tauri::command]
+pub async fn get_sandbox_resource_usage(
+  app: AppHandle,
+  pool: State<'_, DbPool>,
+  monitor: State<'_, Mutex<crate::sbx::SandboxMonitor>>,
+  id: String,
+) -> std::result::Result<ContainerMetric, String> {
+  let sandbox = {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    sandboxes::get(&conn, &id).map_err(|e| e.to_string())?
+  };
+  if sandbox.status != "running" {
+    return Err("sandbox must be running to sample resource usage".to_string());
+  }
+  let name = sandbox.sbx_name.ok_or_else(|| "sandbox has no sbx sandbox yet".to_string())?;
+
+  let usage = crate::sbx::sample_resource_usage(&app, &name, &id, monitor.inner())
+    .await
+    .map_err(|e| e.to_string())?;
+
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  let metric = container_metrics::record_for_sandbox(
+    &conn,
+    &id,
+    usage.cpu_percent,
+    usage.memory_mb,
+    usage.network_rx_kb_per_sec,
+    usage.network_tx_kb_per_sec,
+  )
+  .map_err(|e| e.to_string())?;
+  container_metrics::prune_older_than(&conn, crate::db::models::now_millis() - HOST_METRICS_RETENTION_MS)
+    .map_err(|e| e.to_string())?;
+  Ok(metric)
+}
+
+/// History for seeding the Metrics tab's charts on mount, before live
+/// polling (`get_sandbox_resource_usage`) takes over appending new points
+/// — same role as `get_host_stats_history`, scoped to one sandbox.
+#[tauri::command]
+pub fn get_sandbox_resource_history(pool: State<DbPool>, sandbox_id: String, since_ms: i64) -> Result<Vec<ContainerMetric>> {
+  let conn = pool.get()?;
+  container_metrics::list_for_sandbox_since(&conn, &sandbox_id, since_ms)
 }
 
 /// Opens VS Code's Remote-SSH into the sandbox, running `sbx setup ssh`

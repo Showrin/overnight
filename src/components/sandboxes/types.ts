@@ -69,3 +69,20 @@ export interface HostMetric {
   network_rx_kb_per_sec: number
   network_tx_kb_per_sec: number
 }
+
+// A single point sampled by get_sandbox_resource_usage (live) or returned
+// by get_sandbox_resource_history (seed). Despite the column names,
+// network_rx_bytes/network_tx_bytes hold KB/s rates (deltas computed
+// server-side against the sandbox's previous sample), the same "already a
+// rate, not a cumulative counter" shape HostMetric's network fields use —
+// container_metrics predates that convention and was never renamed.
+export interface ContainerMetric {
+  id: string
+  session_id: string | null
+  sandbox_id: string | null
+  captured_at: number
+  cpu_percent: number
+  memory_mb: number
+  network_rx_bytes: number
+  network_tx_bytes: number
+}

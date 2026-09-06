@@ -7,11 +7,6 @@ use tauri::{AppHandle, Manager};
 use crate::db::error::Result;
 
 pub mod activity;
-// The sbx CLI has no `docker stats`-equivalent scriptable command (live
-// CPU/RAM is only in `sbx tui`'s interactive dashboard), so nothing records
-// container_metrics rows anymore. Kept for its schema/tests in case sbx adds
-// a stats command later.
-#[allow(dead_code)]
 pub mod container_metrics;
 pub mod error;
 pub mod host_metrics;

@@ -6,12 +6,14 @@ import { Button } from '@/components/ui/button'
 import { formatNetworkPolicyLabel, permissionBadgeVariant, statusBadgeVariant } from '@/lib/sandboxDisplay'
 import { useAppStore } from '@/store/useAppStore'
 import { SandboxBranchTab } from './SandboxBranchTab'
+import { SandboxMetricsTab } from './SandboxMetricsTab'
 
-type DetailTab = 'overview' | 'branch'
+type DetailTab = 'overview' | 'branch' | 'metrics'
 
 const TABS: { id: DetailTab; label: string }[] = [
   { id: 'overview', label: 'Overview' },
   { id: 'branch', label: 'Branch' },
+  { id: 'metrics', label: 'Metrics' },
 ]
 
 export function SandboxDetailScreen({
@@ -114,6 +116,8 @@ export function SandboxDetailScreen({
       )}
 
       {tab === 'branch' && <SandboxBranchTab sandbox={sandbox} />}
+
+      {tab === 'metrics' && <SandboxMetricsTab sandbox={sandbox} />}
     </div>
   )
 }

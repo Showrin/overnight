@@ -6,6 +6,10 @@
 //! rather than verified against a real `sbx` install (none is available in
 //! this dev environment) — see the doc comment on each function that says so.
 
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::time::Instant;
+
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_shell::ShellExt;
 
@@ -828,6 +832,249 @@ pub fn sample_host_stats(monitor: &mut HostMonitor) -> HostStats {
   }
 }
 
+/// What `SandboxMonitor` stores per sandbox: the previous CPU-jiffies and
+/// cumulative network-byte counters, plus when they were read, so the
+/// next sample can compute a CPU%/network-KB/s delta against them.
+/// `memory_used_mb` deliberately isn't stored here — it's already a true
+/// instantaneous value (not a rate), so `sample_resource_usage` never
+/// needs a *previous* memory reading to report a *current* one.
+#[derive(Debug, Clone, Copy)]
+struct SandboxSample {
+  cpu_total: u64,
+  cpu_idle: u64,
+  network_rx_bytes: u64,
+  network_tx_bytes: u64,
+  timestamp: Instant,
+}
+
+/// Holds the previous `/proc` sample for every sandbox that's been
+/// polled, so `sample_resource_usage` can compute CPU%/network-KB/s as a
+/// delta against each sandbox's own last reading — mirrors `HostMonitor`'s
+/// reuse-across-polls role, but keyed by sandbox id since there can be
+/// many sandboxes polled independently (only while each one's Metrics tab
+/// is open — see `sample_resource_usage`'s doc comment, added alongside
+/// this struct's first real user). Managed as Tauri app state
+/// (`Mutex<SandboxMonitor>`), same as `HostMonitor`.
+#[derive(Default)]
+pub struct SandboxMonitor {
+  samples: HashMap<String, SandboxSample>,
+}
+
+impl SandboxMonitor {
+  pub fn new() -> Self {
+    Self::default()
+  }
+}
+
+/// `sbx exec -d <name> sh -c "..."` script backing `sample_resource_usage` —
+/// reads the three `/proc` files a per-sandbox CPU/memory/network reading
+/// needs in one round trip (host `docker stats` can't see inside a
+/// sandbox's isolated microVM at all — see this module's top doc comment
+/// and the Branch 8 planning note it's based on). `echo ---` separators
+/// mirror `read_branch_snapshot`'s section-splitting trick so the same
+/// `split_into_sections` helper parses this output too.
+const RESOURCE_USAGE_SCRIPT: &str = "cat /proc/stat; echo ---; cat /proc/meminfo; echo ---; cat /proc/net/dev";
+
+/// A single point-in-time reading of the raw (non-rate) counters
+/// `sample_resource_usage` needs: cumulative CPU jiffies, current memory
+/// used, and cumulative network byte counters. `cpu_percent` and the
+/// network KB/s rates are only meaningful as a *delta* between two of
+/// these (see `compute_delta_usage`) — `memory_used_mb` is the one field
+/// that's already a true instantaneous value, not a rate.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+struct RawProcSample {
+  cpu_total: u64,
+  cpu_idle: u64,
+  memory_used_mb: f64,
+  network_rx_bytes: u64,
+  network_tx_bytes: u64,
+}
+
+/// Parses the combined `RESOURCE_USAGE_SCRIPT` output into a `RawProcSample`.
+/// Degrades missing/malformed sections to zeroed fields (same "partial
+/// output is still usable" philosophy as `parse_branch_snapshot` — a
+/// mid-script failure, or a totally empty read on a spawn error, shouldn't
+/// crash the whole sample, just report zeros for what couldn't be read).
+fn parse_raw_proc_sample(output: &str) -> RawProcSample {
+  let [stat_section, meminfo_section, net_section] = split_into_sections(output);
+  let (cpu_total, cpu_idle) = parse_cpu_jiffies(&stat_section).unwrap_or((0, 0));
+  let memory_used_mb = parse_memory_used_mb(&meminfo_section);
+  let (network_rx_bytes, network_tx_bytes) = parse_network_bytes(&net_section);
+  RawProcSample { cpu_total, cpu_idle, memory_used_mb, network_rx_bytes, network_tx_bytes }
+}
+
+/// Parses `/proc/stat`'s aggregate `cpu` line (the one starting with the
+/// bare token `cpu`, not `cpu0`/`cpu1`/...) into `(total_jiffies,
+/// idle_jiffies)`. Per `man proc`, the fields after `cpu` are `user nice
+/// system idle iowait irq softirq steal guest guest_nice` — `idle` is the
+/// 4th field (index 3, 0-based after skipping the `cpu` label) and
+/// `iowait` (index 4) counts as idle time too for a standard "busy %"
+/// calculation. `total` sums every field present, tolerating kernels that
+/// don't report the newer `guest`/`guest_nice` fields.
+fn parse_cpu_jiffies(section: &str) -> Option<(u64, u64)> {
+  let line = section.lines().find(|line| line.split_whitespace().next() == Some("cpu"))?;
+  let fields: Vec<u64> = line.split_whitespace().skip(1).map(|f| f.parse().ok()).collect::<Option<Vec<u64>>>()?;
+  if fields.len() < 4 {
+    return None;
+  }
+  let idle = fields[3] + fields.get(4).copied().unwrap_or(0);
+  let total = fields.iter().sum();
+  Some((total, idle))
+}
+
+/// Parses `/proc/meminfo`'s `MemTotal`/`MemAvailable` (or `MemFree` on
+/// older kernels without `MemAvailable`) into used memory in MB, the same
+/// "total minus available" definition `sample_host_stats` uses for the
+/// host-wide reading.
+fn parse_memory_used_mb(section: &str) -> f64 {
+  let mut mem_total_kb: Option<u64> = None;
+  let mut mem_available_kb: Option<u64> = None;
+  let mut mem_free_kb: Option<u64> = None;
+  for line in section.lines() {
+    let mut parts = line.split_whitespace();
+    let Some(key) = parts.next() else { continue };
+    let Some(value) = parts.next().and_then(|v| v.parse::<u64>().ok()) else { continue };
+    match key.trim_end_matches(':') {
+      "MemTotal" => mem_total_kb = Some(value),
+      "MemAvailable" => mem_available_kb = Some(value),
+      "MemFree" => mem_free_kb = Some(value),
+      _ => {}
+    }
+  }
+  let total = mem_total_kb.unwrap_or(0);
+  let available = mem_available_kb.or(mem_free_kb).unwrap_or(0);
+  total.saturating_sub(available) as f64 / 1024.0
+}
+
+/// Parses `/proc/net/dev`'s per-interface table, summing RX/TX byte
+/// counters across every interface except loopback (`lo` carries no real
+/// network activity — including it would just add noise). Each interface
+/// line is `<iface>: <8 RX fields> <8 TX fields>`; RX bytes is the first
+/// field after the colon, TX bytes is the 9th (index 8) — the two header
+/// lines (`Inter-|   Receive ...` / ` face |bytes ...`) have no colon and
+/// are skipped naturally by `split_once(':')` returning `None`.
+fn parse_network_bytes(section: &str) -> (u64, u64) {
+  section
+    .lines()
+    .filter_map(|line| {
+      let (iface, rest) = line.split_once(':')?;
+      let iface = iface.trim();
+      if iface.is_empty() || iface == "lo" {
+        return None;
+      }
+      let fields: Vec<u64> = rest.split_whitespace().filter_map(|f| f.parse().ok()).collect();
+      if fields.len() < 9 {
+        return None;
+      }
+      Some((fields[0], fields[8]))
+    })
+    .fold((0u64, 0u64), |(rx, tx), (r, t)| (rx + r, tx + t))
+}
+
+/// One resource sample computed for a single sandbox: `cpu_percent` and
+/// the network KB/s rates are deltas against the sandbox's previous
+/// sample (see `compute_delta_usage`); `memory_mb` is always a true
+/// instantaneous reading, delta or not.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+pub struct SandboxResourceUsage {
+  pub cpu_percent: f64,
+  pub memory_mb: f64,
+  pub network_rx_kb_per_sec: f64,
+  pub network_tx_kb_per_sec: f64,
+}
+
+/// Computes a `SandboxResourceUsage` delta from `previous` (this
+/// sandbox's last stored sample, if any) to `current`. `now` is passed in
+/// (rather than read internally) so this stays a pure function callers
+/// can unit test with synthetic timestamps. No previous sample (first
+/// poll for this sandbox) returns 0 for `cpu_percent` and both network
+/// rates — there's nothing to compute a rate against yet — while
+/// `memory_mb` still reports `current`'s true value since it isn't a
+/// delta. `saturating_sub` throughout guards against a counter appearing
+/// to go backwards (e.g. the sandbox restarted between polls, resetting
+/// `/proc`'s counters) producing a nonsensical negative delta instead of
+/// underflowing.
+fn compute_delta_usage(previous: Option<&SandboxSample>, current: RawProcSample, now: Instant) -> SandboxResourceUsage {
+  let Some(prev) = previous else {
+    return SandboxResourceUsage {
+      cpu_percent: 0.0,
+      memory_mb: current.memory_used_mb,
+      network_rx_kb_per_sec: 0.0,
+      network_tx_kb_per_sec: 0.0,
+    };
+  };
+
+  let delta_total = current.cpu_total.saturating_sub(prev.cpu_total);
+  let delta_idle = current.cpu_idle.saturating_sub(prev.cpu_idle);
+  let cpu_percent = if delta_total > 0 {
+    (delta_total.saturating_sub(delta_idle) as f64 / delta_total as f64) * 100.0
+  } else {
+    0.0
+  };
+
+  let elapsed_secs = now.saturating_duration_since(prev.timestamp).as_secs_f64();
+  let (network_rx_kb_per_sec, network_tx_kb_per_sec) = if elapsed_secs > 0.0 {
+    (
+      current.network_rx_bytes.saturating_sub(prev.network_rx_bytes) as f64 / 1024.0 / elapsed_secs,
+      current.network_tx_bytes.saturating_sub(prev.network_tx_bytes) as f64 / 1024.0 / elapsed_secs,
+    )
+  } else {
+    (0.0, 0.0)
+  };
+
+  SandboxResourceUsage { cpu_percent, memory_mb: current.memory_used_mb, network_rx_kb_per_sec, network_tx_kb_per_sec }
+}
+
+/// Samples a single sandbox's CPU/memory/network usage via one `sbx exec`
+/// round trip (`RESOURCE_USAGE_SCRIPT`), computing CPU% and network KB/s
+/// as deltas against `monitor`'s stored previous sample for `sandbox_id`
+/// (see `compute_delta_usage`) — the same delta approach
+/// `sample_host_stats` uses for host-wide stats, just per-sandbox and
+/// keyed by id instead of a single shared `HostMonitor`.
+///
+/// Takes `&Mutex<SandboxMonitor>` rather than an already-locked guard so
+/// the lock is only held for the synchronous delta computation, after the
+/// `.await` below — holding a `std::sync::MutexGuard` across an `.await`
+/// point would make this function's future non-`Send`, which Tauri's
+/// async command dispatch requires.
+///
+/// Deliberately bypasses this module's shared `run()` helper, for the
+/// same reason `read_branch_snapshot` does: a single failing command in
+/// the `sh -c` chain (unlikely for these three `/proc` reads, but not
+/// impossible if `/proc/net/dev` is briefly unavailable) shouldn't discard
+/// whatever the earlier commands already printed. `parse_raw_proc_sample`
+/// degrades missing sections to zeroed fields rather than erroring.
+///
+/// **UNVERIFIED**: no real `sbx` install is available in this dev
+/// environment (see this module's top doc comment), so this exact
+/// multi-command `sh -c` chaining and `/proc` output shape inside a real
+/// sandbox VM is unconfirmed — the parsing logic itself is tested against
+/// hand-built fixtures matching the documented kernel `/proc` format.
+pub async fn sample_resource_usage<R: Runtime>(
+  app: &AppHandle<R>,
+  name: &str,
+  sandbox_id: &str,
+  monitor: &Mutex<SandboxMonitor>,
+) -> Result<SandboxResourceUsage> {
+  let output = app.shell().command("sbx").args(["exec", "-d", name, "sh", "-c", RESOURCE_USAGE_SCRIPT]).output().await?;
+  let raw = parse_raw_proc_sample(&String::from_utf8_lossy(&output.stdout));
+  let now = Instant::now();
+
+  let mut monitor = monitor.lock().unwrap();
+  let usage = compute_delta_usage(monitor.samples.get(sandbox_id), raw, now);
+  monitor.samples.insert(
+    sandbox_id.to_string(),
+    SandboxSample {
+      cpu_total: raw.cpu_total,
+      cpu_idle: raw.cpu_idle,
+      network_rx_bytes: raw.network_rx_bytes,
+      network_tx_bytes: raw.network_tx_bytes,
+      timestamp: now,
+    },
+  );
+  Ok(usage)
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -1071,5 +1318,148 @@ local    all          -        local-policy   -      default-fs-write-allow-all 
         PolicyRule { host: "api.anthropic.com:443".into(), decision: "allow".into(), source: "local".into() },
       ]
     );
+  }
+
+  #[test]
+  fn parses_cpu_jiffies_from_proc_stat() {
+    // Real /proc/stat shape: an aggregate `cpu` line, then per-core
+    // `cpu0`/`cpu1`/... lines that must be ignored.
+    let stat = "cpu  10132153 290696 3084719 46828483 16683 0 25195 0 175628 0\n\
+                cpu0 1234 0 0 5678 0 0 0 0 0 0\n\
+                intr 123456 0 0 0\n";
+    let (total, idle) = parse_cpu_jiffies(stat).unwrap();
+    // idle (46828483) + iowait (16683)
+    assert_eq!(idle, 46828483 + 16683);
+    assert_eq!(total, 10132153 + 290696 + 3084719 + 46828483 + 16683 + 25195 + 175628);
+  }
+
+  #[test]
+  fn parse_cpu_jiffies_returns_none_when_no_aggregate_line() {
+    assert_eq!(parse_cpu_jiffies(""), None);
+    assert_eq!(parse_cpu_jiffies("cpu0 1234 0 0 5678\n"), None);
+  }
+
+  #[test]
+  fn parses_memory_used_mb_with_mem_available() {
+    let meminfo = "MemTotal:       16384000 kB\n\
+                   MemFree:         1024000 kB\n\
+                   MemAvailable:    2048000 kB\n\
+                   Buffers:          100000 kB\n";
+    // (16384000 - 2048000) kB -> MB
+    assert_eq!(parse_memory_used_mb(meminfo), (16384000.0 - 2048000.0) / 1024.0);
+  }
+
+  #[test]
+  fn parses_memory_used_mb_falls_back_to_mem_free_without_mem_available() {
+    let meminfo = "MemTotal:       16384000 kB\nMemFree:         1024000 kB\n";
+    assert_eq!(parse_memory_used_mb(meminfo), (16384000.0 - 1024000.0) / 1024.0);
+  }
+
+  #[test]
+  fn parse_memory_used_mb_handles_empty_output() {
+    assert_eq!(parse_memory_used_mb(""), 0.0);
+  }
+
+  #[test]
+  fn parses_network_bytes_summing_non_loopback_interfaces() {
+    let net_dev = "Inter-|   Receive                                                |  Transmit\n\
+                    face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n\
+                       lo:  1296      16    0    0    0     0          0         0     1296      16    0    0    0     0       0          0\n\
+                     eth0: 1000000     100    0    0    0     0          0         0  2000000     200    0    0    0     0       0          0\n\
+                     eth1:  500000      50    0    0    0     0          0         0   250000      25    0    0    0     0       0          0\n";
+    let (rx, tx) = parse_network_bytes(net_dev);
+    // lo is excluded; eth0 + eth1 summed.
+    assert_eq!(rx, 1000000 + 500000);
+    assert_eq!(tx, 2000000 + 250000);
+  }
+
+  #[test]
+  fn parse_network_bytes_handles_empty_output() {
+    assert_eq!(parse_network_bytes(""), (0, 0));
+  }
+
+  #[test]
+  fn parses_full_raw_proc_sample_from_combined_script_output() {
+    let output = "cpu  100 0 100 800 0 0 0 0 0 0\n\
+                  ---\n\
+                  MemTotal:       1000000 kB\n\
+                  MemAvailable:    400000 kB\n\
+                  ---\n\
+                  Inter-|   Receive                                                |  Transmit\n\
+                   face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n\
+                      lo:     0       0    0    0    0     0          0         0        0       0    0    0    0     0       0          0\n\
+                    eth0: 12345     10    0    0    0     0          0         0    54321      20    0    0    0     0       0          0\n";
+    let sample = parse_raw_proc_sample(output);
+    assert_eq!(
+      sample,
+      RawProcSample {
+        cpu_total: 100 + 100 + 800,
+        cpu_idle: 800,
+        memory_used_mb: (1000000.0 - 400000.0) / 1024.0,
+        network_rx_bytes: 12345,
+        network_tx_bytes: 54321,
+      }
+    );
+  }
+
+  #[test]
+  fn parse_raw_proc_sample_degrades_to_zeros_on_empty_output() {
+    assert_eq!(parse_raw_proc_sample(""), RawProcSample::default());
+  }
+
+  #[test]
+  fn compute_delta_usage_returns_zeros_for_cpu_and_network_on_first_sample() {
+    let current = RawProcSample { cpu_total: 1000, cpu_idle: 800, memory_used_mb: 512.0, network_rx_bytes: 5000, network_tx_bytes: 2000 };
+    let usage = compute_delta_usage(None, current, Instant::now());
+    assert_eq!(
+      usage,
+      SandboxResourceUsage { cpu_percent: 0.0, memory_mb: 512.0, network_rx_kb_per_sec: 0.0, network_tx_kb_per_sec: 0.0 }
+    );
+  }
+
+  #[test]
+  fn compute_delta_usage_computes_cpu_percent_and_network_rate_from_previous_sample() {
+    let t0 = Instant::now();
+    let prev = SandboxSample { cpu_total: 1000, cpu_idle: 800, network_rx_bytes: 10_000, network_tx_bytes: 4_000, timestamp: t0 };
+    let current = RawProcSample { cpu_total: 1500, cpu_idle: 900, memory_used_mb: 550.0, network_rx_bytes: 20_240, network_tx_bytes: 14_240 };
+    let t1 = t0 + std::time::Duration::from_secs(2);
+
+    let usage = compute_delta_usage(Some(&prev), current, t1);
+
+    // delta_total = 500, delta_idle = 100 -> busy = 400/500 = 80%
+    assert_eq!(usage.cpu_percent, 80.0);
+    assert_eq!(usage.memory_mb, 550.0);
+    // delta_rx = 10240 bytes = 10 KB over 2s -> 5 KB/s
+    assert_eq!(usage.network_rx_kb_per_sec, 5.0);
+    // delta_tx = 10240 bytes = 10 KB over 2s -> 5 KB/s
+    assert_eq!(usage.network_tx_kb_per_sec, 5.0);
+  }
+
+  #[test]
+  fn compute_delta_usage_guards_against_counters_going_backwards() {
+    // A sandbox restart between polls resets /proc's counters, so the
+    // "current" reading can be lower than the stored "previous" one —
+    // saturating_sub must prevent an underflowed delta.
+    let t0 = Instant::now();
+    let prev = SandboxSample { cpu_total: 5000, cpu_idle: 4000, network_rx_bytes: 50_000, network_tx_bytes: 50_000, timestamp: t0 };
+    let current = RawProcSample { cpu_total: 100, cpu_idle: 80, memory_used_mb: 200.0, network_rx_bytes: 100, network_tx_bytes: 100 };
+    let t1 = t0 + std::time::Duration::from_secs(1);
+
+    let usage = compute_delta_usage(Some(&prev), current, t1);
+    assert_eq!(usage.cpu_percent, 0.0);
+    assert_eq!(usage.network_rx_kb_per_sec, 0.0);
+    assert_eq!(usage.network_tx_kb_per_sec, 0.0);
+    assert_eq!(usage.memory_mb, 200.0);
+  }
+
+  #[test]
+  fn compute_delta_usage_handles_zero_elapsed_time() {
+    let t0 = Instant::now();
+    let prev = SandboxSample { cpu_total: 1000, cpu_idle: 800, network_rx_bytes: 10_000, network_tx_bytes: 4_000, timestamp: t0 };
+    let current = RawProcSample { cpu_total: 1500, cpu_idle: 900, memory_used_mb: 550.0, network_rx_bytes: 20_000, network_tx_bytes: 14_000 };
+
+    let usage = compute_delta_usage(Some(&prev), current, t0);
+    assert_eq!(usage.network_rx_kb_per_sec, 0.0);
+    assert_eq!(usage.network_tx_kb_per_sec, 0.0);
   }
 }
