@@ -1,5 +1,5 @@
 export type SandboxMode = 'mount' | 'clone'
-export type SandboxStatus = 'starting' | 'running' | 'stopped' | 'error'
+export type SandboxStatus = 'starting' | 'running' | 'stopping' | 'stopped' | 'error'
 
 export interface Sandbox {
   id: string

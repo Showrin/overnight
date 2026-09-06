@@ -29,11 +29,27 @@ pub fn create(
 ) -> Result<Sandbox> {
   let id = new_id();
   let now = now_millis();
-  conn.execute(
+  let result = conn.execute(
     "INSERT INTO sandboxes (id, project_id, mode, status, folder_path, name, permission_mode, created_at)
      VALUES (?1, ?2, ?3, 'starting', ?4, ?5, ?6, ?7)",
     params![id, project_id, mode, folder_path, name, permission_mode, now],
-  )?;
+  );
+  // ux_sandboxes_active_mount_per_project and ux_sandboxes_one_starting_per_project
+  // close the race between callers' pre-insert checks and the insert itself.
+  // Both are partial unique indexes on project_id, so a violation doesn't say
+  // which one fired — inspect current rows to pick the right error message.
+  if let Err(e) = result {
+    return Err(if e.sqlite_extended_error_code() == Some(rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE) {
+      let existing = list_for_project(conn, project_id)?;
+      if existing.iter().any(|s| s.mode == "mount" && matches!(s.status.as_str(), "starting" | "running")) {
+        Error::DuplicateMountSandbox
+      } else {
+        Error::SandboxAlreadyStarting
+      }
+    } else {
+      Error::Sqlite(e)
+    });
+  }
   get(conn, &id)
 }
 
@@ -96,7 +112,7 @@ mod tests {
   use crate::db::migrations::test_conn;
 
   fn make_project(conn: &Connection) -> String {
-    crate::db::projects::create(conn, "Overnight", "/repo/overnight", None, None, &[]).unwrap().id
+    crate::db::projects::create(conn, "Overnight", "/repo/overnight", None, None).unwrap().id
   }
 
   #[test]
@@ -155,6 +171,7 @@ mod tests {
     let named = create(&conn, &project_id, "clone", None, Some("staging"), "default").unwrap();
     assert_eq!(named.name.as_deref(), Some("staging"));
     assert_eq!(get(&conn, &named.id).unwrap().name.as_deref(), Some("staging"));
+    update_status(&conn, &named.id, "running", Some("sbx-1"), None).unwrap();
 
     let unnamed = create(&conn, &project_id, "clone", None, None, "default").unwrap();
     assert_eq!(unnamed.name, None);
@@ -168,6 +185,40 @@ mod tests {
     let sandbox = create(&conn, &project_id, "clone", None, None, "bypassPermissions").unwrap();
     assert_eq!(sandbox.permission_mode, "bypassPermissions");
     assert_eq!(get(&conn, &sandbox.id).unwrap().permission_mode, "bypassPermissions");
+  }
+
+  #[test]
+  fn concurrent_mount_create_is_rejected_by_db_constraint() {
+    let conn = test_conn();
+    let project_id = make_project(&conn);
+
+    let mount = create(&conn, &project_id, "mount", None, None, "default").unwrap();
+    let second = create(&conn, &project_id, "mount", None, None, "default");
+    assert!(matches!(second, Err(Error::DuplicateMountSandbox)));
+
+    // Still rejected once the first is "running", not just "starting".
+    update_status(&conn, &mount.id, "running", Some("sbx-1"), None).unwrap();
+    let second_after_running = create(&conn, &project_id, "mount", None, None, "default");
+    assert!(matches!(second_after_running, Err(Error::DuplicateMountSandbox)));
+
+    // Other projects are unaffected by the partial index.
+    let other_project_id = make_project(&conn);
+    create(&conn, &other_project_id, "mount", None, None, "default").unwrap();
+  }
+
+  #[test]
+  fn concurrent_starting_create_is_rejected_regardless_of_mode() {
+    let conn = test_conn();
+    let project_id = make_project(&conn);
+
+    let first = create(&conn, &project_id, "clone", None, None, "default").unwrap();
+    let second = create(&conn, &project_id, "clone", None, None, "default");
+    assert!(matches!(second, Err(Error::SandboxAlreadyStarting)));
+
+    // Once the first finishes starting, clone mode still allows several
+    // sandboxes running at once for the same project.
+    update_status(&conn, &first.id, "running", Some("sbx-1"), None).unwrap();
+    create(&conn, &project_id, "clone", None, None, "default").unwrap();
   }
 
   #[test]

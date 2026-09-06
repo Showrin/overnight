@@ -52,6 +52,7 @@ export function CreateSandboxDialog({
   onCancel: () => void
 }) {
   const projects = useAppStore((s) => s.projects)
+  const sandboxes = useAppStore((s) => s.sandboxes)
   const [projectId, setProjectId] = useState(defaultProjectId ?? projects[0]?.id ?? '')
   const [name, setName] = useState('')
   const [permissionMode, setPermissionMode] = useState('')
@@ -61,18 +62,27 @@ export function CreateSandboxDialog({
   const [needsPolicyInit, setNeedsPolicyInit] = useState(false)
   const [initializingPolicy, setInitializingPolicy] = useState(false)
 
+  // Sourced from the polled store, not local state, so this survives a
+  // reload mid-creation instead of relying on `creating` alone.
+  const hasActiveMount =
+    mode === 'mount' &&
+    sandboxes.some(
+      (sb) => sb.project_id === projectId && sb.mode === 'mount' && (sb.status === 'starting' || sb.status === 'running')
+    )
+  const hasStartingSandbox = sandboxes.some((sb) => sb.project_id === projectId && sb.status === 'starting')
+
   async function handleCreate() {
     setCreating(true)
     setError(null)
     setNeedsPolicyInit(false)
     try {
-      await invoke<Sandbox>('create_sandbox', {
+      const sandbox = await invoke<Sandbox>('create_sandbox', {
         projectId,
         mode,
         name: name.trim() || null,
         permissionMode: permissionMode || null,
       })
-      notify('Sandbox started', 'Your sandbox is up and running.')
+      notify('Sandbox started', 'Your sandbox is up and running.', sandbox.id)
       onCreated()
     } catch (e) {
       const message = String(e)
@@ -176,6 +186,12 @@ export function CreateSandboxDialog({
               : 'Clones the project\'s repo into an isolated copy inside the sandbox itself. Your local folder is untouched. Multiple clone-mode sandboxes can run per project.'}
           </p>
         </div>
+        {hasActiveMount && (
+          <p className="text-xs text-destructive">A mount-mode sandbox is already running for this project.</p>
+        )}
+        {!hasActiveMount && hasStartingSandbox && (
+          <p className="text-xs text-destructive">A sandbox is already starting for this project.</p>
+        )}
         {error && <ErrorDetails message={error} />}
 
         {needsPolicyInit && (
@@ -199,9 +215,19 @@ export function CreateSandboxDialog({
         )}
 
         <div className="flex gap-2">
-          <Button className="flex-1" onClick={handleCreate} disabled={creating || !projectId}>
+          <Button
+            className="flex-1"
+            onClick={handleCreate}
+            disabled={creating || !projectId || hasActiveMount || hasStartingSandbox}
+          >
             {creating && <Loader2 className="size-3.5 animate-spin" />}
-            {creating ? 'Starting…' : 'Start sandbox'}
+            {creating
+              ? 'Starting…'
+              : hasActiveMount
+                ? 'Sandbox running'
+                : hasStartingSandbox
+                  ? 'Sandbox starting…'
+                  : 'Start sandbox'}
           </Button>
           <Button variant="outline" onClick={onCancel} disabled={creating}>
             Cancel

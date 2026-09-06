@@ -14,20 +14,30 @@ function SandboxGroup({
   sandboxes,
   projectName,
   onAddNew,
+  addNewDisabledReason,
   onChanged,
+  highlightedSandboxId,
 }: {
   title: string
   sandboxes: Sandbox[]
   projectName: string
   onAddNew?: () => void
+  addNewDisabledReason?: string
   onChanged: () => void
+  highlightedSandboxId?: string | null
 }) {
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
         <span className="text-xs font-normal text-muted-foreground">{title}</span>
         {onAddNew && (
-          <Button size="sm" variant="outline" onClick={onAddNew}>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onAddNew}
+            disabled={!!addNewDisabledReason}
+            title={addNewDisabledReason}
+          >
             <Plus className="size-3.5" />
             Add New
           </Button>
@@ -38,7 +48,13 @@ function SandboxGroup({
       ) : (
         <div className="flex flex-col gap-2">
           {sandboxes.map((sandbox) => (
-            <SandboxCard key={sandbox.id} sandbox={sandbox} projectName={projectName} onChanged={onChanged} />
+            <SandboxCard
+              key={sandbox.id}
+              sandbox={sandbox}
+              projectName={projectName}
+              onChanged={onChanged}
+              highlighted={sandbox.id === highlightedSandboxId}
+            />
           ))}
         </div>
       )}
@@ -46,7 +62,11 @@ function SandboxGroup({
   )
 }
 
-export function SandboxesScreen() {
+export function SandboxesScreen({
+  highlightedSandboxId,
+}: {
+  highlightedSandboxId?: string | null
+} = {}) {
   const sandboxes = useAppStore((s) => s.sandboxes)
   const projects = useAppStore((s) => s.projects)
   const loadSandboxes = useAppStore((s) => s.loadSandboxes)
@@ -103,18 +123,22 @@ export function SandboxesScreen() {
       <div className="flex flex-1 flex-col gap-6">
         <h1 className="text-lg font-medium">Sandboxes</h1>
         <p className="text-xs text-muted-foreground">
-          If this is the first sandbox created on this machine, `sbx` may prompt for a network policy the first time —
-          run <code>sbx run claude</code> once yourself in a terminal beforehand if creation seems stuck.
+          If this is the first sandbox created on this machine, `sbx` may prompt
+          for a network policy the first time — run <code>sbx run claude</code>{" "}
+          once yourself in a terminal beforehand if creation seems stuck.
         </p>
 
-        <Dialog open={creatingForProjectId != null} onOpenChange={(open) => !open && setCreatingForProjectId(null)}>
+        <Dialog
+          open={creatingForProjectId != null}
+          onOpenChange={(open) => !open && setCreatingForProjectId(null)}
+        >
           <DialogContent title="New sandbox">
             {creatingForProjectId && (
               <CreateSandboxDialog
                 defaultProjectId={creatingForProjectId}
                 onCreated={() => {
-                  setCreatingForProjectId(null)
-                  loadSandboxes()
+                  setCreatingForProjectId(null);
+                  loadSandboxes();
                 }}
                 onCancel={() => setCreatingForProjectId(null)}
               />
@@ -123,19 +147,39 @@ export function SandboxesScreen() {
         </Dialog>
 
         {projects.length === 0 && (
-          <p className="text-sm text-muted-foreground">Create a project first, then start a sandbox for it.</p>
+          <p className="text-sm text-muted-foreground">
+            Create a project first, then start a sandbox for it.
+          </p>
         )}
 
-        {projects.map((project) => (
-          <SandboxGroup
-            key={project.id}
-            title={project.name}
-            projectName={project.name}
-            sandboxes={sandboxes.filter((sb) => sb.project_id === project.id)}
-            onAddNew={() => setCreatingForProjectId(project.id)}
-            onChanged={loadSandboxes}
-          />
-        ))}
+        {projects.map((project) => {
+          const projectSandboxes = sandboxes.filter(
+            (sb) => sb.project_id === project.id,
+          );
+          const hasActiveMount = projectSandboxes.some(
+            (sb) =>
+              sb.mode === "mount" &&
+              (sb.status === "starting" || sb.status === "running"),
+          );
+          const hasStarting = projectSandboxes.some((sb) => sb.status === 'starting')
+          const addNewDisabledReason = hasActiveMount
+            ? 'A mount-mode sandbox is already running for this project'
+            : hasStarting
+              ? 'A sandbox is already starting for this project'
+              : undefined
+          return (
+            <SandboxGroup
+              key={project.id}
+              title={project.name}
+              projectName={project.name}
+              sandboxes={projectSandboxes}
+              onAddNew={() => setCreatingForProjectId(project.id)}
+              addNewDisabledReason={addNewDisabledReason}
+              onChanged={loadSandboxes}
+              highlightedSandboxId={highlightedSandboxId}
+            />
+          );
+        })}
 
         {orphanSandboxes.length > 0 && (
           <SandboxGroup
@@ -143,6 +187,7 @@ export function SandboxesScreen() {
             projectName="Unknown project"
             sandboxes={orphanSandboxes}
             onChanged={loadSandboxes}
+            highlightedSandboxId={highlightedSandboxId}
           />
         )}
       </div>
@@ -155,5 +200,5 @@ export function SandboxesScreen() {
         <HostStatsPanel layout="bar" />
       </div>
     </div>
-  )
+  );
 }

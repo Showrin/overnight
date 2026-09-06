@@ -2634,9 +2634,9 @@ name = "overnight"
 version = "0.1.0"
 dependencies = [
  "futures",
- "glob",
  "keyring",
  "log",
+ "notify-rust",
  "r2d2",
  "r2d2_sqlite",
  "reqwest 0.12.28",

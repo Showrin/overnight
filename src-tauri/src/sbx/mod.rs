@@ -186,24 +186,6 @@ fn git_config_exec_args(name: &str, key: &str, value: &str) -> Vec<String> {
   ["exec", "-d", name, "git", "config", "--global", key, value].map(String::from).to_vec()
 }
 
-/// `sbx cp <local> <name>:<remote>` — copies a single file or directory
-/// from the host into a running sandbox's filesystem (directory copies are
-/// recursive per the docs). Used to bring `extra_clone_paths` — files git
-/// ignores, like `.env`, that a clone-mode `sbx create --clone` therefore
-/// doesn't carry over — into the sandbox after it's created. Nested file
-/// destinations need their parent directory to exist first; see `mkdir`.
-pub async fn cp<R: Runtime>(app: &AppHandle<R>, local_path: &str, name: &str, remote_path: &str) -> Result<()> {
-  run(app, &["cp", local_path, &format!("{name}:{remote_path}")]).await?;
-  Ok(())
-}
-
-/// `sbx exec -d <name> mkdir -p <path>` — ensures a directory exists inside
-/// the sandbox before `cp`-ing a file into it.
-pub async fn mkdir<R: Runtime>(app: &AppHandle<R>, name: &str, path: &str) -> Result<()> {
-  run(app, &["exec", "-d", name, "mkdir", "-p", path]).await?;
-  Ok(())
-}
-
 pub async fn stop<R: Runtime>(app: &AppHandle<R>, name: &str) -> Result<()> {
   run(app, &["stop", name]).await?;
   Ok(())
@@ -304,6 +286,43 @@ fn expand_home(path: &str) -> String {
   match path.strip_prefix('~') {
     Some(rest) => format!("/home/agent{rest}"),
     None => path.to_string(),
+  }
+}
+
+/// Extracts the STATUS column for `name` from `sbx ls` output (same table
+/// shape as `parse_workspace_path`/`parse_host_port`).
+fn parse_sandbox_status(output: &str, name: &str) -> Option<String> {
+  output.lines().find_map(|line| {
+    let mut tokens = line.split_whitespace();
+    if tokens.next()? != name {
+      return None;
+    }
+    tokens.next()?; // AGENT column
+    tokens.next().map(str::to_string) // STATUS column
+  })
+}
+
+/// Polls `sbx ls` until `name` reports STATUS "running", rather than a
+/// caller assuming a sandbox is usable the instant a prior call (e.g.
+/// `create`) returns. Standalone so any caller needing this same readiness
+/// gate (e.g. a future resume/start path) can reuse it without depending
+/// on create/stop-specific state.
+pub async fn wait_until_ready<R: Runtime>(
+  app: &AppHandle<R>,
+  name: &str,
+  timeout: std::time::Duration,
+  poll_interval: std::time::Duration,
+) -> Result<()> {
+  let deadline = std::time::Instant::now() + timeout;
+  loop {
+    let output = run(app, &["ls"]).await?;
+    if parse_sandbox_status(&output, name).as_deref() == Some("running") {
+      return Ok(());
+    }
+    if std::time::Instant::now() >= deadline {
+      return Err(Error::CommandFailed(format!("sandbox {name} not ready after {timeout:?}")));
+    }
+    tokio::time::sleep(poll_interval).await;
   }
 }
 
@@ -461,6 +480,18 @@ mod tests {
   #[test]
   fn parse_workspace_path_handles_empty_output() {
     assert_eq!(parse_workspace_path("", "my-sandbox"), None);
+  }
+
+  #[test]
+  fn parses_sandbox_status_from_ls_table() {
+    let output = "SANDBOX         AGENT   STATUS   PORTS                    WORKSPACE\nmy-sandbox      claude  running  127.0.0.1:8080->3000/tcp /home/user/proj";
+    assert_eq!(parse_sandbox_status(output, "my-sandbox"), Some("running".to_string()));
+    assert_eq!(parse_sandbox_status(output, "other-sandbox"), None);
+  }
+
+  #[test]
+  fn parse_sandbox_status_handles_empty_output() {
+    assert_eq!(parse_sandbox_status("", "my-sandbox"), None);
   }
 
   #[test]

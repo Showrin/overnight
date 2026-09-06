@@ -21,8 +21,8 @@ export function SidebarSandboxList({ onNavigate }: { onNavigate: (screen: Screen
     try {
       await invoker()
       const title = sandbox.name ?? projects.find((p) => p.id === sandbox.project_id)?.name ?? 'Sandbox'
-      if (action === 'start') notify('Sandbox started', `${title} is up and running.`)
-      if (action === 'stop') notify('Sandbox stopped', `${title} has been stopped.`)
+      if (action === 'start') notify('Sandbox started', `${title} is up and running.`, sandbox.id)
+      if (action === 'stop') notify('Sandbox stopped', `${title} has been stopped.`, sandbox.id)
       await loadSandboxes()
     } catch {
       // Best-effort — surfacing errors here would need its own UI; the full
@@ -43,6 +43,7 @@ export function SidebarSandboxList({ onNavigate }: { onNavigate: (screen: Screen
       {visible.map((sandbox) => {
         const projectName = projects.find((p) => p.id === sandbox.project_id)?.name ?? 'Unknown project'
         const isRunning = sandbox.status === 'running'
+        const isStopping = sandbox.status === 'stopping'
         const isBusy = busy?.id === sandbox.id
 
         return (
@@ -93,7 +94,7 @@ export function SidebarSandboxList({ onNavigate }: { onNavigate: (screen: Screen
               type="button"
               aria-label={isRunning ? 'Stop sandbox' : 'Start sandbox'}
               title={isRunning ? 'Stop sandbox' : 'Start sandbox'}
-              disabled={isBusy}
+              disabled={isBusy || isStopping}
               onClick={() =>
                 run(
                   sandbox,

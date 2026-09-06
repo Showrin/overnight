@@ -135,18 +135,10 @@ pub fn create_project(
   repo_path: String,
   plans_path: Option<String>,
   dev_server_port: Option<i64>,
-  extra_clone_paths: Vec<String>,
 ) -> Result<Project> {
   validate_repo_path(&repo_path)?;
   let conn = pool.get()?;
-  projects::create(
-    &conn,
-    &name,
-    &repo_path,
-    plans_path.as_deref(),
-    dev_server_port,
-    &extra_clone_paths,
-  )
+  projects::create(&conn, &name, &repo_path, plans_path.as_deref(), dev_server_port)
 }
 
 #[tauri::command]
@@ -157,19 +149,10 @@ pub fn update_project(
   repo_path: String,
   plans_path: Option<String>,
   dev_server_port: Option<i64>,
-  extra_clone_paths: Vec<String>,
 ) -> Result<Project> {
   validate_repo_path(&repo_path)?;
   let conn = pool.get()?;
-  projects::update(
-    &conn,
-    &id,
-    &name,
-    &repo_path,
-    plans_path.as_deref(),
-    dev_server_port,
-    &extra_clone_paths,
-  )
+  projects::update(&conn, &id, &name, &repo_path, plans_path.as_deref(), dev_server_port)
 }
 
 #[tauri::command]
@@ -181,10 +164,12 @@ pub fn delete_project(pool: State<DbPool>, id: String) -> Result<()> {
 const CLAUDE_PERMISSION_MODE_KEY: &str = "default_claude_permission_mode";
 const DEFAULT_CLAUDE_PERMISSION_MODE: &str = "default";
 const VALID_PERMISSION_MODES: [&str; 4] = ["plan", "default", "acceptEdits", "bypassPermissions"];
+const SKILL_FOLDERS_KEY: &str = "skill_folders";
 
 #[derive(Serialize)]
 pub struct AppSettings {
   pub default_claude_permission_mode: String,
+  pub skill_folders: Vec<String>,
 }
 
 #[tauri::command]
@@ -193,6 +178,7 @@ pub fn get_settings(pool: State<DbPool>) -> Result<AppSettings> {
   Ok(AppSettings {
     default_claude_permission_mode: settings::get(&conn, CLAUDE_PERMISSION_MODE_KEY)?
       .unwrap_or_else(|| DEFAULT_CLAUDE_PERMISSION_MODE.to_string()),
+    skill_folders: settings::get_json(&conn, SKILL_FOLDERS_KEY)?.unwrap_or_default(),
   })
 }
 
@@ -205,6 +191,21 @@ pub fn save_settings(pool: State<DbPool>, default_claude_permission_mode: String
   }
   let conn = pool.get()?;
   settings::set(&conn, CLAUDE_PERMISSION_MODE_KEY, &default_claude_permission_mode)
+}
+
+/// Persists the chosen skill folders and copies each into sbx's shared
+/// agent-skills store (a plain host-filesystem copy — no sandbox involved).
+#[tauri::command]
+pub fn save_skill_folders(pool: State<DbPool>, folders: Vec<String>) -> std::result::Result<(), String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  settings::set_json(&conn, SKILL_FOLDERS_KEY, &folders).map_err(|e| e.to_string())?;
+
+  let store_dir = crate::skills::skill_store_dir();
+  std::fs::create_dir_all(&store_dir).map_err(|e| e.to_string())?;
+  for folder in &folders {
+    crate::skills::copy_folder_into_store(&store_dir, std::path::Path::new(folder)).map_err(|e| e.to_string())?;
+  }
+  Ok(())
 }
 
 const JIRA_SITE_KEY: &str = "jira_site";
@@ -289,6 +290,8 @@ pub fn list_jira_issues(pool: State<DbPool>) -> std::result::Result<Vec<JiraIssu
 
 const SANDBOX_MEMORY_MB: u32 = 2048;
 const SANDBOX_PORT: u16 = 8080;
+const SANDBOX_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+const SANDBOX_READY_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 
 fn check_free_memory() -> std::result::Result<(), String> {
   let free_mb = crate::sbx::host_free_memory_mb();
@@ -300,8 +303,58 @@ fn check_free_memory() -> std::result::Result<(), String> {
   Ok(())
 }
 
-fn sbx_name_for(sandbox_id: &str) -> String {
-  format!("overnight-{sandbox_id}")
+/// Sanitizes a user-provided sandbox name for `sbx create --name`:
+/// whitespace becomes `-`, everything else unsafe for a CLI/DNS-ish
+/// identifier is dropped.
+fn sanitize_sbx_name(name: &str) -> String {
+  name
+    .trim()
+    .chars()
+    .map(|c| if c.is_whitespace() { '-' } else { c })
+    .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+    .collect()
+}
+
+/// Base name to try first: the sanitized user-provided name, or
+/// `<project-name>-<4-char-id>` (from `sandbox_id`) when none was given.
+fn base_sbx_name(user_name: Option<&str>, project_name: &str, sandbox_id: &str) -> String {
+  match user_name.map(str::trim).filter(|n| !n.is_empty()) {
+    Some(n) => sanitize_sbx_name(n),
+    None => {
+      let suffix: String = sandbox_id.chars().filter(char::is_ascii_alphanumeric).take(4).collect();
+      format!("{}-{suffix}", sanitize_sbx_name(project_name))
+    }
+  }
+}
+
+/// `sbx create --name <name>` fails with "... already exists, use sbx run
+/// --name ... to connect" on collision (see `sbx::resume`'s doc comment).
+fn is_name_conflict(err: &str) -> bool {
+  err.contains("already exists")
+}
+
+const MAX_NAME_ATTEMPTS: u32 = 50;
+
+/// Finds a unique sbx sandbox name by calling `try_create` with `base`,
+/// then `base-2`, `base-3`, ... on each name-conflict error, until it
+/// succeeds or fails for an unrelated reason. Leans on `sbx`'s own
+/// uniqueness enforcement rather than pre-checking a name list — TOCTOU-safe
+/// by construction, since the name is only "taken" once `sbx` itself accepts
+/// it.
+async fn resolve_unique_sbx_name<F, Fut>(base: &str, mut try_create: F) -> std::result::Result<String, String>
+where
+  F: FnMut(String) -> Fut,
+  Fut: std::future::Future<Output = std::result::Result<(), String>>,
+{
+  for attempt in 1..=MAX_NAME_ATTEMPTS {
+    let candidate = if attempt == 1 { base.to_string() } else { format!("{base}-{attempt}") };
+    match try_create(candidate.clone()).await {
+      Ok(()) => return Ok(candidate),
+      Err(e) if is_name_conflict(&e) => continue,
+      Err(e) => return Err(e),
+    }
+  }
+  Err(format!("could not find a free sandbox name based on {base:?} after {MAX_NAME_ATTEMPTS} attempts"))
 }
 
 #[tauri::command]
@@ -375,11 +428,14 @@ pub async fn create_sandbox(
     projects::get(&conn, &project_id).map_err(|e| e.to_string())?
   };
 
-  if mode == "mount" {
+  {
     let conn = pool.get().map_err(|e| e.to_string())?;
     let existing = sandboxes::list_for_project(&conn, &project_id).map_err(|e| e.to_string())?;
-    if existing.iter().any(|s| s.mode == "mount" && matches!(s.status.as_str(), "starting" | "running")) {
+    if mode == "mount" && existing.iter().any(|s| s.mode == "mount" && matches!(s.status.as_str(), "starting" | "running" | "stopping")) {
       return Err("a mount-mode sandbox is already running for this project".to_string());
+    }
+    if existing.iter().any(|s| s.status == "starting") {
+      return Err("a sandbox is already starting for this project".to_string());
     }
   }
 
@@ -416,17 +472,30 @@ async fn provision_sandbox(
   sandbox: &Sandbox,
   mode: &str,
 ) -> std::result::Result<Sandbox, String> {
-  let name = sbx_name_for(&sandbox.id);
-  crate::sbx::create(app, &name, mode == "clone", &project.repo_path).await.map_err(|e| e.to_string())?;
-  if mode == "clone" {
-    copy_extra_clone_paths(app, &name, project).await?;
-  }
-  crate::sbx::set_claude_default_permission_mode(app, &name, &sandbox.permission_mode)
+  let base_name = base_sbx_name(sandbox.name.as_deref(), &project.name, &sandbox.id);
+  let clone = mode == "clone";
+  let name = resolve_unique_sbx_name(&base_name, |candidate| async move {
+    crate::sbx::create(app, &candidate, clone, &project.repo_path).await.map_err(|e| e.to_string())
+  })
+  .await?;
+  // `create` returning doesn't guarantee the VM is actually up for `exec`
+  // yet — wait before the exec-dependent steps below.
+  crate::sbx::wait_until_ready(app, &name, SANDBOX_READY_TIMEOUT, SANDBOX_READY_POLL_INTERVAL)
     .await
     .map_err(|e| e.to_string())?;
-  sync_git_identity(app, &name).await;
-  crate::sbx::publish_port(app, &name, SANDBOX_PORT).await.map_err(|e| e.to_string())?;
-  let host_port = crate::sbx::host_port(app, &name, SANDBOX_PORT).await.map_err(|e| e.to_string())?;
+
+  // Independent once the sandbox is ready: git identity, the
+  // permission-mode alias, and port publishing/lookup. Run concurrently.
+  let (permission_result, host_port_result, ()) = tokio::join!(
+    crate::sbx::set_claude_default_permission_mode(app, &name, &sandbox.permission_mode),
+    async {
+      crate::sbx::publish_port(app, &name, SANDBOX_PORT).await?;
+      crate::sbx::host_port(app, &name, SANDBOX_PORT).await
+    },
+    sync_git_identity(app, &name),
+  );
+  permission_result.map_err(|e| e.to_string())?;
+  let host_port = host_port_result.map_err(|e| e.to_string())?;
 
   let conn = pool.get().map_err(|e| e.to_string())?;
   sandboxes::update_status(&conn, &sandbox.id, "running", Some(&name), host_port.map(i64::from))
@@ -454,135 +523,131 @@ fn host_git_config(key: &str) -> Option<String> {
   (!value.is_empty()).then_some(value)
 }
 
-/// Clone mode's `sbx create --clone` clones the git-tracked contents of
-/// `project.repo_path` into an isolated copy inside the sandbox VM — files
-/// git ignores (`.env`, local config, etc.) don't come along, which is
-/// exactly what `project.extra_clone_paths`' glob patterns are for. Each
-/// match is copied in afterward via `sbx cp`, preserving its path relative
-/// to `repo_path`.
-async fn copy_extra_clone_paths(app: &AppHandle, name: &str, project: &Project) -> std::result::Result<(), String> {
-  if project.extra_clone_paths.is_empty() {
-    return Ok(());
-  }
-  let workspace = crate::sbx::workspace_path(app, name)
-    .await
-    .map_err(|e| e.to_string())?
-    .ok_or_else(|| "could not resolve the sandbox's in-VM workspace path".to_string())?;
-  let repo_path = std::path::Path::new(&project.repo_path);
-  let targets = resolve_extra_clone_targets(repo_path, &project.extra_clone_paths)?;
-
-  for (host_path, relative_posix) in targets {
-    let remote_path = format!("{workspace}/{relative_posix}");
-    if let Some((parent, _)) = relative_posix.rsplit_once('/') {
-      crate::sbx::mkdir(app, name, &format!("{workspace}/{parent}")).await.map_err(|e| e.to_string())?;
-    }
-    crate::sbx::cp(app, &host_path.to_string_lossy(), name, &remote_path).await.map_err(|e| e.to_string())?;
-  }
-  Ok(())
-}
-
-/// Expands `patterns` (glob patterns relative to `repo_path`) against the
-/// host filesystem and pairs each match with its path relative to
-/// `repo_path`, in POSIX form (`/`-separated — the sandbox VM is always
-/// POSIX regardless of host OS). Split out from `copy_extra_clone_paths` as
-/// the one part of that flow that's pure/host-only and so can be unit
-/// tested without a real `sbx` install.
-fn resolve_extra_clone_targets(
-  repo_path: &std::path::Path,
-  patterns: &[String],
-) -> std::result::Result<Vec<(std::path::PathBuf, String)>, String> {
-  let mut targets = Vec::new();
-  for pattern in patterns {
-    let full_pattern = repo_path.join(pattern);
-    let matches = glob::glob(&full_pattern.to_string_lossy()).map_err(|e| format!("invalid glob pattern {pattern:?}: {e}"))?;
-    for entry in matches {
-      let host_path = entry.map_err(|e| e.to_string())?;
-      // A pattern outside repo_path (picked via the folder/file browser)
-      // has no meaningful path relative to the repo — drop it straight into
-      // the clone root under its own name rather than recreating its whole
-      // host directory hierarchy there.
-      let relative_posix = match host_path.strip_prefix(repo_path) {
-        Ok(relative) => relative
-          .components()
-          .map(|c| c.as_os_str().to_string_lossy().into_owned())
-          .collect::<Vec<_>>()
-          .join("/"),
-        Err(_) => host_path
-          .file_name()
-          .map(|n| n.to_string_lossy().into_owned())
-          .ok_or_else(|| format!("cannot determine a destination name for {host_path:?}"))?,
-      };
-      targets.push((host_path, relative_posix));
-    }
-  }
-  Ok(targets)
-}
-
 #[cfg(test)]
-mod extra_clone_paths_tests {
-  use super::resolve_extra_clone_targets;
-  use std::fs;
+mod sbx_naming_tests {
+  use super::{base_sbx_name, resolve_unique_sbx_name};
+  use std::sync::Mutex;
 
   #[test]
-  fn resolves_glob_patterns_to_repo_relative_posix_paths() {
-    let dir = std::env::temp_dir().join(format!("overnight-extra-clone-{}", uuid::Uuid::new_v4()));
-    fs::create_dir_all(dir.join("config")).unwrap();
-    fs::write(dir.join(".env"), "SECRET=1").unwrap();
-    fs::write(dir.join("config").join("local.json"), "{}").unwrap();
-    fs::write(dir.join("tracked.rs"), "// not matched").unwrap();
-
-    let patterns = vec![".env".to_string(), "config/*.json".to_string()];
-    let mut targets = resolve_extra_clone_targets(&dir, &patterns).unwrap();
-    targets.sort_by(|a, b| a.1.cmp(&b.1));
-
-    let relative: Vec<&str> = targets.iter().map(|(_, r)| r.as_str()).collect();
-    assert_eq!(relative, vec![".env", "config/local.json"]);
-
-    fs::remove_dir_all(&dir).unwrap();
+  fn sanitizes_whitespace_and_unsafe_characters() {
+    assert_eq!(base_sbx_name(Some("my sandbox!!"), "overnight", "irrelevant"), "my-sandbox");
+    assert_eq!(base_sbx_name(Some("  tabs\tand\nnewlines  "), "overnight", "irrelevant"), "tabs-and-newlines");
   }
 
   #[test]
-  fn path_outside_repo_lands_at_clone_root_under_its_own_name() {
-    let repo_dir = std::env::temp_dir().join(format!("overnight-extra-clone-repo-{}", uuid::Uuid::new_v4()));
-    let outside_dir = std::env::temp_dir().join(format!("overnight-extra-clone-outside-{}", uuid::Uuid::new_v4()));
-    fs::create_dir_all(&repo_dir).unwrap();
-    fs::create_dir_all(outside_dir.join("cache")).unwrap();
-    fs::write(outside_dir.join("cache").join("token"), "secret").unwrap();
-
-    let patterns = vec![outside_dir.to_string_lossy().into_owned()];
-    let targets = resolve_extra_clone_targets(&repo_dir, &patterns).unwrap();
-
-    assert_eq!(targets.len(), 1);
-    assert_eq!(targets[0].1, outside_dir.file_name().unwrap().to_string_lossy());
-
-    fs::remove_dir_all(&repo_dir).unwrap();
-    fs::remove_dir_all(&outside_dir).unwrap();
+  fn falls_back_to_project_name_and_4_char_id() {
+    assert_eq!(base_sbx_name(None, "Overnight", "ab12-cd34"), "Overnight-ab12");
+    assert_eq!(base_sbx_name(Some("   "), "Overnight", "ab12-cd34"), "Overnight-ab12");
   }
 
-  #[test]
-  fn no_matches_yields_empty_targets() {
-    let dir = std::env::temp_dir().join(format!("overnight-extra-clone-{}", uuid::Uuid::new_v4()));
-    fs::create_dir_all(&dir).unwrap();
-
-    let targets = resolve_extra_clone_targets(&dir, &["nonexistent/*.env".to_string()]).unwrap();
-    assert!(targets.is_empty());
-
-    fs::remove_dir_all(&dir).unwrap();
+  #[tokio::test]
+  async fn succeeds_immediately_when_name_is_free() {
+    let name = resolve_unique_sbx_name("my-sandbox", |candidate| async move {
+      assert_eq!(candidate, "my-sandbox");
+      Ok(())
+    })
+    .await
+    .unwrap();
+    assert_eq!(name, "my-sandbox");
   }
+
+  #[tokio::test]
+  async fn retries_with_bumped_suffix_on_name_conflict() {
+    let taken = Mutex::new(vec!["my-sandbox".to_string(), "my-sandbox-2".to_string()]);
+    let name = resolve_unique_sbx_name("my-sandbox", |candidate| {
+      let is_taken = taken.lock().unwrap().contains(&candidate);
+      async move {
+        if is_taken {
+          Err("sandbox \"x\" already exists, use sbx run --name x to connect".to_string())
+        } else {
+          Ok(())
+        }
+      }
+    })
+    .await
+    .unwrap();
+    assert_eq!(name, "my-sandbox-3");
+  }
+
+  #[tokio::test]
+  async fn propagates_unrelated_errors_without_retrying() {
+    let err = resolve_unique_sbx_name("my-sandbox", |_candidate| async move { Err("network policy not set".to_string()) })
+      .await
+      .unwrap_err();
+    assert_eq!(err, "network policy not set");
+  }
+}
+
+/// Core of `stop_sandbox`, decoupled from `AppHandle` so `stop` is
+/// mockable in tests. Marks the row "stopping" before awaiting `stop` (so
+/// pollers see the transition immediately, not only once the — possibly
+/// slow — teardown finishes), then "stopped" once it resolves.
+async fn stop_sandbox_with<F, Fut>(pool: &DbPool, id: &str, stop: F) -> std::result::Result<Sandbox, String>
+where
+  F: FnOnce() -> Fut,
+  Fut: std::future::Future<Output = crate::sbx::Result<()>>,
+{
+  {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    sandboxes::update_status(&conn, id, "stopping", None, None).map_err(|e| e.to_string())?;
+  }
+  stop().await.map_err(|e| e.to_string())?;
+
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  sandboxes::update_status(&conn, id, "stopped", None, None).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn stop_sandbox(app: AppHandle, pool: State<'_, DbPool>, id: String) -> std::result::Result<Sandbox, String> {
   let pool = pool.inner().clone();
-  let sandbox = {
+  let name = {
     let conn = pool.get().map_err(|e| e.to_string())?;
-    sandboxes::get(&conn, &id).map_err(|e| e.to_string())?
+    sandboxes::get(&conn, &id)
+      .map_err(|e| e.to_string())?
+      .sbx_name
+      .ok_or_else(|| "sandbox has no sbx sandbox to stop".to_string())?
   };
-  let name = sandbox.sbx_name.ok_or_else(|| "sandbox has no sbx sandbox to stop".to_string())?;
-  crate::sbx::stop(&app, &name).await.map_err(|e| e.to_string())?;
+  stop_sandbox_with(&pool, &id, || crate::sbx::stop(&app, &name)).await
+}
 
-  let conn = pool.get().map_err(|e| e.to_string())?;
-  sandboxes::update_status(&conn, &id, "stopped", None, None).map_err(|e| e.to_string())
+#[cfg(test)]
+mod stop_sandbox_tests {
+  use super::*;
+  use r2d2_sqlite::SqliteConnectionManager;
+
+  fn test_pool() -> (DbPool, std::path::PathBuf) {
+    let path = std::env::temp_dir().join(format!("overnight-stop-sandbox-{}", uuid::Uuid::new_v4()));
+    let mut conn = rusqlite::Connection::open(&path).unwrap();
+    crate::db::migrations::migrations().to_latest(&mut conn).unwrap();
+    drop(conn);
+    let pool = r2d2::Pool::builder().max_size(2).build(SqliteConnectionManager::file(&path)).unwrap();
+    (pool, path)
+  }
+
+  #[tokio::test]
+  async fn sets_stopping_before_stop_resolves_then_stopped() {
+    let (pool, path) = test_pool();
+    let sandbox_id = {
+      let conn = pool.get().unwrap();
+      let project = projects::create(&conn, "Overnight", "/repo", None, None).unwrap();
+      sandboxes::create(&conn, &project.id, "mount", None, None, "default").unwrap().id
+    };
+
+    let check_pool = pool.clone();
+    let check_id = sandbox_id.clone();
+    let result = stop_sandbox_with(&pool, &sandbox_id, || async move {
+      let conn = check_pool.get().unwrap();
+      assert_eq!(sandboxes::get(&conn, &check_id).unwrap().status, "stopping");
+      Ok::<(), crate::sbx::Error>(())
+    })
+    .await;
+
+    assert!(result.is_ok());
+    let conn = pool.get().unwrap();
+    assert_eq!(sandboxes::get(&conn, &sandbox_id).unwrap().status, "stopped");
+
+    std::fs::remove_file(&path).ok();
+  }
 }
 
 #[tauri::command]

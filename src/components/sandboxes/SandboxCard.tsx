@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { notify } from '@/lib/notify'
 import { permissionBadgeVariant, statusBadgeVariant } from '@/lib/sandboxDisplay'
+import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
 import type { Sandbox } from './types'
 
@@ -15,10 +16,12 @@ export function SandboxCard({
   sandbox,
   projectName,
   onChanged,
+  highlighted,
 }: {
   sandbox: Sandbox
   projectName: string
   onChanged: () => void
+  highlighted?: boolean
 }) {
   const projectRepoPath = useAppStore(
     (s) => s.projects.find((p) => p.id === sandbox.project_id)?.repo_path
@@ -35,9 +38,9 @@ export function SandboxCard({
     try {
       await action()
       const title = sandbox.name ?? projectName
-      if (which === 'start') notify('Sandbox started', `${title} is up and running.`)
-      if (which === 'stop') notify('Sandbox stopped', `${title} has been stopped.`)
-      if (which === 'delete') notify('Sandbox deleted', `${title} has been deleted.`)
+      if (which === 'start') notify('Sandbox started', `${title} is up and running.`, sandbox.id)
+      if (which === 'stop') notify('Sandbox stopped', `${title} has been stopped.`, sandbox.id)
+      if (which === 'delete') notify('Sandbox deleted', `${title} has been deleted.`, sandbox.id)
       onChanged()
     } catch (e) {
       setError(String(e))
@@ -64,7 +67,7 @@ export function SandboxCard({
   }
 
   return (
-    <Card className="gap-6" size="sm">
+    <Card className={cn('gap-6', highlighted && 'glow-pulse')} size="sm">
       <CardHeader className="gap-1.5">
         <div className="flex items-center gap-2">
           <CardTitle>{sandbox.name ?? projectName}</CardTitle>

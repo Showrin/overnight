@@ -94,7 +94,7 @@ mod tests {
   fn sums_tokens_for_sandbox_across_sessions() {
     let conn = test_conn();
     let task = tasks::create(&conn, "Task", None, None, "todo", None).unwrap();
-    let project = crate::db::projects::create(&conn, "Overnight", "/repo/overnight", None, None, &[]).unwrap();
+    let project = crate::db::projects::create(&conn, "Overnight", "/repo/overnight", None, None).unwrap();
     let sandbox = crate::db::sandboxes::create(&conn, &project.id, "mount", None, None, "default").unwrap();
 
     let session_a = sessions::create(&conn, &task.id, "claude_code", "autonomous", None).unwrap();
