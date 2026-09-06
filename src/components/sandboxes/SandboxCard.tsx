@@ -14,7 +14,7 @@ import {
   SANDBOX_NETWORK_PRESET_OVERRIDES,
 } from '@/lib/networkPolicy'
 import { notify } from '@/lib/notify'
-import { permissionBadgeVariant, statusBadgeVariant } from '@/lib/sandboxDisplay'
+import { formatRelativeTime, permissionBadgeVariant, statusBadgeVariant } from '@/lib/sandboxDisplay'
 import { TERMINAL_HOSTS, TERMINAL_HOST_LABELS } from '@/lib/terminalHost'
 import { useAppStore } from '@/store/useAppStore'
 import type { BranchSyncOutcome, Sandbox } from './types'

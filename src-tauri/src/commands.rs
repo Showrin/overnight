@@ -686,7 +686,9 @@ fn adopt_orphan_sandboxes_from_rows(pool: &DbPool, rows: Vec<crate::sbx::SbxList
     // constraint hit here (e.g. a real active mount sandbox already
     // tracked for the matched project) skips this one row rather than
     // failing the whole adoption pass.
-    let created = match sandboxes::create(&conn, &project_id, mode, folder_path.as_deref(), None, DEFAULT_CLAUDE_PERMISSION_MODE) {
+    // base_branch = NULL: an adopted sandbox's host checkout state at the
+    // time `sbx create` actually ran (outside the app) is unknown to us.
+    let created = match sandboxes::create(&conn, &project_id, mode, folder_path.as_deref(), None, DEFAULT_CLAUDE_PERMISSION_MODE, None) {
       Ok(sandbox) => sandbox,
       Err(e) => {
         log::warn!("adopt_orphan_sandboxes: could not create a row for {}: {e}", row.sbx_name);
@@ -774,7 +776,7 @@ mod adopt_orphan_sandboxes_tests {
     let pool = test_pool();
     let conn = pool.get().unwrap();
     let project = projects::create(&conn, "Overnight", "/repo/overnight", None, None).unwrap();
-    let existing = sandboxes::create(&conn, &project.id, "mount", None, None, "default").unwrap();
+    let existing = sandboxes::create(&conn, &project.id, "mount", None, None, "default", None).unwrap();
     sandboxes::update_status(&conn, &existing.id, "running", Some("already-known"), None).unwrap();
     drop(conn);
 
@@ -854,12 +856,19 @@ pub async fn create_sandbox(
 
   check_free_memory()?;
 
+  // Snapshotted once, up front, the same way permission_mode/mode already
+  // are — `None` on detached HEAD or a non-git repo_path, surfaced by the
+  // Branch tab as "created before branch tracking was added" rather than a
+  // guessed fallback.
+  let base_branch = crate::git::current_branch(&project.repo_path);
+
   let sandbox = {
     let conn = pool.get().map_err(|e| e.to_string())?;
     // Clone mode's clone lives inside the sandbox VM, not on the host — no
     // host-visible folder_path to record for it.
     let initial_folder = if mode == "mount" { Some(project.repo_path.as_str()) } else { None };
-    sandboxes::create(&conn, &project_id, &mode, initial_folder, name.as_deref(), &permission_mode).map_err(|e| e.to_string())?
+    sandboxes::create(&conn, &project_id, &mode, initial_folder, name.as_deref(), &permission_mode, base_branch.as_deref())
+      .map_err(|e| e.to_string())?
   };
 
   // From here on the sandbox row already exists (status "starting"). If
@@ -1020,7 +1029,17 @@ pub async fn stop_sandbox(app: AppHandle, pool: State<'_, DbPool>, id: String) -
       .sbx_name
       .ok_or_else(|| "sandbox has no sbx sandbox to stop".to_string())?
   };
-  stop_sandbox_with(&pool, &id, || crate::sbx::stop(&app, &name)).await
+  stop_sandbox_with(&pool, &id, || async {
+    // Best-effort, right before the sandbox actually goes offline: a
+    // failed read here (e.g. a non-git workspace, or the sandbox already
+    // being unresponsive) must never block the stop itself — log and move
+    // on to the real `sbx stop` regardless.
+    if let Err(e) = capture_branch_snapshot(&app, &pool, &id, &name).await {
+      log::warn!("stop_sandbox: best-effort branch snapshot failed for {id}: {e}");
+    }
+    crate::sbx::stop(&app, &name).await
+  })
+  .await
 }
 
 #[cfg(test)]
@@ -1043,7 +1062,7 @@ mod stop_sandbox_tests {
     let sandbox_id = {
       let conn = pool.get().unwrap();
       let project = projects::create(&conn, "Overnight", "/repo", None, None).unwrap();
-      sandboxes::create(&conn, &project.id, "mount", None, None, "default").unwrap().id
+      sandboxes::create(&conn, &project.id, "mount", None, None, "default", None).unwrap().id
     };
 
     let check_pool = pool.clone();
@@ -1154,6 +1173,46 @@ pub async fn backup_sandbox_claude_data(app: AppHandle, pool: State<'_, DbPool>,
 
   let conn = pool.get().map_err(|e| e.to_string())?;
   sandboxes::record_backup(&conn, &id, &dest, at).map_err(|e| e.to_string())
+}
+
+/// Reads this sandbox's current branch/branch-list/worktrees (one `sbx
+/// exec` round trip via `sbx::read_branch_snapshot`) and persists them —
+/// shared by `get_sandbox_branch_info`'s live reload and the best-effort
+/// snapshot `stop_sandbox_with` takes right before tearing the sandbox
+/// down, so both go through the same read-then-record path.
+async fn capture_branch_snapshot(
+  app: &AppHandle,
+  pool: &DbPool,
+  id: &str,
+  name: &str,
+) -> std::result::Result<Sandbox, String> {
+  let workspace_path = crate::sbx::workspace_path(app, name).await.map_err(|e| e.to_string())?;
+  let snapshot =
+    crate::sbx::read_branch_snapshot(app, name, workspace_path.as_deref()).await.map_err(|e| e.to_string())?;
+  let at = crate::db::models::now_millis();
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  sandboxes::record_branch_snapshot(&conn, id, snapshot.current_branch.as_deref(), &snapshot.branches, &snapshot.worktrees, at)
+    .map_err(|e| e.to_string())
+}
+
+/// Backs the Branch tab. While the sandbox is running, refreshes the
+/// persisted branch snapshot before returning (so the tab always shows a
+/// live read, not a possibly-stale one); otherwise just returns the
+/// already-persisted row — a stopped sandbox has no live state to read,
+/// but still shows its last-known snapshot from before it stopped (see
+/// `stop_sandbox_with`'s best-effort snapshot).
+#[tauri::command]
+pub async fn get_sandbox_branch_info(app: AppHandle, pool: State<'_, DbPool>, id: String) -> std::result::Result<Sandbox, String> {
+  let pool = pool.inner().clone();
+  let sandbox = {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    sandboxes::get(&conn, &id).map_err(|e| e.to_string())?
+  };
+  if sandbox.status != "running" {
+    return Ok(sandbox);
+  }
+  let name = sandbox.sbx_name.ok_or_else(|| "sandbox has no sbx sandbox yet".to_string())?;
+  capture_branch_snapshot(&app, &pool, &id, &name).await
 }
 
 const HOST_METRICS_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1000;

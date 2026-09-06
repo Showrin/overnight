@@ -29,6 +29,30 @@ export function permissionBadgeVariant(permissionMode: string): BadgeVariant {
   return 'outline-muted'
 }
 
+// Formats a past unix-ms timestamp as "3 minutes ago"-style relative text,
+// using the platform's own `Intl.RelativeTimeFormat` rather than a new
+// dependency for one caption. Shared by SandboxCard's backup caption and
+// the Branch tab's "as of <relative time>" freshness label.
+export function formatRelativeTime(pastMs: number): string {
+  const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
+  const divisions: [Intl.RelativeTimeFormatUnit, number][] = [
+    ['second', 60],
+    ['minute', 60],
+    ['hour', 24],
+    ['day', 30],
+    ['month', 12],
+    ['year', Infinity],
+  ]
+  let duration = (pastMs - Date.now()) / 1000
+  for (const [unit, amount] of divisions) {
+    if (Math.abs(duration) < amount) {
+      return rtf.format(Math.round(duration), unit)
+    }
+    duration /= amount
+  }
+  return rtf.format(Math.round(duration), 'year')
+}
+
 // Formats a sandbox's effective network policy as a short label — either
 // its own override, or "Global default (<preset>)" when it inherits one.
 export function formatNetworkPolicyLabel(

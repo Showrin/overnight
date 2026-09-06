@@ -9,6 +9,7 @@
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_shell::ShellExt;
 
+use crate::db::models::WorktreeInfo;
 use crate::process::SpawnedProcess;
 
 #[derive(Debug, thiserror::Error)]
@@ -363,6 +364,126 @@ fn git_config_exec_args(name: &str, key: &str, value: &str) -> Vec<String> {
   ["exec", "-d", name, "git", "config", "--global", key, value].map(String::from).to_vec()
 }
 
+/// One persisted "branch snapshot" — the sandbox's currently checked-out
+/// branch, its full local branch list, and its worktrees, all captured
+/// together by `read_branch_snapshot` in a single `sbx exec` round trip so
+/// the three always agree with each other as of the same instant.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BranchSnapshot {
+  pub current_branch: Option<String>,
+  pub branches: Vec<String>,
+  pub worktrees: Vec<WorktreeInfo>,
+}
+
+/// Wraps `value` in single quotes for a POSIX `sh -c "..."` script,
+/// escaping any embedded single quote (`'` -> `'\''`) — used for the
+/// in-sandbox workspace path passed to every `git -C` invocation below,
+/// which may contain spaces.
+fn shell_quote(value: &str) -> String {
+  format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+/// The sandbox home `sbx`'s docs land a bare attach in — used as
+/// `read_branch_snapshot`'s fallback when no workspace path is known (e.g.
+/// `sbx ls` had no WORKSPACE column for this sandbox), mirroring
+/// `expand_home`'s definition of the same path.
+const SANDBOX_HOME: &str = "/home/agent";
+
+/// `sbx exec -d <name> sh -c "git -C <ws> rev-parse --abbrev-ref HEAD;
+/// echo ---; git -C <ws> for-each-ref --format='%(refname:short)'
+/// refs/heads; echo ---; git -C <ws> worktree list --porcelain"` — reads
+/// the sandbox's current branch, full local branch list, and worktrees in
+/// one round trip, so a caller (the Branch tab's live load, or a
+/// best-effort read right before `stop`) only pays for one `sbx exec`
+/// rather than three.
+///
+/// Deliberately bypasses this module's shared `run()` helper: `run()`
+/// discards stdout on a non-zero exit, but a non-git `workspace_path` (or
+/// any single failing git subcommand in the chain) makes the *whole*
+/// `sh -c` script exit non-zero even though the commands before the
+/// failure still produced usable output — so this reads `output.stdout`
+/// unconditionally and lets `parse_branch_snapshot` degrade missing
+/// sections to empty/`None` rather than erroring the whole call. Only a
+/// real spawn/IO failure (`sbx` itself missing, etc.) surfaces as `Err`.
+///
+/// **UNVERIFIED**: no real `sbx` install is available in this dev
+/// environment (see this module's top doc comment), so this exact
+/// multi-command `sh -c` chaining and output shape is unconfirmed against
+/// a real sandbox.
+pub async fn read_branch_snapshot<R: Runtime>(
+  app: &AppHandle<R>,
+  name: &str,
+  workspace_path: Option<&str>,
+) -> Result<BranchSnapshot> {
+  let ws = shell_quote(workspace_path.unwrap_or(SANDBOX_HOME));
+  let script = format!(
+    "git -C {ws} rev-parse --abbrev-ref HEAD; echo ---; \
+     git -C {ws} for-each-ref --format='%(refname:short)' refs/heads; echo ---; \
+     git -C {ws} worktree list --porcelain"
+  );
+  let output = app.shell().command("sbx").args(["exec", "-d", name, "sh", "-c", &script]).output().await?;
+  Ok(parse_branch_snapshot(&String::from_utf8_lossy(&output.stdout)))
+}
+
+fn parse_branch_snapshot(output: &str) -> BranchSnapshot {
+  let [head_section, branches_section, worktrees_section] = split_into_sections(output);
+
+  let current_branch = match head_section.trim() {
+    "" | "HEAD" => None, // empty (failed/non-git) or detached HEAD
+    branch => Some(branch.to_string()),
+  };
+  let branches =
+    branches_section.lines().map(str::trim).filter(|line| !line.is_empty()).map(str::to_string).collect();
+  let worktrees = parse_worktrees(&worktrees_section);
+
+  BranchSnapshot { current_branch, branches, worktrees }
+}
+
+/// Splits `read_branch_snapshot`'s combined output on lines that are
+/// exactly `---` (from the script's own `echo ---` separators) into
+/// exactly 3 sections — padding with empty strings if a git failure meant
+/// fewer than 2 separators ever printed.
+fn split_into_sections(output: &str) -> [String; 3] {
+  let mut sections = vec![String::new()];
+  for line in output.lines() {
+    if line == "---" {
+      sections.push(String::new());
+      continue;
+    }
+    let current = sections.last_mut().expect("sections always has at least one entry");
+    if !current.is_empty() {
+      current.push('\n');
+    }
+    current.push_str(line);
+  }
+  sections.resize(3, String::new());
+  [sections[0].clone(), sections[1].clone(), sections[2].clone()]
+}
+
+/// Parses `git worktree list --porcelain` output: blocks separated by a
+/// blank line, each a run of `key value` lines (`worktree <path>`, `HEAD
+/// <sha>`, `branch refs/heads/<name>`, or bare `detached`/`bare`).
+fn parse_worktrees(output: &str) -> Vec<WorktreeInfo> {
+  output
+    .split("\n\n")
+    .filter_map(|block| {
+      let mut path = None;
+      let mut head_sha = String::new();
+      let mut branch = None;
+      for line in block.lines() {
+        if let Some(value) = line.strip_prefix("worktree ") {
+          path = Some(value.to_string());
+        } else if let Some(value) = line.strip_prefix("HEAD ") {
+          head_sha = value.to_string();
+        } else if let Some(value) = line.strip_prefix("branch ") {
+          branch = Some(value.trim_start_matches("refs/heads/").to_string());
+        }
+      }
+      path.map(|path| WorktreeInfo { path, branch, head_sha })
+    })
+    .collect()
+}
+
 pub async fn stop<R: Runtime>(app: &AppHandle<R>, name: &str) -> Result<()> {
   run(app, &["stop", name]).await?;
   Ok(())
@@ -714,6 +835,66 @@ mod tests {
   #[test]
   fn reports_free_memory() {
     assert!(host_free_memory_mb() > 0.0);
+  }
+
+  #[test]
+  fn parses_full_branch_snapshot() {
+    let output = "main\n\
+                   ---\n\
+                   main\n\
+                   feature\n\
+                   ---\n\
+                   worktree /home/agent/proj\n\
+                   HEAD abc123\n\
+                   branch refs/heads/main\n\
+                   \n\
+                   worktree /home/agent/proj-wt\n\
+                   HEAD def456\n\
+                   detached\n";
+    let snapshot = parse_branch_snapshot(output);
+    assert_eq!(
+      snapshot,
+      BranchSnapshot {
+        current_branch: Some("main".to_string()),
+        branches: vec!["main".to_string(), "feature".to_string()],
+        worktrees: vec![
+          WorktreeInfo { path: "/home/agent/proj".to_string(), branch: Some("main".to_string()), head_sha: "abc123".to_string() },
+          WorktreeInfo { path: "/home/agent/proj-wt".to_string(), branch: None, head_sha: "def456".to_string() },
+        ],
+      }
+    );
+  }
+
+  #[test]
+  fn parses_detached_head_as_no_current_branch() {
+    let snapshot = parse_branch_snapshot("HEAD\n---\nmain\n---\nworktree /home/agent/proj\nHEAD abc123\ndetached\n");
+    assert_eq!(snapshot.current_branch, None);
+  }
+
+  #[test]
+  fn parse_branch_snapshot_degrades_to_empty_on_non_git_output() {
+    // A non-git workspace_path: every git subcommand fails, so `sh -c`
+    // never gets far enough to print any of the `---` separators.
+    let snapshot = parse_branch_snapshot("");
+    assert_eq!(snapshot, BranchSnapshot::default());
+  }
+
+  #[test]
+  fn parse_branch_snapshot_degrades_partial_output_from_a_mid_chain_failure() {
+    // First command succeeded (branch printed), second's `---` separator
+    // never printed because `for-each-ref` itself errored non-fatally
+    // mid-script (still produces *a* `---` from the first echo, none after).
+    let snapshot = parse_branch_snapshot("main\n---\n");
+    assert_eq!(
+      snapshot,
+      BranchSnapshot { current_branch: Some("main".to_string()), branches: Vec::new(), worktrees: Vec::new() }
+    );
+  }
+
+  #[test]
+  fn shell_quote_escapes_embedded_single_quotes() {
+    assert_eq!(shell_quote("/home/agent/proj"), "'/home/agent/proj'");
+    assert_eq!(shell_quote("it's/here"), "'it'\\''s/here'");
   }
 
   #[test]

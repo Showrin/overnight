@@ -79,6 +79,16 @@ pub struct ContainerMetric {
   pub network_tx_bytes: f64,
 }
 
+/// One entry from `git worktree list --porcelain`, parsed by
+/// `sbx::read_branch_snapshot`. `branch` is `None` for a detached-HEAD
+/// worktree (porcelain reports `detached` instead of a `branch` line).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorktreeInfo {
+  pub path: String,
+  pub branch: Option<String>,
+  pub head_sha: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Sandbox {
   pub id: String,
@@ -115,6 +125,25 @@ pub struct Sandbox {
   /// Host destination folder the last backup landed in, under
   /// `<app_data_dir>/claude-backups/<sbx_name>/<unix_ms>/`.
   pub last_backup_path: Option<String>,
+  /// The host repo's checked-out branch, snapshotted once via
+  /// `git::current_branch` at `create_sandbox` time. `None` on detached
+  /// HEAD, a non-git `repo_path`, or for rows created before this column
+  /// existed (shown in the UI as "created before branch tracking was
+  /// added" rather than a guessed fallback).
+  pub base_branch: Option<String>,
+  /// The sandbox's currently checked-out branch, as of the last branch
+  /// snapshot (see `branch_snapshot_at`). `None` before any snapshot has
+  /// been taken, or if the sandbox's workspace is on a detached HEAD.
+  pub current_branch: Option<String>,
+  /// Local branch names inside the sandbox, as of the last snapshot.
+  pub branches: Vec<String>,
+  /// Worktrees inside the sandbox, as of the last snapshot.
+  pub worktrees: Vec<WorktreeInfo>,
+  /// When `current_branch`/`branches`/`worktrees` were last captured
+  /// together via `sbx::read_branch_snapshot`. `None` until the first
+  /// snapshot. Drives the Branch tab's "live" vs "as of <relative time>"
+  /// freshness label.
+  pub branch_snapshot_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

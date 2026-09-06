@@ -236,6 +236,26 @@ pub fn migrations() -> Migrations<'static> {
     ALTER TABLE sandboxes ADD COLUMN last_backup_at INTEGER;
     ALTER TABLE sandboxes ADD COLUMN last_backup_path TEXT;
     ",
+  ), M::up(
+    "
+    -- base_branch: the host repo's checked-out branch, snapshotted once at
+    -- create_sandbox time (NULL on detached HEAD, a non-git repo_path, or
+    -- for pre-existing rows created before this column existed).
+    --
+    -- current_branch/branches/worktrees/branch_snapshot_at: one persisted
+    -- 'branch snapshot', captured together in a single sbx exec round trip
+    -- (see sbx::read_branch_snapshot) whenever the Branch tab loads while
+    -- running, and best-effort right before the sandbox stops — so a
+    -- stopped sandbox still shows its last-known state instead of going
+    -- blank. branches/worktrees follow the same JSON-TEXT-column pattern as
+    -- Project.extra_clone_paths (serde_json::from_str with an empty-array
+    -- fallback), not new child tables.
+    ALTER TABLE sandboxes ADD COLUMN base_branch TEXT;
+    ALTER TABLE sandboxes ADD COLUMN current_branch TEXT;
+    ALTER TABLE sandboxes ADD COLUMN branches TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE sandboxes ADD COLUMN worktrees TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE sandboxes ADD COLUMN branch_snapshot_at INTEGER;
+    ",
   )])
 }
 

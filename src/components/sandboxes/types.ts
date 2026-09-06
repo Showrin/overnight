@@ -20,6 +20,28 @@ export interface Sandbox {
   last_backup_at: number | null
   // Host destination folder the last backup landed in.
   last_backup_path: string | null
+  // The host repo's checked-out branch, snapshotted once at creation time.
+  // Null on detached HEAD, a non-git repo_path, or for rows created before
+  // branch tracking was added.
+  base_branch: string | null
+  // The sandbox's currently checked-out branch, as of the last branch
+  // snapshot. Null before any snapshot has been taken, or on a detached
+  // HEAD inside the sandbox.
+  current_branch: string | null
+  // Local branch names inside the sandbox, as of the last snapshot.
+  branches: string[]
+  // Worktrees inside the sandbox, as of the last snapshot.
+  worktrees: WorktreeInfo[]
+  // Unix-ms timestamp of the last branch snapshot, or null before the
+  // first one. Drives the Branch tab's "live" vs "as of <relative time>"
+  // freshness label.
+  branch_snapshot_at: number | null
+}
+
+export interface WorktreeInfo {
+  path: string
+  branch: string | null
+  head_sha: string
 }
 
 export interface SandboxUsage {

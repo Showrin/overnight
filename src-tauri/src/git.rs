@@ -34,7 +34,11 @@ fn is_ancestor(repo_path: &str, ancestor: &str, descendant: &str) -> Result<bool
   Ok(status.success())
 }
 
-fn current_branch(repo_path: &str) -> Option<String> {
+/// The repo's currently checked-out branch, or `None` on detached HEAD (or
+/// any other `symbolic-ref` failure, e.g. `repo_path` isn't a git repo at
+/// all). Used both internally (`sync_branch`) and by branch-7's
+/// `base_branch` snapshot at sandbox creation time.
+pub fn current_branch(repo_path: &str) -> Option<String> {
   run(repo_path, &["symbolic-ref", "--quiet", "--short", "HEAD"]).ok()
 }
 
@@ -168,6 +172,19 @@ mod tests {
     );
     // untouched: feature still points at its own commit, not main's.
     assert_eq!(run(repo, &["rev-parse", "feature"]).unwrap(), feature_head);
+
+    fs::remove_dir_all(dir).unwrap();
+  }
+
+  #[test]
+  fn current_branch_is_none_on_detached_head() {
+    let dir = init_repo();
+    let repo = dir.to_str().unwrap();
+    let head = commit(repo, "a.txt", "1");
+    assert_eq!(current_branch(repo).as_deref(), Some("main"));
+
+    run(repo, &["checkout", "-q", &head]).unwrap();
+    assert_eq!(current_branch(repo), None);
 
     fs::remove_dir_all(dir).unwrap();
   }
