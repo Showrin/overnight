@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { Check, Code, ExternalLink, GitBranch, Loader2, Play, Square, TerminalSquare, Trash2 } from 'lucide-react'
+import { Check, Code, DatabaseBackup, ExternalLink, FolderOpen, GitBranch, Loader2, Play, Square, TerminalSquare, Trash2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -22,7 +22,7 @@ import type { BranchSyncOutcome, Sandbox } from './types'
 
 const DEFAULT_NETWORK_OVERRIDE = '__global_default__'
 
-type BusyAction = 'start' | 'stop' | 'delete' | 'vscode' | 'terminal' | 'git-sync' | null
+type BusyAction = 'start' | 'stop' | 'delete' | 'vscode' | 'terminal' | 'git-sync' | 'backup' | null
 
 function branchSyncStatusLabel(status: BranchSyncOutcome['status']): string {
   switch (status) {
@@ -33,6 +33,29 @@ function branchSyncStatusLabel(status: BranchSyncOutcome['status']): string {
     case 'new_branch':
       return 'new branch available (fetched, not checked out)'
   }
+}
+
+// Formats a past unix-ms timestamp as "3 minutes ago"-style relative text,
+// using the platform's own `Intl.RelativeTimeFormat` rather than a new
+// dependency for one caption.
+function formatRelativeTime(pastMs: number): string {
+  const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
+  const divisions: [Intl.RelativeTimeFormatUnit, number][] = [
+    ['second', 60],
+    ['minute', 60],
+    ['hour', 24],
+    ['day', 30],
+    ['month', 12],
+    ['year', Infinity],
+  ]
+  let duration = (pastMs - Date.now()) / 1000
+  for (const [unit, amount] of divisions) {
+    if (Math.abs(duration) < amount) {
+      return rtf.format(Math.round(duration), unit)
+    }
+    duration /= amount
+  }
+  return rtf.format(Math.round(duration), 'year')
 }
 
 export function SandboxCard({
@@ -145,6 +168,24 @@ export function SandboxCard({
 
   function openLocation() {
     if (location) invoke('open_path_in_explorer', { path: location })
+  }
+
+  function openBackupFolder() {
+    if (sandbox.last_backup_path) invoke('open_path_in_explorer', { path: sandbox.last_backup_path })
+  }
+
+  async function backupClaudeData() {
+    setBusyAction('backup')
+    setError(null)
+    try {
+      await invoke('backup_sandbox_claude_data', { id: sandbox.id })
+      notify('Claude data backed up', `${sandbox.name ?? projectName}'s ~/.claude has been copied to the host.`, sandbox.id)
+      onChanged()
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setBusyAction(null)
+    }
   }
 
   async function gitSync() {
@@ -272,6 +313,25 @@ export function SandboxCard({
           </div>
         )}
 
+        {sandbox.last_backup_at != null && (
+          <p className="text-xs">
+            Last backup: {formatRelativeTime(sandbox.last_backup_at)}
+            {sandbox.last_backup_path && (
+              <>
+                {" — "}
+                <button
+                  type="button"
+                  onClick={openBackupFolder}
+                  className="inline-flex items-center gap-1 text-left hover:text-foreground hover:underline"
+                >
+                  <FolderOpen className="size-3" />
+                  Open folder
+                </button>
+              </>
+            )}
+          </p>
+        )}
+
         {error && <p className="text-destructive">{error}</p>}
 
         {gitSyncResult && (
@@ -382,6 +442,19 @@ export function SandboxCard({
                   {busyAction === "git-sync" ? "Syncing…" : "Git Sync"}
                 </Button>
               )}
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busyAction != null}
+                onClick={backupClaudeData}
+              >
+                {busyAction === "backup" ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <DatabaseBackup className="size-3.5" />
+                )}
+                {busyAction === "backup" ? "Backing up…" : "Backup .claude"}
+              </Button>
               <Button
                 size="sm"
                 variant="outline"

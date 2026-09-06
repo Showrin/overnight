@@ -15,6 +15,11 @@ export interface Sandbox {
   stopped_at: number | null
   // "open" | "locked-down" | null (null = inherit the global default)
   network_preset_override: string | null
+  // Unix-ms timestamp of the last `backup_sandbox_claude_data` run, or null
+  // if this sandbox's ~/.claude has never been backed up.
+  last_backup_at: number | null
+  // Host destination folder the last backup landed in.
+  last_backup_path: string | null
 }
 
 export interface SandboxUsage {

@@ -17,6 +17,8 @@ fn row_to_sandbox(row: &rusqlite::Row) -> rusqlite::Result<Sandbox> {
     created_at: row.get("created_at")?,
     stopped_at: row.get("stopped_at")?,
     network_preset_override: row.get("network_preset_override")?,
+    last_backup_at: row.get("last_backup_at")?,
+    last_backup_path: row.get("last_backup_path")?,
   })
 }
 
@@ -132,6 +134,21 @@ pub fn set_network_preset_override(conn: &Connection, id: &str, preset: Option<&
   let changed = conn.execute(
     "UPDATE sandboxes SET network_preset_override = ?1 WHERE id = ?2",
     params![preset, id],
+  )?;
+  if changed == 0 {
+    return Err(Error::NotFound);
+  }
+  get(conn, id)
+}
+
+/// Records a successful `sbx cp` backup of this sandbox's `~/.claude`
+/// directory — called once the copy itself has already succeeded, mirroring
+/// `set_network_preset_override`'s "apply the sbx-side effect elsewhere,
+/// persist the record here" split.
+pub fn record_backup(conn: &Connection, id: &str, path: &str, at: i64) -> Result<Sandbox> {
+  let changed = conn.execute(
+    "UPDATE sandboxes SET last_backup_at = ?1, last_backup_path = ?2 WHERE id = ?3",
+    params![at, path, id],
   )?;
   if changed == 0 {
     return Err(Error::NotFound);
@@ -302,6 +319,29 @@ mod tests {
   fn set_network_preset_override_missing_id_returns_not_found() {
     let conn = test_conn();
     assert!(matches!(set_network_preset_override(&conn, "missing", Some("open")), Err(Error::NotFound)));
+  }
+
+  #[test]
+  fn records_backup() {
+    let conn = test_conn();
+    let project_id = make_project(&conn);
+    let sandbox = create(&conn, &project_id, "mount", None, None, "default").unwrap();
+    assert_eq!(sandbox.last_backup_at, None);
+    assert_eq!(sandbox.last_backup_path, None);
+
+    let backed_up = record_backup(&conn, &sandbox.id, "/data/claude-backups/my-sbx/1700000000000", 1700000000000).unwrap();
+    assert_eq!(backed_up.last_backup_at, Some(1700000000000));
+    assert_eq!(
+      backed_up.last_backup_path.as_deref(),
+      Some("/data/claude-backups/my-sbx/1700000000000")
+    );
+    assert_eq!(get(&conn, &sandbox.id).unwrap().last_backup_at, Some(1700000000000));
+  }
+
+  #[test]
+  fn record_backup_missing_id_returns_not_found() {
+    let conn = test_conn();
+    assert!(matches!(record_backup(&conn, "missing", "/some/path", 0), Err(Error::NotFound)));
   }
 
   #[test]

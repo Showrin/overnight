@@ -109,6 +109,12 @@ pub struct Sandbox {
   /// can't be scoped to one sandbox. The allow/deny rules this applies are
   /// never stored here — always read live via `sbx policy ls`.
   pub network_preset_override: Option<String>,
+  /// When the in-VM `~/.claude` directory was last copied to the host via
+  /// `sbx cp` (see `sbx::cp_from_sandbox`). `None` until the first backup.
+  pub last_backup_at: Option<i64>,
+  /// Host destination folder the last backup landed in, under
+  /// `<app_data_dir>/claude-backups/<sbx_name>/<unix_ms>/`.
+  pub last_backup_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

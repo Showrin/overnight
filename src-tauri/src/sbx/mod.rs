@@ -384,6 +384,31 @@ pub fn resume<R: Runtime>(app: &AppHandle<R>, name: &str) -> Result<()> {
   Ok(())
 }
 
+/// `sbx cp <name>:<remote_path> <host_dest>` — copies a file or directory
+/// out of an isolated sandbox VM onto the host. Unlike `workspace_path`'s
+/// WORKSPACE column (a mount-mode sandbox's path is already host-visible)
+/// or branch 8's `/proc` reads (readable via `sbx exec`), there's no other
+/// documented way to reach an arbitrary in-VM path from the host — `sbx cp`
+/// is the one command built for exactly that, so this is a direct,
+/// unwrapped shell-out rather than a thin layer over something else.
+///
+/// **UNVERIFIED**: no real `sbx` install is available in this dev
+/// environment (see this module's top doc comment), so the exact `sbx cp`
+/// argument syntax for a directory source, and whether it creates
+/// `host_dest` itself or requires it to already exist, are unconfirmed —
+/// callers should keep pre-creating the destination directory (as
+/// `backup_sandbox_claude_data` does) until this has been exercised against
+/// a real sandbox.
+pub async fn cp_from_sandbox<R: Runtime>(app: &AppHandle<R>, name: &str, remote_path: &str, host_dest: &str) -> Result<()> {
+  let args = cp_from_sandbox_args(name, remote_path, host_dest);
+  run(app, &args.iter().map(String::as_str).collect::<Vec<_>>()).await?;
+  Ok(())
+}
+
+fn cp_from_sandbox_args(name: &str, remote_path: &str, host_dest: &str) -> Vec<String> {
+  vec!["cp".to_string(), format!("{name}:{remote_path}"), host_dest.to_string()]
+}
+
 /// Force-removes the sandbox and its VM (used by explicit sandbox Delete).
 pub async fn rm<R: Runtime>(app: &AppHandle<R>, name: &str) -> Result<()> {
   run(app, &["rm", "--force", name]).await?;
@@ -810,6 +835,14 @@ mod tests {
   fn leaves_non_windows_paths_alone() {
     assert_eq!(windows_path_to_posix("/home/user/project"), "/home/user/project");
     assert_eq!(windows_path_to_posix("~/my-project"), "~/my-project");
+  }
+
+  #[test]
+  fn builds_cp_from_sandbox_args() {
+    assert_eq!(
+      cp_from_sandbox_args("my-sandbox", "/home/agent/.claude", "/host/dest"),
+      vec!["cp", "my-sandbox:/home/agent/.claude", "/host/dest"]
+    );
   }
 
   #[test]

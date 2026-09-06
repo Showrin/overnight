@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 
 use serde::Serialize;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::db::error::{Error, Result};
 use crate::db::models::{HostMetric, JiraIssue, Project, Sandbox, Session, Task};
@@ -1107,6 +1107,53 @@ pub fn get_sandbox_usage(pool: State<DbPool>, id: String) -> std::result::Result
   let conn = pool.get().map_err(|e| e.to_string())?;
   let (input_tokens, output_tokens) = metrics::total_tokens_for_sandbox(&conn, &id).map_err(|e| e.to_string())?;
   Ok(SandboxUsage { input_tokens, output_tokens })
+}
+
+/// The `claude` CLI's own local config/state directory inside the sandbox —
+/// the thing `backup_sandbox_claude_data` copies out.
+const CLAUDE_DATA_SOURCE_PATH: &str = "/home/agent/.claude";
+
+/// Copies this sandbox's in-VM `~/.claude` directory out to a host-side
+/// backup folder under `<app_data_dir>/claude-backups/<sbx_name>/<unix_ms>/`
+/// — deliberately outside any project's git repo, not user-configurable
+/// this round. Only available while the sandbox is running (mirrors VS
+/// Code/Terminal/Git Sync's gating); manual only, no automatic/scheduled
+/// backups this round.
+///
+/// **UNVERIFIED**: no real `sbx` install is available in this dev
+/// environment, so it's unconfirmed whether `sbx cp` creates a pre-existing
+/// empty destination directory's *contents* from the source directory, or
+/// nests the source directory itself one level inside it — this
+/// pre-creates the destination (matching the plan's steps) rather than
+/// guessing which.
+#[tauri::command]
+pub async fn backup_sandbox_claude_data(app: AppHandle, pool: State<'_, DbPool>, id: String) -> std::result::Result<Sandbox, String> {
+  let sandbox = {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    sandboxes::get(&conn, &id).map_err(|e| e.to_string())?
+  };
+  if sandbox.status != "running" {
+    return Err("sandbox must be running to back up its Claude data".to_string());
+  }
+  let name = sandbox.sbx_name.ok_or_else(|| "sandbox has no sbx sandbox yet".to_string())?;
+
+  let at = crate::db::models::now_millis();
+  let dest = app
+    .path()
+    .app_data_dir()
+    .map_err(|e| e.to_string())?
+    .join("claude-backups")
+    .join(&name)
+    .join(at.to_string());
+  std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+  let dest = dest.to_string_lossy().to_string();
+
+  crate::sbx::cp_from_sandbox(&app, &name, CLAUDE_DATA_SOURCE_PATH, &dest)
+    .await
+    .map_err(|e| e.to_string())?;
+
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  sandboxes::record_backup(&conn, &id, &dest, at).map_err(|e| e.to_string())
 }
 
 const HOST_METRICS_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1000;

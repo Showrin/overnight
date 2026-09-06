@@ -61,6 +61,7 @@ pub fn run() {
       commands::start_sandbox,
       commands::delete_sandbox,
       commands::get_sandbox_usage,
+      commands::backup_sandbox_claude_data,
       commands::open_sandbox_vscode,
       commands::open_sandbox_terminal,
       commands::git_sync_sandbox,

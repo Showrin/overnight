@@ -227,6 +227,15 @@ pub fn migrations() -> Migrations<'static> {
     -- they're always read live from `sbx policy ls <name> --wide`.
     ALTER TABLE sandboxes ADD COLUMN network_preset_override TEXT;
     ",
+  ), M::up(
+    "
+    -- Tracks the most recent `sbx cp` backup of this sandbox's in-VM
+    -- ~/.claude directory (see sbx::cp_from_sandbox). Both NULL until the
+    -- first backup runs; last_backup_path is the host destination folder
+    -- the copy landed in, under <app_data_dir>/claude-backups/.
+    ALTER TABLE sandboxes ADD COLUMN last_backup_at INTEGER;
+    ALTER TABLE sandboxes ADD COLUMN last_backup_path TEXT;
+    ",
   )])
 }
 
