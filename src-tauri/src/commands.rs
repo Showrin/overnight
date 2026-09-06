@@ -428,11 +428,14 @@ pub async fn create_sandbox(
     projects::get(&conn, &project_id).map_err(|e| e.to_string())?
   };
 
-  if mode == "mount" {
+  {
     let conn = pool.get().map_err(|e| e.to_string())?;
     let existing = sandboxes::list_for_project(&conn, &project_id).map_err(|e| e.to_string())?;
-    if existing.iter().any(|s| s.mode == "mount" && matches!(s.status.as_str(), "starting" | "running" | "stopping")) {
+    if mode == "mount" && existing.iter().any(|s| s.mode == "mount" && matches!(s.status.as_str(), "starting" | "running" | "stopping")) {
       return Err("a mount-mode sandbox is already running for this project".to_string());
+    }
+    if existing.iter().any(|s| s.status == "starting") {
+      return Err("a sandbox is already starting for this project".to_string());
     }
   }
 

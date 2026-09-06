@@ -18,6 +18,8 @@ pub enum Error {
   InvalidValue(String),
   #[error("a mount-mode sandbox is already running for this project")]
   DuplicateMountSandbox,
+  #[error("a sandbox is already starting for this project")]
+  SandboxAlreadyStarting,
 }
 
 // Tauri commands require their Err type to implement Serialize to cross IPC.

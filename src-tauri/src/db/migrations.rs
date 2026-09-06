@@ -207,6 +207,17 @@ pub fn migrations() -> Migrations<'static> {
       ON sandboxes(project_id)
       WHERE mode = 'mount' AND status IN ('starting', 'running');
     ",
+  ), M::up(
+    "
+    -- A reload mid-creation loses the in-flight request's local state, so
+    -- without this a second create for the same project (any mode) can slip
+    -- through while the first is still starting. Only 'starting' is guarded
+    -- (not 'running') so clone mode still allows several sandboxes running
+    -- at once, per its own design.
+    CREATE UNIQUE INDEX ux_sandboxes_one_starting_per_project
+      ON sandboxes(project_id)
+      WHERE status = 'starting';
+    ",
   )])
 }
 

@@ -14,7 +14,7 @@ function SandboxGroup({
   sandboxes,
   projectName,
   onAddNew,
-  addNewDisabled,
+  addNewDisabledReason,
   onChanged,
   highlightedSandboxId,
 }: {
@@ -22,7 +22,7 @@ function SandboxGroup({
   sandboxes: Sandbox[]
   projectName: string
   onAddNew?: () => void
-  addNewDisabled?: boolean
+  addNewDisabledReason?: string
   onChanged: () => void
   highlightedSandboxId?: string | null
 }) {
@@ -35,11 +35,11 @@ function SandboxGroup({
             size="sm"
             variant="outline"
             onClick={onAddNew}
-            disabled={addNewDisabled}
-            title={addNewDisabled ? 'A mount-mode sandbox is already running for this project' : undefined}
+            disabled={!!addNewDisabledReason}
+            title={addNewDisabledReason}
           >
             <Plus className="size-3.5" />
-            {addNewDisabled ? 'Sandbox running' : 'Add New'}
+            Add New
           </Button>
         )}
       </div>
@@ -161,6 +161,12 @@ export function SandboxesScreen({
               sb.mode === "mount" &&
               (sb.status === "starting" || sb.status === "running"),
           );
+          const hasStarting = projectSandboxes.some((sb) => sb.status === 'starting')
+          const addNewDisabledReason = hasActiveMount
+            ? 'A mount-mode sandbox is already running for this project'
+            : hasStarting
+              ? 'A sandbox is already starting for this project'
+              : undefined
           return (
             <SandboxGroup
               key={project.id}
@@ -168,7 +174,7 @@ export function SandboxesScreen({
               projectName={project.name}
               sandboxes={projectSandboxes}
               onAddNew={() => setCreatingForProjectId(project.id)}
-              addNewDisabled={hasActiveMount}
+              addNewDisabledReason={addNewDisabledReason}
               onChanged={loadSandboxes}
               highlightedSandboxId={highlightedSandboxId}
             />
