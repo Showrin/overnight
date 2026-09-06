@@ -3,11 +3,15 @@ import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import type { NetworkPolicySettings, NetworkRuleDecision } from '@/lib/networkPolicy'
+import { NETWORK_POLICY_PRESET_LABELS, NETWORK_POLICY_PRESETS } from '@/lib/networkPolicy'
 import { PERMISSION_MODES } from '@/lib/permissionModes'
 import { TERMINAL_HOSTS, TERMINAL_HOST_LABELS } from '@/lib/terminalHost'
 import { useAppStore } from '@/store/useAppStore'
 import { JiraConfigForm, type JiraConfig } from './JiraConfigForm'
+import { NetworkRuleEditor } from './NetworkRuleEditor'
 
 const SHOW_JIRA_SETTINGS = false
 
@@ -32,6 +36,14 @@ export function SettingsScreen() {
   const [jiraConfig, setJiraConfig] = useState<JiraConfig | null>(null)
   const [editingJira, setEditingJira] = useState(false)
 
+  const [networkPreset, setNetworkPreset] = useState<string>('balanced')
+  const [networkPresetInitialized, setNetworkPresetInitialized] = useState(false)
+  const [networkRules, setNetworkRules] = useState<NetworkPolicySettings['rules']>([])
+  const [loadingNetworkPolicy, setLoadingNetworkPolicy] = useState(false)
+  const [savingNetworkPreset, setSavingNetworkPreset] = useState(false)
+  const [networkPolicyError, setNetworkPolicyError] = useState<string | null>(null)
+  const [confirmingPresetChange, setConfirmingPresetChange] = useState(false)
+
   useEffect(() => {
     if (settings) setPermissionMode(settings.default_claude_permission_mode)
     if (settings) setSkillFolders(settings.skill_folders)
@@ -49,6 +61,69 @@ export function SettingsScreen() {
   useEffect(() => {
     loadJiraConfig()
   }, [])
+
+  async function loadNetworkPolicy() {
+    setLoadingNetworkPolicy(true)
+    setNetworkPolicyError(null)
+    try {
+      const policy = await invoke<NetworkPolicySettings>('get_network_policy_settings')
+      if (policy.preset) {
+        setNetworkPreset(policy.preset)
+        setNetworkPresetInitialized(true)
+      } else {
+        setNetworkPresetInitialized(false)
+      }
+      setNetworkRules(policy.rules)
+    } catch (e) {
+      setNetworkPolicyError(String(e))
+    } finally {
+      setLoadingNetworkPolicy(false)
+    }
+  }
+
+  useEffect(() => {
+    loadNetworkPolicy()
+  }, [])
+
+  async function handleSaveNetworkPreset() {
+    setSavingNetworkPreset(true)
+    setNetworkPolicyError(null)
+    try {
+      await invoke('save_default_network_policy_preset', { preset: networkPreset })
+      setNetworkPresetInitialized(true)
+    } catch (e) {
+      setNetworkPolicyError(String(e))
+    } finally {
+      setSavingNetworkPreset(false)
+    }
+  }
+
+  // A first-time preset choice just initializes sbx's policy — nothing to
+  // confirm. Changing an already-initialized preset resets sbx's network
+  // daemon and stops every currently running sandbox, so that path always
+  // needs an explicit confirmation first.
+  function handleApplyNetworkPresetClick() {
+    if (networkPresetInitialized) {
+      setConfirmingPresetChange(true)
+    } else {
+      handleSaveNetworkPreset()
+    }
+  }
+
+  async function confirmNetworkPresetChange() {
+    setConfirmingPresetChange(false)
+    await handleSaveNetworkPreset()
+  }
+
+  async function addGlobalNetworkRule(decision: NetworkRuleDecision, host: string) {
+    await invoke('add_network_rule', { decision, host })
+    await loadNetworkPolicy()
+  }
+
+  async function removeGlobalNetworkRule(host: string) {
+    await invoke('remove_network_rule', { host })
+    await loadNetworkPolicy()
+  }
 
   async function handleSaveMode() {
     setSavingMode(true)
@@ -151,6 +226,69 @@ export function SettingsScreen() {
           </Button>
         </CardContent>
       </Card>
+
+      <Card className="w-full">
+        <CardHeader>
+          <CardTitle>Network Policy</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <div className="flex flex-col gap-2">
+            <Select value={networkPreset} onValueChange={setNetworkPreset}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {NETWORK_POLICY_PRESETS.map((preset) => (
+                  <SelectItem key={preset} value={preset}>
+                    {NETWORK_POLICY_PRESET_LABELS[preset]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {networkPresetInitialized
+                ? "Changing this may interrupt currently running sandboxes — sbx applies network policy presets machine-wide."
+                : "sbx has no network policy configured on this machine yet. Choose a preset to enable creating sandboxes."}
+            </p>
+            {networkPolicyError && <p className="text-sm text-destructive">{networkPolicyError}</p>}
+            <Button onClick={handleApplyNetworkPresetClick} disabled={savingNetworkPreset}>
+              {savingNetworkPreset ? 'Applying…' : 'Apply'}
+            </Button>
+          </div>
+          <div className="flex flex-col gap-2 border-t border-border pt-3">
+            <span className="text-xs font-medium text-foreground">Custom rules</span>
+            {loadingNetworkPolicy ? (
+              <p className="text-xs text-muted-foreground">Loading…</p>
+            ) : (
+              <NetworkRuleEditor rules={networkRules} onAdd={addGlobalNetworkRule} onRemove={removeGlobalNetworkRule} />
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Dialog open={confirmingPresetChange} onOpenChange={setConfirmingPresetChange}>
+        <DialogContent title="Change network policy?">
+          <Card className="w-full">
+            <CardHeader>
+              <CardTitle>Change network policy?</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-4">
+              <p className="text-sm text-muted-foreground">
+                Changing the network policy resets sbx's network daemon and stops every currently
+                running sandbox on this machine. This can't be undone.
+              </p>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setConfirmingPresetChange(false)}>
+                  Cancel
+                </Button>
+                <Button variant="destructive" onClick={confirmNetworkPresetChange} disabled={savingNetworkPreset}>
+                  {savingNetworkPreset ? 'Applying…' : 'Reset & apply'}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </DialogContent>
+      </Dialog>
 
       <Card className="w-full">
         <CardHeader>

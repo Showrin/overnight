@@ -16,6 +16,7 @@ fn row_to_sandbox(row: &rusqlite::Row) -> rusqlite::Result<Sandbox> {
     host_port: row.get("host_port")?,
     created_at: row.get("created_at")?,
     stopped_at: row.get("stopped_at")?,
+    network_preset_override: row.get("network_preset_override")?,
   })
 }
 
@@ -98,6 +99,35 @@ pub fn update_status(
   get(conn, id)
 }
 
+/// `sbx policy reset` restarts sbx's network daemon, which stops every
+/// sandbox on the machine as a side effect (confirmed against a real `sbx`
+/// install) — with no per-sandbox event to react to. Called right after a
+/// successful reset so the DB doesn't keep showing sandboxes as running
+/// when they've actually all been stopped out from under the app.
+pub fn stop_all_for_policy_reset(conn: &Connection) -> Result<usize> {
+  let stopped_at = now_millis();
+  Ok(conn.execute(
+    "UPDATE sandboxes SET status = 'stopped', stopped_at = ?1 WHERE status IN ('running', 'starting', 'stopping')",
+    params![stopped_at],
+  )?)
+}
+
+/// Persists (or clears, when `preset` is `None`) this sandbox's network
+/// policy preset override. Callers apply the actual sbx-side effect
+/// (`sbx policy allow/deny/rm --sandbox <name> "**"`) separately —  this
+/// only records the choice, mirroring how `permission_mode` is snapshotted
+/// without this module knowing anything about Claude Code itself.
+pub fn set_network_preset_override(conn: &Connection, id: &str, preset: Option<&str>) -> Result<Sandbox> {
+  let changed = conn.execute(
+    "UPDATE sandboxes SET network_preset_override = ?1 WHERE id = ?2",
+    params![preset, id],
+  )?;
+  if changed == 0 {
+    return Err(Error::NotFound);
+  }
+  get(conn, id)
+}
+
 pub fn delete(conn: &Connection, id: &str) -> Result<()> {
   let changed = conn.execute("DELETE FROM sandboxes WHERE id = ?1", params![id])?;
   if changed == 0 {
@@ -164,6 +194,27 @@ mod tests {
   }
 
   #[test]
+  fn stop_all_for_policy_reset_stops_only_unsettled_sandboxes() {
+    let conn = test_conn();
+    // Separate projects, since a partial unique index allows only one
+    // "starting" sandbox per project at a time.
+    let running = create(&conn, &make_project(&conn), "clone", None, None, "default").unwrap();
+    update_status(&conn, &running.id, "running", Some("sbx-a"), None).unwrap();
+    let starting = create(&conn, &make_project(&conn), "clone", None, None, "default").unwrap();
+    let already_stopped = create(&conn, &make_project(&conn), "clone", None, None, "default").unwrap();
+    update_status(&conn, &already_stopped.id, "stopped", Some("sbx-c"), None).unwrap();
+
+    let affected = stop_all_for_policy_reset(&conn).unwrap();
+    assert_eq!(affected, 2); // running + starting, not the already-stopped one
+
+    assert_eq!(get(&conn, &running.id).unwrap().status, "stopped");
+    assert_eq!(get(&conn, &starting.id).unwrap().status, "stopped");
+    assert!(get(&conn, &running.id).unwrap().stopped_at.is_some());
+    // sbx_name is preserved — the sandbox itself isn't removed, just stopped.
+    assert_eq!(get(&conn, &running.id).unwrap().sbx_name.as_deref(), Some("sbx-a"));
+  }
+
+  #[test]
   fn stores_and_returns_optional_name() {
     let conn = test_conn();
     let project_id = make_project(&conn);
@@ -219,6 +270,27 @@ mod tests {
     // sandboxes running at once for the same project.
     update_status(&conn, &first.id, "running", Some("sbx-1"), None).unwrap();
     create(&conn, &project_id, "clone", None, None, "default").unwrap();
+  }
+
+  #[test]
+  fn sets_and_clears_network_preset_override() {
+    let conn = test_conn();
+    let project_id = make_project(&conn);
+    let sandbox = create(&conn, &project_id, "mount", None, None, "default").unwrap();
+    assert_eq!(sandbox.network_preset_override, None);
+
+    let overridden = set_network_preset_override(&conn, &sandbox.id, Some("open")).unwrap();
+    assert_eq!(overridden.network_preset_override.as_deref(), Some("open"));
+    assert_eq!(get(&conn, &sandbox.id).unwrap().network_preset_override.as_deref(), Some("open"));
+
+    let cleared = set_network_preset_override(&conn, &sandbox.id, None).unwrap();
+    assert_eq!(cleared.network_preset_override, None);
+  }
+
+  #[test]
+  fn set_network_preset_override_missing_id_returns_not_found() {
+    let conn = test_conn();
+    assert!(matches!(set_network_preset_override(&conn, "missing", Some("open")), Err(Error::NotFound)));
   }
 
   #[test]

@@ -13,6 +13,8 @@ export interface Sandbox {
   host_port: number | null
   created_at: number
   stopped_at: number | null
+  // "open" | "locked-down" | null (null = inherit the global default)
+  network_preset_override: string | null
 }
 
 export interface SandboxUsage {

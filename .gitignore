@@ -34,3 +34,4 @@ src-tauri/gen/
 # Local tooling state
 .claude/
 graphify-out/
+tmp-img/

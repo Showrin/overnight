@@ -218,6 +218,15 @@ pub fn migrations() -> Migrations<'static> {
       ON sandboxes(project_id)
       WHERE status = 'starting';
     ",
+  ), M::up(
+    "
+    -- Per-sandbox network policy override: 'open' | 'locked-down' | NULL
+    -- (unset = inherit the machine-wide preset). Only the override choice
+    -- itself is persisted here — the allow/deny rule lists it applies
+    -- (via sbx policy allow/deny --sandbox) are never mirrored locally;
+    -- they're always read live from `sbx policy ls <name> --wide`.
+    ALTER TABLE sandboxes ADD COLUMN network_preset_override TEXT;
+    ",
   )])
 }
 

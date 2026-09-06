@@ -6,12 +6,15 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import type { NetworkRuleDecision } from '@/lib/networkPolicy'
+import { SANDBOX_NETWORK_PRESET_OVERRIDE_LABELS, SANDBOX_NETWORK_PRESET_OVERRIDES } from '@/lib/networkPolicy'
 import { notify } from '@/lib/notify'
 import { PERMISSION_MODES } from '@/lib/permissionModes'
 import { useAppStore } from '@/store/useAppStore'
 import type { Sandbox, SandboxMode } from './types'
 
 const DEFAULT_PERMISSION_MODE = '__settings_default__'
+const DEFAULT_NETWORK_OVERRIDE = '__global_default__'
 
 function ErrorDetails({ message }: { message: string }) {
   const [copied, setCopied] = useState(false)
@@ -61,6 +64,10 @@ export function CreateSandboxDialog({
   const [error, setError] = useState<string | null>(null)
   const [needsPolicyInit, setNeedsPolicyInit] = useState(false)
   const [initializingPolicy, setInitializingPolicy] = useState(false)
+  const [networkPresetOverride, setNetworkPresetOverride] = useState('')
+  const [pendingNetworkRules, setPendingNetworkRules] = useState<{ decision: NetworkRuleDecision; host: string }[]>([])
+  const [pendingRuleDecision, setPendingRuleDecision] = useState<NetworkRuleDecision>('allow')
+  const [pendingRuleHost, setPendingRuleHost] = useState('')
 
   // Sourced from the polled store, not local state, so this survives a
   // reload mid-creation instead of relying on `creating` alone.
@@ -70,6 +77,31 @@ export function CreateSandboxDialog({
       (sb) => sb.project_id === projectId && sb.mode === 'mount' && (sb.status === 'starting' || sb.status === 'running')
     )
   const hasStartingSandbox = sandboxes.some((sb) => sb.project_id === projectId && sb.status === 'starting')
+
+  function addPendingNetworkRule() {
+    const host = pendingRuleHost.trim()
+    if (!host) return
+    setPendingNetworkRules((rules) => [...rules, { decision: pendingRuleDecision, host }])
+    setPendingRuleHost('')
+  }
+
+  function removePendingNetworkRule(index: number) {
+    setPendingNetworkRules((rules) => rules.filter((_, i) => i !== index))
+  }
+
+  // Rules and the preset override need a real sbx_name to scope to, so
+  // they're applied here — right after create_sandbox succeeds — rather
+  // than passed into create_sandbox itself. Best-effort: a failure here
+  // doesn't undo the (already-running) sandbox, it just leaves the
+  // override/rules for the user to set manually from the SandboxCard.
+  async function applyNetworkPolicyOverrides(sandboxId: string) {
+    if (networkPresetOverride) {
+      await invoke('set_sandbox_network_preset_override', { id: sandboxId, preset: networkPresetOverride })
+    }
+    for (const rule of pendingNetworkRules) {
+      await invoke('add_sandbox_network_rule', { id: sandboxId, decision: rule.decision, host: rule.host })
+    }
+  }
 
   async function handleCreate() {
     setCreating(true)
@@ -83,6 +115,11 @@ export function CreateSandboxDialog({
         permissionMode: permissionMode || null,
       })
       notify('Sandbox started', 'Your sandbox is up and running.', sandbox.id)
+      try {
+        await applyNetworkPolicyOverrides(sandbox.id)
+      } catch (networkError) {
+        console.error('failed to apply network policy overrides for new sandbox', networkError)
+      }
       onCreated()
     } catch (e) {
       const message = String(e)
@@ -185,6 +222,72 @@ export function CreateSandboxDialog({
               ? 'Runs directly against the project\'s existing local folder — edits appear on your host immediately. Only one mount-mode sandbox can run per project at a time.'
               : 'Clones the project\'s repo into an isolated copy inside the sandbox itself. Your local folder is untouched. Multiple clone-mode sandboxes can run per project.'}
           </p>
+        </div>
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="sandbox-network-preset">Network policy override</Label>
+          <Select
+            value={networkPresetOverride || DEFAULT_NETWORK_OVERRIDE}
+            onValueChange={(value) => setNetworkPresetOverride(value === DEFAULT_NETWORK_OVERRIDE ? '' : value)}
+          >
+            <SelectTrigger id="sandbox-network-preset">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={DEFAULT_NETWORK_OVERRIDE}>Use global default</SelectItem>
+              {SANDBOX_NETWORK_PRESET_OVERRIDES.map((preset) => (
+                <SelectItem key={preset} value={preset}>
+                  {SANDBOX_NETWORK_PRESET_OVERRIDE_LABELS[preset]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            Only Open or Locked Down can be scoped to a single sandbox — Balanced is a machine-wide baseline rule
+            set with no way to apply it to just one sandbox.
+          </p>
+        </div>
+        <div className="flex flex-col gap-1">
+          <Label>Custom network rules (optional)</Label>
+          {pendingNetworkRules.length > 0 && (
+            <ul className="flex flex-wrap gap-1.5">
+              {pendingNetworkRules.map((rule, index) => (
+                <li
+                  key={index}
+                  className="flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-xs"
+                >
+                  <span>{rule.decision}</span>
+                  <span className="font-mono">{rule.host}</span>
+                  <button
+                    type="button"
+                    onClick={() => removePendingNetworkRule(index)}
+                    className="text-muted-foreground hover:text-destructive"
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="flex gap-2">
+            <Select value={pendingRuleDecision} onValueChange={(v) => setPendingRuleDecision(v as NetworkRuleDecision)}>
+              <SelectTrigger className="w-24">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="allow">Allow</SelectItem>
+                <SelectItem value="deny">Deny</SelectItem>
+              </SelectContent>
+            </Select>
+            <Input
+              placeholder="host, e.g. api.example.com"
+              value={pendingRuleHost}
+              onChange={(e) => setPendingRuleHost(e.target.value)}
+            />
+            <Button type="button" size="sm" variant="outline" onClick={addPendingNetworkRule}>
+              Add
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">Applied to this sandbox once it's created.</p>
         </div>
         {hasActiveMount && (
           <p className="text-xs text-destructive">A mount-mode sandbox is already running for this project.</p>

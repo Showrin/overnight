@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { invoke } from '@tauri-apps/api/core'
 import type { Project } from '@/components/projects/types'
 import type { HostMetric, Sandbox } from '@/components/sandboxes/types'
+import type { NetworkPolicySettings } from '@/lib/networkPolicy'
 
 const SANDBOX_POLL_MS = 5000
 const HOST_STATS_HISTORY_SEED_MS = 24 * 60 * 60 * 1000
@@ -18,6 +19,7 @@ interface AppStore {
   settings: AppSettings | null
   platform: string | null
   defaultTerminalHost: string
+  networkPolicyPreset: string | null
   hostStats: HostMetric | null
   hostStatsHistory: HostMetric[]
 
@@ -29,6 +31,7 @@ interface AppStore {
   loadPlatform: () => Promise<void>
   loadDefaultTerminalHost: () => Promise<void>
   saveDefaultTerminalHost: (terminalHost: string) => Promise<void>
+  loadNetworkPolicyPreset: () => Promise<void>
   loadHostStatsHistory: () => Promise<void>
   loadHostStats: () => Promise<void>
 }
@@ -39,6 +42,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   settings: null,
   platform: null,
   defaultTerminalHost: 'cmd',
+  networkPolicyPreset: null,
   hostStats: null,
   hostStatsHistory: [],
 
@@ -92,6 +96,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ defaultTerminalHost: terminalHost })
   },
 
+  // Only the preset is cached here for SandboxCard's "effective preset"
+  // display — the allow/deny rule lists are never mirrored in the store,
+  // same "no local DB mirror" principle as the backend (see
+  // commands.rs::get_network_policy_settings).
+  async loadNetworkPolicyPreset() {
+    const policy = await invoke<NetworkPolicySettings>('get_network_policy_settings')
+    set({ networkPolicyPreset: policy.preset })
+  },
+
   async loadHostStatsHistory() {
     const history = await invoke<HostMetric[]>('get_host_stats_history', {
       sinceMs: Date.now() - HOST_STATS_HISTORY_SEED_MS,
@@ -122,6 +135,7 @@ export function initAppStore() {
   useAppStore.getState().loadSettings()
   useAppStore.getState().loadPlatform()
   useAppStore.getState().loadDefaultTerminalHost()
+  useAppStore.getState().loadNetworkPolicyPreset()
   useAppStore.getState().loadHostStatsHistory()
   setInterval(() => {
     useAppStore.getState().loadSandboxes()

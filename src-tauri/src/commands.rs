@@ -398,16 +398,207 @@ pub async fn sbx_health_check(app: AppHandle) -> std::result::Result<(), String>
 }
 
 const VALID_NETWORK_POLICY_PRESETS: [&str; 3] = ["allow-all", "balanced", "deny-all"];
+const NETWORK_POLICY_PRESET_KEY: &str = "default_network_policy_preset";
+const VALID_SANDBOX_NETWORK_PRESETS: [&str; 2] = ["open", "locked-down"];
+const VALID_NETWORK_DECISIONS: [&str; 2] = ["allow", "deny"];
 
 /// One-time, machine-wide setup answering sbx's interactive network-policy
 /// prompt headlessly. The frontend calls this when `create_sandbox` fails
-/// with the "network policy hasn't been initialized" error.
+/// with the "network policy hasn't been initialized" error. Also records
+/// the chosen preset locally (see `record_network_policy_preset`) so it
+/// stays in sync with whatever the Settings screen's "Network Policy"
+/// card shows as current, regardless of which flow initialized it.
 #[tauri::command]
-pub async fn init_sbx_policy(app: AppHandle, preset: String) -> std::result::Result<(), String> {
+pub async fn init_sbx_policy(app: AppHandle, pool: State<'_, DbPool>, preset: String) -> std::result::Result<(), String> {
   if !VALID_NETWORK_POLICY_PRESETS.contains(&preset.as_str()) {
     return Err(format!("invalid network policy preset: {preset}"));
   }
-  crate::sbx::policy_init(&app, &preset).await.map_err(|e| e.to_string())
+  crate::sbx::policy_init(&app, &preset).await.map_err(|e| e.to_string())?;
+  record_network_policy_preset(pool.inner(), &preset)
+}
+
+fn record_network_policy_preset(pool: &DbPool, preset: &str) -> std::result::Result<(), String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  settings::set(&conn, NETWORK_POLICY_PRESET_KEY, preset).map_err(|e| e.to_string())
+}
+
+/// Everything the Settings screen's "Network Policy" card needs in one
+/// call: the machine-wide preset last applied via `init_sbx_policy`/
+/// `save_default_network_policy_preset` (`None` if this machine's policy
+/// has never been initialized — sbx itself has no documented "what preset
+/// is currently active" query, so this is our own record of the choice,
+/// not a mirror of sbx's rule state), and the live custom allow/deny rule
+/// list, always read straight from sbx (see `sbx::policy_list`).
+#[derive(Serialize)]
+pub struct NetworkPolicySettings {
+  pub preset: Option<String>,
+  pub rules: Vec<crate::sbx::PolicyRule>,
+}
+
+#[tauri::command]
+pub async fn get_network_policy_settings(
+  app: AppHandle,
+  pool: State<'_, DbPool>,
+) -> std::result::Result<NetworkPolicySettings, String> {
+  let preset = {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    settings::get(&conn, NETWORK_POLICY_PRESET_KEY).map_err(|e| e.to_string())?
+  };
+  let rules = crate::sbx::policy_list(&app, None).await.map_err(|e| e.to_string())?;
+  Ok(NetworkPolicySettings { preset, rules })
+}
+
+/// Changing an already-initialized preset needs `sbx policy reset` first —
+/// `sbx policy init` on its own only works the very first time (confirmed
+/// against a real `sbx` install: it otherwise errors with "global network
+/// policy is already initialized"). The frontend must have already
+/// confirmed this with the user before calling this command, since the
+/// reset it falls back to stops every currently running sandbox.
+#[tauri::command]
+pub async fn save_default_network_policy_preset(
+  app: AppHandle,
+  pool: State<'_, DbPool>,
+  preset: String,
+) -> std::result::Result<(), String> {
+  if !VALID_NETWORK_POLICY_PRESETS.contains(&preset.as_str()) {
+    return Err(format!("invalid network policy preset: {preset}"));
+  }
+  match crate::sbx::policy_init(&app, &preset).await {
+    Ok(()) => {}
+    Err(crate::sbx::Error::PolicyAlreadyInitialized) => {
+      crate::sbx::policy_reset(&app).await.map_err(|e| e.to_string())?;
+      // The reset just stopped every sandbox on the machine out from under
+      // the app (see sandboxes::stop_all_for_policy_reset) — reflect that
+      // before re-initializing, so the UI doesn't keep showing them as running.
+      let conn = pool.get().map_err(|e| e.to_string())?;
+      sandboxes::stop_all_for_policy_reset(&conn).map_err(|e| e.to_string())?;
+      drop(conn);
+      crate::sbx::policy_init(&app, &preset).await.map_err(|e| e.to_string())?;
+    }
+    Err(e) => return Err(e.to_string()),
+  }
+  record_network_policy_preset(pool.inner(), &preset)
+}
+
+fn validate_network_decision(decision: &str) -> std::result::Result<(), String> {
+  if !VALID_NETWORK_DECISIONS.contains(&decision) {
+    return Err(format!("invalid network rule decision: {decision} (expected \"allow\" or \"deny\")"));
+  }
+  Ok(())
+}
+
+/// Adds a machine-wide custom allow/deny rule directly via `sbx`. No DB
+/// write — per Branch 3's design, custom rule lists are never mirrored
+/// locally; `get_network_policy_settings`/`sbx::policy_list` always read
+/// them back live to avoid drift against sbx's real rule store.
+#[tauri::command]
+pub async fn add_network_rule(app: AppHandle, decision: String, host: String) -> std::result::Result<(), String> {
+  validate_network_decision(&decision)?;
+  match decision.as_str() {
+    "allow" => crate::sbx::policy_allow(&app, None, &host).await,
+    _ => crate::sbx::policy_deny(&app, None, &host).await,
+  }
+  .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn remove_network_rule(app: AppHandle, host: String) -> std::result::Result<(), String> {
+  crate::sbx::policy_rm(&app, None, &host).await.map_err(|e| e.to_string())
+}
+
+/// Loads the sandbox's `sbx_name` — every per-sandbox network command
+/// needs it to scope its `sbx policy ... --sandbox <name>` call, and none
+/// of them make sense before the sandbox has one (i.e. before its first
+/// `sbx create` succeeds).
+fn require_sbx_name(pool: &DbPool, id: &str) -> std::result::Result<String, String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  sandboxes::get(&conn, id)
+    .map_err(|e| e.to_string())?
+    .sbx_name
+    .ok_or_else(|| "sandbox has no sbx sandbox yet".to_string())
+}
+
+#[tauri::command]
+pub async fn get_sandbox_network_rules(
+  app: AppHandle,
+  pool: State<'_, DbPool>,
+  id: String,
+) -> std::result::Result<Vec<crate::sbx::PolicyRule>, String> {
+  let name = require_sbx_name(pool.inner(), &id)?;
+  crate::sbx::policy_list(&app, Some(&name)).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn add_sandbox_network_rule(
+  app: AppHandle,
+  pool: State<'_, DbPool>,
+  id: String,
+  decision: String,
+  host: String,
+) -> std::result::Result<(), String> {
+  validate_network_decision(&decision)?;
+  let name = require_sbx_name(pool.inner(), &id)?;
+  match decision.as_str() {
+    "allow" => crate::sbx::policy_allow(&app, Some(&name), &host).await,
+    _ => crate::sbx::policy_deny(&app, Some(&name), &host).await,
+  }
+  .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn remove_sandbox_network_rule(
+  app: AppHandle,
+  pool: State<'_, DbPool>,
+  id: String,
+  host: String,
+) -> std::result::Result<(), String> {
+  let name = require_sbx_name(pool.inner(), &id)?;
+  crate::sbx::policy_rm(&app, Some(&name), &host).await.map_err(|e| e.to_string())
+}
+
+/// Applies (or clears) a per-sandbox network preset override. Unlike the
+/// machine-wide preset (a whole rule-set swap via `sbx policy init`),
+/// there's no documented way to scope a whole preset to one sandbox — the
+/// only single-sandbox lever `sbx` exposes is a wildcard allow/deny rule,
+/// so "Open"/"Locked Down" are implemented as `sbx policy allow/deny
+/// --sandbox <name> "**"` and clearing removes that same wildcard rule.
+/// There's deliberately no per-sandbox "Balanced" option for this reason
+/// (see the plan's Branch 3 assumptions).
+#[tauri::command]
+pub async fn set_sandbox_network_preset_override(
+  app: AppHandle,
+  pool: State<'_, DbPool>,
+  id: String,
+  preset: Option<String>,
+) -> std::result::Result<Sandbox, String> {
+  if let Some(preset) = &preset {
+    if !VALID_SANDBOX_NETWORK_PRESETS.contains(&preset.as_str()) {
+      return Err(format!(
+        "invalid sandbox network preset override: {preset} (expected \"open\" or \"locked-down\")"
+      ));
+    }
+  }
+  let name = require_sbx_name(pool.inner(), &id)?;
+  match preset.as_deref() {
+    Some("open") => crate::sbx::policy_allow(&app, Some(&name), "**").await,
+    Some(_) => crate::sbx::policy_deny(&app, Some(&name), "**").await,
+    None => crate::sbx::policy_rm(&app, Some(&name), "**").await,
+  }
+  .map_err(|e| e.to_string())?;
+
+  // A "Locked Down" override denies all network for this one sandbox,
+  // which can stop the sandbox itself as a side effect (confirmed against
+  // a real sbx install) — with no dedicated event to react to, so
+  // reconcile the DB with sbx's live status before recording the override.
+  // Best-effort: a failed status read shouldn't block recording the
+  // override the user actually asked for.
+  if let Ok(Some(status)) = crate::sbx::current_status(&app, &name).await {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    sandboxes::update_status(&conn, &id, &status, None, None).map_err(|e| e.to_string())?;
+  }
+
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  sandboxes::set_network_preset_override(&conn, &id, preset.as_deref()).map_err(|e| e.to_string())
 }
 
 /// Stores the user's Anthropic API key as a global sbx secret so Claude

@@ -103,6 +103,12 @@ pub struct Sandbox {
   pub host_port: Option<i64>,
   pub created_at: i64,
   pub stopped_at: Option<i64>,
+  /// Per-sandbox network policy override: `Some("open")` | `Some("locked-down")`
+  /// | `None` (inherit the machine-wide preset). Never `Some("balanced")` —
+  /// see the network policy commands' doc comments for why that preset
+  /// can't be scoped to one sandbox. The allow/deny rules this applies are
+  /// never stored here — always read live via `sbx policy ls`.
+  pub network_preset_override: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
