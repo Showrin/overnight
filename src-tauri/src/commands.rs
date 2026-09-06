@@ -289,6 +289,8 @@ pub fn list_jira_issues(pool: State<DbPool>) -> std::result::Result<Vec<JiraIssu
 
 const SANDBOX_MEMORY_MB: u32 = 2048;
 const SANDBOX_PORT: u16 = 8080;
+const SANDBOX_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+const SANDBOX_READY_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 
 fn check_free_memory() -> std::result::Result<(), String> {
   let free_mb = crate::sbx::host_free_memory_mb();
@@ -428,7 +430,7 @@ pub async fn create_sandbox(
   if mode == "mount" {
     let conn = pool.get().map_err(|e| e.to_string())?;
     let existing = sandboxes::list_for_project(&conn, &project_id).map_err(|e| e.to_string())?;
-    if existing.iter().any(|s| s.mode == "mount" && matches!(s.status.as_str(), "starting" | "running")) {
+    if existing.iter().any(|s| s.mode == "mount" && matches!(s.status.as_str(), "starting" | "running" | "stopping")) {
       return Err("a mount-mode sandbox is already running for this project".to_string());
     }
   }
@@ -472,14 +474,31 @@ async fn provision_sandbox(
     crate::sbx::create(app, &candidate, clone, &project.repo_path).await.map_err(|e| e.to_string())
   })
   .await?;
-  if mode == "clone" {
-    copy_extra_clone_paths(app, &name, project).await?;
-  }
-  crate::sbx::set_claude_default_permission_mode(app, &name, &sandbox.permission_mode)
+  // `create` returning doesn't guarantee the VM is actually up for `exec`
+  // yet — wait before the exec-dependent steps below.
+  crate::sbx::wait_until_ready(app, &name, SANDBOX_READY_TIMEOUT, SANDBOX_READY_POLL_INTERVAL)
     .await
     .map_err(|e| e.to_string())?;
-  crate::sbx::publish_port(app, &name, SANDBOX_PORT).await.map_err(|e| e.to_string())?;
-  let host_port = crate::sbx::host_port(app, &name, SANDBOX_PORT).await.map_err(|e| e.to_string())?;
+
+  // Independent once the sandbox is ready: clone-mode extra files, the
+  // permission-mode alias, and port publishing/lookup. Run concurrently.
+  let (clone_result, permission_result, host_port_result) = tokio::join!(
+    async {
+      if mode == "clone" {
+        copy_extra_clone_paths(app, &name, project).await
+      } else {
+        Ok(())
+      }
+    },
+    crate::sbx::set_claude_default_permission_mode(app, &name, &sandbox.permission_mode),
+    async {
+      crate::sbx::publish_port(app, &name, SANDBOX_PORT).await?;
+      crate::sbx::host_port(app, &name, SANDBOX_PORT).await
+    },
+  );
+  clone_result?;
+  permission_result.map_err(|e| e.to_string())?;
+  let host_port = host_port_result.map_err(|e| e.to_string())?;
 
   let conn = pool.get().map_err(|e| e.to_string())?;
   sandboxes::update_status(&conn, &sandbox.id, "running", Some(&name), host_port.map(i64::from))
@@ -658,18 +677,76 @@ mod sbx_naming_tests {
   }
 }
 
+/// Core of `stop_sandbox`, decoupled from `AppHandle` so `stop` is
+/// mockable in tests. Marks the row "stopping" before awaiting `stop` (so
+/// pollers see the transition immediately, not only once the — possibly
+/// slow — teardown finishes), then "stopped" once it resolves.
+async fn stop_sandbox_with<F, Fut>(pool: &DbPool, id: &str, stop: F) -> std::result::Result<Sandbox, String>
+where
+  F: FnOnce() -> Fut,
+  Fut: std::future::Future<Output = crate::sbx::Result<()>>,
+{
+  {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    sandboxes::update_status(&conn, id, "stopping", None, None).map_err(|e| e.to_string())?;
+  }
+  stop().await.map_err(|e| e.to_string())?;
+
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  sandboxes::update_status(&conn, id, "stopped", None, None).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn stop_sandbox(app: AppHandle, pool: State<'_, DbPool>, id: String) -> std::result::Result<Sandbox, String> {
   let pool = pool.inner().clone();
-  let sandbox = {
+  let name = {
     let conn = pool.get().map_err(|e| e.to_string())?;
-    sandboxes::get(&conn, &id).map_err(|e| e.to_string())?
+    sandboxes::get(&conn, &id)
+      .map_err(|e| e.to_string())?
+      .sbx_name
+      .ok_or_else(|| "sandbox has no sbx sandbox to stop".to_string())?
   };
-  let name = sandbox.sbx_name.ok_or_else(|| "sandbox has no sbx sandbox to stop".to_string())?;
-  crate::sbx::stop(&app, &name).await.map_err(|e| e.to_string())?;
+  stop_sandbox_with(&pool, &id, || crate::sbx::stop(&app, &name)).await
+}
 
-  let conn = pool.get().map_err(|e| e.to_string())?;
-  sandboxes::update_status(&conn, &id, "stopped", None, None).map_err(|e| e.to_string())
+#[cfg(test)]
+mod stop_sandbox_tests {
+  use super::*;
+  use r2d2_sqlite::SqliteConnectionManager;
+
+  fn test_pool() -> (DbPool, std::path::PathBuf) {
+    let path = std::env::temp_dir().join(format!("overnight-stop-sandbox-{}", uuid::Uuid::new_v4()));
+    let mut conn = rusqlite::Connection::open(&path).unwrap();
+    crate::db::migrations::migrations().to_latest(&mut conn).unwrap();
+    drop(conn);
+    let pool = r2d2::Pool::builder().max_size(2).build(SqliteConnectionManager::file(&path)).unwrap();
+    (pool, path)
+  }
+
+  #[tokio::test]
+  async fn sets_stopping_before_stop_resolves_then_stopped() {
+    let (pool, path) = test_pool();
+    let sandbox_id = {
+      let conn = pool.get().unwrap();
+      let project = projects::create(&conn, "Overnight", "/repo", None, None, &[]).unwrap();
+      sandboxes::create(&conn, &project.id, "mount", None, None, "default").unwrap().id
+    };
+
+    let check_pool = pool.clone();
+    let check_id = sandbox_id.clone();
+    let result = stop_sandbox_with(&pool, &sandbox_id, || async move {
+      let conn = check_pool.get().unwrap();
+      assert_eq!(sandboxes::get(&conn, &check_id).unwrap().status, "stopping");
+      Ok::<(), crate::sbx::Error>(())
+    })
+    .await;
+
+    assert!(result.is_ok());
+    let conn = pool.get().unwrap();
+    assert_eq!(sandboxes::get(&conn, &sandbox_id).unwrap().status, "stopped");
+
+    std::fs::remove_file(&path).ok();
+  }
 }
 
 #[tauri::command]

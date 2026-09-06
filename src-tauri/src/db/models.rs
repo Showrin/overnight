@@ -94,7 +94,7 @@ pub struct Sandbox {
   /// app-launched autonomous sessions and to `claude` run manually in the
   /// sandbox's own terminal.
   pub permission_mode: String,
-  /// "starting" | "running" | "stopped" | "error"
+  /// "starting" | "running" | "stopping" | "stopped" | "error"
   pub status: String,
   /// The `sbx` sandbox name (its identity for stop/rm/exec/ports), not a
   /// docker container id.

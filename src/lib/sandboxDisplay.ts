@@ -9,6 +9,7 @@ export function statusBadgeVariant(status: SandboxStatus): BadgeVariant {
     case 'error':
       return 'outline-destructive'
     case 'starting':
+    case 'stopping':
       return 'outline-warning'
     case 'stopped':
     default:

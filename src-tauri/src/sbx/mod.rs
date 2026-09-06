@@ -292,6 +292,43 @@ fn expand_home(path: &str) -> String {
   }
 }
 
+/// Extracts the STATUS column for `name` from `sbx ls` output (same table
+/// shape as `parse_workspace_path`/`parse_host_port`).
+fn parse_sandbox_status(output: &str, name: &str) -> Option<String> {
+  output.lines().find_map(|line| {
+    let mut tokens = line.split_whitespace();
+    if tokens.next()? != name {
+      return None;
+    }
+    tokens.next()?; // AGENT column
+    tokens.next().map(str::to_string) // STATUS column
+  })
+}
+
+/// Polls `sbx ls` until `name` reports STATUS "running", rather than a
+/// caller assuming a sandbox is usable the instant a prior call (e.g.
+/// `create`) returns. Standalone so any caller needing this same readiness
+/// gate (e.g. a future resume/start path) can reuse it without depending
+/// on create/stop-specific state.
+pub async fn wait_until_ready<R: Runtime>(
+  app: &AppHandle<R>,
+  name: &str,
+  timeout: std::time::Duration,
+  poll_interval: std::time::Duration,
+) -> Result<()> {
+  let deadline = std::time::Instant::now() + timeout;
+  loop {
+    let output = run(app, &["ls"]).await?;
+    if parse_sandbox_status(&output, name).as_deref() == Some("running") {
+      return Ok(());
+    }
+    if std::time::Instant::now() >= deadline {
+      return Err(Error::CommandFailed(format!("sandbox {name} not ready after {timeout:?}")));
+    }
+    tokio::time::sleep(poll_interval).await;
+  }
+}
+
 /// `sbx run --name <name> claude -- <claude-args>` — attaches to (and if
 /// needed starts) the agent session. Args after `--` are appended to
 /// Claude Code's default startup flags per the sbx docs, so passing
@@ -446,6 +483,18 @@ mod tests {
   #[test]
   fn parse_workspace_path_handles_empty_output() {
     assert_eq!(parse_workspace_path("", "my-sandbox"), None);
+  }
+
+  #[test]
+  fn parses_sandbox_status_from_ls_table() {
+    let output = "SANDBOX         AGENT   STATUS   PORTS                    WORKSPACE\nmy-sandbox      claude  running  127.0.0.1:8080->3000/tcp /home/user/proj";
+    assert_eq!(parse_sandbox_status(output, "my-sandbox"), Some("running".to_string()));
+    assert_eq!(parse_sandbox_status(output, "other-sandbox"), None);
+  }
+
+  #[test]
+  fn parse_sandbox_status_handles_empty_output() {
+    assert_eq!(parse_sandbox_status("", "my-sandbox"), None);
   }
 
   #[test]
