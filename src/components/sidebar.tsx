@@ -1,7 +1,6 @@
 import { Box, FolderGit2, Settings } from 'lucide-react'
 import { SidebarSandboxList } from '@/components/sandboxes/SidebarSandboxList'
-
-export type Screen = 'dashboard' | 'projects' | 'sandboxes' | 'settings'
+import type { Route, Screen } from '@/lib/router'
 
 type NavItem = { screen: Screen; label: string; icon: typeof Settings }
 
@@ -25,7 +24,7 @@ export function Sidebar({
   collapsed,
 }: {
   current: Screen
-  onNavigate: (screen: Screen) => void
+  onNavigate: (route: Route) => void
   collapsed: boolean
 }) {
   if (collapsed) return null
@@ -42,7 +41,7 @@ export function Sidebar({
                 <button
                   key={screen}
                   type="button"
-                  onClick={() => onNavigate(screen)}
+                  onClick={() => onNavigate({ screen })}
                   className={`relative flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition-colors ${
                     isActive
                       ? 'bg-sidebar-accent text-sidebar-accent-foreground shadow-sm'

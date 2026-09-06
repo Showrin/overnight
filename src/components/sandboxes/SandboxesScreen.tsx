@@ -3,10 +3,12 @@ import { invoke } from '@tauri-apps/api/core'
 import { Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
+import type { Route } from '@/lib/router'
 import { useAppStore } from '@/store/useAppStore'
 import { CreateSandboxDialog } from './CreateSandboxDialog'
 import { HostStatsPanel } from './HostStatsPanel'
 import { SandboxCard } from './SandboxCard'
+import { SandboxDetailScreen } from './SandboxDetailScreen'
 import type { Sandbox } from './types'
 
 function SandboxGroup({
@@ -16,7 +18,7 @@ function SandboxGroup({
   onAddNew,
   addNewDisabledReason,
   onChanged,
-  highlightedSandboxId,
+  onSelect,
 }: {
   title: string
   sandboxes: Sandbox[]
@@ -24,7 +26,7 @@ function SandboxGroup({
   onAddNew?: () => void
   addNewDisabledReason?: string
   onChanged: () => void
-  highlightedSandboxId?: string | null
+  onSelect: (sandboxId: string) => void
 }) {
   return (
     <div className="flex flex-col gap-2">
@@ -53,7 +55,7 @@ function SandboxGroup({
               sandbox={sandbox}
               projectName={projectName}
               onChanged={onChanged}
-              highlighted={sandbox.id === highlightedSandboxId}
+              onSelect={() => onSelect(sandbox.id)}
             />
           ))}
         </div>
@@ -63,10 +65,12 @@ function SandboxGroup({
 }
 
 export function SandboxesScreen({
-  highlightedSandboxId,
+  sandboxId,
+  navigate,
 }: {
-  highlightedSandboxId?: string | null
-} = {}) {
+  sandboxId?: string
+  navigate: (route: Route) => void
+}) {
   const sandboxes = useAppStore((s) => s.sandboxes)
   const projects = useAppStore((s) => s.projects)
   const loadSandboxes = useAppStore((s) => s.loadSandboxes)
@@ -116,7 +120,17 @@ export function SandboxesScreen({
     )
   }
 
+  if (sandboxId) {
+    return (
+      <SandboxDetailScreen
+        sandboxId={sandboxId}
+        onBack={() => navigate({ screen: 'sandboxes' })}
+      />
+    )
+  }
+
   const orphanSandboxes = sandboxes.filter((sb) => !projects.some((p) => p.id === sb.project_id))
+  const onSelect = (id: string) => navigate({ screen: 'sandboxes', sandboxId: id })
 
   return (
     <div className="flex w-full flex-col gap-6 @min-[820px]:flex-row">
@@ -176,7 +190,7 @@ export function SandboxesScreen({
               onAddNew={() => setCreatingForProjectId(project.id)}
               addNewDisabledReason={addNewDisabledReason}
               onChanged={loadSandboxes}
-              highlightedSandboxId={highlightedSandboxId}
+              onSelect={onSelect}
             />
           );
         })}
@@ -187,7 +201,7 @@ export function SandboxesScreen({
             projectName="Unknown project"
             sandboxes={orphanSandboxes}
             onChanged={loadSandboxes}
-            highlightedSandboxId={highlightedSandboxId}
+            onSelect={onSelect}
           />
         )}
       </div>

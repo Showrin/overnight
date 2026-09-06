@@ -165,23 +165,6 @@
     --sidebar-ring: #6366f1;
 }
 
-@layer utilities {
-  /* Notification-click highlight: pulses the card's shadow using the same
-     ring/primary color as focus rings, layered over --shadow-lg. */
-  @keyframes glow-pulse {
-    0%, 100% {
-      box-shadow: var(--shadow-sm);
-    }
-    50% {
-      box-shadow: 0 0 0 4px rgb(99 102 241 / 0.45), var(--shadow-lg);
-    }
-  }
-
-  .glow-pulse {
-    animation: glow-pulse 1.2s ease-in-out 3;
-  }
-}
-
 @layer base {
   * {
     @apply border-border outline-ring/50;

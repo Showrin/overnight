@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { Check, ChevronsUpDown, Code, Loader2, Play, Square, TerminalSquare } from 'lucide-react'
-import type { Screen } from '@/components/sidebar'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import type { Route } from '@/lib/router'
 import { notify } from '@/lib/notify'
 import { TERMINAL_HOSTS, TERMINAL_HOST_LABELS } from '@/lib/terminalHost'
 import { useAppStore } from '@/store/useAppStore'
@@ -12,7 +12,7 @@ const MAX_VISIBLE = 4
 
 type BusyAction = 'start' | 'stop' | 'vscode' | 'terminal' | null
 
-export function SidebarSandboxList({ onNavigate }: { onNavigate: (screen: Screen) => void }) {
+export function SidebarSandboxList({ onNavigate }: { onNavigate: (route: Route) => void }) {
   const sandboxes = useAppStore((s) => s.sandboxes)
   const projects = useAppStore((s) => s.projects)
   const loadSandboxes = useAppStore((s) => s.loadSandboxes)
@@ -56,9 +56,14 @@ export function SidebarSandboxList({ onNavigate }: { onNavigate: (screen: Screen
             key={sandbox.id}
             className="flex items-center gap-1 rounded-md px-2 py-1.5 text-sm text-sidebar-foreground hover:bg-sidebar-accent/60"
           >
-            <span className="flex-1 truncate" title={sandbox.name ?? projectName}>
+            <button
+              type="button"
+              onClick={() => onNavigate({ screen: 'sandboxes', sandboxId: sandbox.id })}
+              title={sandbox.name ?? projectName}
+              className="flex-1 truncate text-left hover:underline"
+            >
               {sandbox.name ?? projectName}
-            </span>
+            </button>
             {isRunning && (
               <>
                 <button
@@ -164,7 +169,7 @@ export function SidebarSandboxList({ onNavigate }: { onNavigate: (screen: Screen
       {remaining > 0 && (
         <button
           type="button"
-          onClick={() => onNavigate('sandboxes')}
+          onClick={() => onNavigate({ screen: 'sandboxes' })}
           className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-left text-xs text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
         >
           <ChevronsUpDown className="size-3" strokeWidth={1.5} />

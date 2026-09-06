@@ -16,7 +16,6 @@ import {
 import { notify } from '@/lib/notify'
 import { permissionBadgeVariant, statusBadgeVariant } from '@/lib/sandboxDisplay'
 import { TERMINAL_HOSTS, TERMINAL_HOST_LABELS } from '@/lib/terminalHost'
-import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
 import type { BranchSyncOutcome, Sandbox } from './types'
 
@@ -62,12 +61,12 @@ export function SandboxCard({
   sandbox,
   projectName,
   onChanged,
-  highlighted,
+  onSelect,
 }: {
   sandbox: Sandbox
   projectName: string
   onChanged: () => void
-  highlighted?: boolean
+  onSelect: () => void
 }) {
   const projectRepoPath = useAppStore(
     (s) => s.projects.find((p) => p.id === sandbox.project_id)?.repo_path
@@ -204,10 +203,19 @@ export function SandboxCard({
   }
 
   return (
-    <Card className={cn('gap-6', highlighted && 'glow-pulse')} size="sm">
+    <Card className="gap-6" size="sm">
       <CardHeader className="gap-1.5">
         <div className="flex items-center gap-2">
-          <CardTitle>{sandbox.name ?? projectName}</CardTitle>
+          <CardTitle>
+            <button
+              type="button"
+              onClick={onSelect}
+              className="text-left hover:underline"
+              title="View sandbox details"
+            >
+              {sandbox.name ?? projectName}
+            </button>
+          </CardTitle>
           <Badge variant={statusBadgeVariant(sandbox.status)}>
             {sandbox.status}
           </Badge>
