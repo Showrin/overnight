@@ -23,7 +23,9 @@ pub fn notify(
   if let Some(body) = &body {
     notification.body(body);
   }
-  // "default" is the click-the-body action, not a visible button.
+  // Only Linux/XDG treats "default" as an invisible body-click action;
+  // Windows/macOS render it as a real button and don't need it registered.
+  #[cfg(not(any(target_os = "windows", target_os = "macos")))]
   notification.action("default", "default");
 
   let handle = notification.show().map_err(|e| e.to_string())?;
