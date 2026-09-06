@@ -69,6 +69,7 @@ export function CreateSandboxDialog({
     sandboxes.some(
       (sb) => sb.project_id === projectId && sb.mode === 'mount' && (sb.status === 'starting' || sb.status === 'running')
     )
+  const hasStartingSandbox = sandboxes.some((sb) => sb.project_id === projectId && sb.status === 'starting')
 
   async function handleCreate() {
     setCreating(true)
@@ -188,6 +189,9 @@ export function CreateSandboxDialog({
         {hasActiveMount && (
           <p className="text-xs text-destructive">A mount-mode sandbox is already running for this project.</p>
         )}
+        {!hasActiveMount && hasStartingSandbox && (
+          <p className="text-xs text-destructive">A sandbox is already starting for this project.</p>
+        )}
         {error && <ErrorDetails message={error} />}
 
         {needsPolicyInit && (
@@ -211,9 +215,19 @@ export function CreateSandboxDialog({
         )}
 
         <div className="flex gap-2">
-          <Button className="flex-1" onClick={handleCreate} disabled={creating || !projectId || hasActiveMount}>
+          <Button
+            className="flex-1"
+            onClick={handleCreate}
+            disabled={creating || !projectId || hasActiveMount || hasStartingSandbox}
+          >
             {creating && <Loader2 className="size-3.5 animate-spin" />}
-            {creating ? 'Starting…' : hasActiveMount ? 'Sandbox running' : 'Start sandbox'}
+            {creating
+              ? 'Starting…'
+              : hasActiveMount
+                ? 'Sandbox running'
+                : hasStartingSandbox
+                  ? 'Sandbox starting…'
+                  : 'Start sandbox'}
           </Button>
           <Button variant="outline" onClick={onCancel} disabled={creating}>
             Cancel
