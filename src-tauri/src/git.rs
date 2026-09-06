@@ -78,26 +78,64 @@ pub fn sync_branch(repo_path: &str, branch: &str, target_ref: &str) -> Result<Br
   Ok(BranchSyncOutcome { branch: branch.to_string(), status: BranchSyncStatus::FastForwarded })
 }
 
-/// `git fetch sandbox-<name>` then fast-forward-or-report every branch under
-/// the resulting `refs/remotes/sandbox-<name>/*`. Never pushes, never force-
-/// updates, never creates a local branch for a brand-new remote one.
-pub fn sync_from_sandbox(repo_path: &str, sbx_name: &str) -> Result<Vec<BranchSyncOutcome>> {
+/// `git fetch sandbox-<sbx_name>` then list every branch under the
+/// resulting `refs/remotes/sandbox-<sbx_name>/*` (excluding the remote's
+/// symbolic `HEAD`, which isn't a real branch). Shared by `sync_from_sandbox`
+/// (Git Sync) and the diff viewer (branch 9), which both need "what branches
+/// does this sandbox currently have" right after a fresh fetch.
+pub fn fetch_and_list_sandbox_branches(repo_path: &str, sbx_name: &str) -> Result<Vec<String>> {
   let remote = format!("sandbox-{sbx_name}");
   run(repo_path, &["fetch", &remote])?;
 
   let prefix = format!("refs/remotes/{remote}/");
   let listing = run(repo_path, &["for-each-ref", "--format=%(refname)", &prefix])?;
 
-  let mut outcomes = Vec::new();
-  for line in listing.lines() {
-    let Some(branch) = line.strip_prefix(&prefix) else { continue };
-    if branch == "HEAD" {
-      continue; // remote's symbolic HEAD, not a real branch
-    }
-    let target_ref = format!("{remote}/{branch}");
-    outcomes.push(sync_branch(repo_path, branch, &target_ref)?);
+  Ok(
+    listing
+      .lines()
+      .filter_map(|line| line.strip_prefix(&prefix))
+      .filter(|branch| *branch != "HEAD")
+      .map(|branch| branch.to_string())
+      .collect(),
+  )
+}
+
+/// `git fetch sandbox-<name>` then fast-forward-or-report every branch under
+/// the resulting `refs/remotes/sandbox-<name>/*`. Never pushes, never force-
+/// updates, never creates a local branch for a brand-new remote one.
+pub fn sync_from_sandbox(repo_path: &str, sbx_name: &str) -> Result<Vec<BranchSyncOutcome>> {
+  let remote = format!("sandbox-{sbx_name}");
+  let branches = fetch_and_list_sandbox_branches(repo_path, sbx_name)?;
+
+  branches
+    .into_iter()
+    .map(|branch| {
+      let target_ref = format!("{remote}/{branch}");
+      sync_branch(repo_path, &branch, &target_ref)
+    })
+    .collect()
+}
+
+/// Unified diff of `base_ref` against `target_ref` (three-dot: "what did
+/// `target_ref` add on top of `base_ref`"), or — when `target_ref` is
+/// `None` — a plain diff of `base_ref` against the live working tree
+/// (uncommitted changes included). The `None` case backs mount-mode
+/// sandboxes: they share the host's filesystem, so `project.repo_path`'s
+/// working tree already *is* the sandbox's current state, no fetch needed.
+pub fn diff(repo_path: &str, base_ref: &str, target_ref: Option<&str>) -> Result<String> {
+  match target_ref {
+    Some(target) => run(repo_path, &["diff", "--no-color", &format!("{base_ref}...{target}")]),
+    None => run(repo_path, &["diff", "--no-color", base_ref]),
   }
-  Ok(outcomes)
+}
+
+/// Same comparison as `diff`, but the `--stat` summary instead of the full
+/// patch — shown collapsed-by-default above each full diff in the Diff tab.
+pub fn diff_stat(repo_path: &str, base_ref: &str, target_ref: Option<&str>) -> Result<String> {
+  match target_ref {
+    Some(target) => run(repo_path, &["diff", "--no-color", "--stat", &format!("{base_ref}...{target}")]),
+    None => run(repo_path, &["diff", "--no-color", "--stat", base_ref]),
+  }
 }
 
 #[cfg(test)]
@@ -229,6 +267,78 @@ mod tests {
       vec![BranchSyncOutcome { branch: "main".to_string(), status: BranchSyncStatus::FastForwarded }]
     );
     assert_eq!(run(local, &["rev-parse", "main"]).unwrap(), ahead);
+
+    fs::remove_dir_all(upstream_dir).unwrap();
+    fs::remove_dir_all(local_dir).unwrap();
+  }
+
+  #[test]
+  fn diff_against_a_ref_reports_three_dot_changes() {
+    let dir = init_repo();
+    let repo = dir.to_str().unwrap();
+    commit(repo, "a.txt", "1");
+    run(repo, &["checkout", "-q", "-b", "feature"]).unwrap();
+    commit(repo, "b.txt", "feature-only");
+
+    let patch = diff(repo, "main", Some("feature")).unwrap();
+    assert!(patch.contains("diff --git a/b.txt b/b.txt"), "patch was:\n{patch}");
+    assert!(patch.contains("+feature-only"));
+
+    let stat = diff_stat(repo, "main", Some("feature")).unwrap();
+    assert!(stat.contains("b.txt"));
+
+    fs::remove_dir_all(dir).unwrap();
+  }
+
+  #[test]
+  fn diff_with_no_target_ref_covers_the_live_working_tree() {
+    let dir = init_repo();
+    let repo = dir.to_str().unwrap();
+    commit(repo, "a.txt", "1");
+    // Uncommitted change — no second commit, no target_ref — this is the
+    // mount-mode case, where the sandbox's "changes" are just the host
+    // repo's live working tree.
+    fs::write(format!("{repo}/a.txt"), "2").unwrap();
+
+    let patch = diff(repo, "main", None).unwrap();
+    assert!(patch.contains("-1"));
+    assert!(patch.contains("+2"));
+
+    let stat = diff_stat(repo, "main", None).unwrap();
+    assert!(stat.contains("a.txt"));
+
+    fs::remove_dir_all(dir).unwrap();
+  }
+
+  #[test]
+  fn diff_with_no_changes_is_empty() {
+    let dir = init_repo();
+    let repo = dir.to_str().unwrap();
+    commit(repo, "a.txt", "1");
+
+    assert_eq!(diff(repo, "main", None).unwrap(), "");
+    assert_eq!(diff_stat(repo, "main", None).unwrap(), "");
+
+    fs::remove_dir_all(dir).unwrap();
+  }
+
+  #[test]
+  fn fetch_and_list_sandbox_branches_lists_every_remote_branch_except_head() {
+    let upstream_dir = init_repo();
+    let upstream = upstream_dir.to_str().unwrap();
+    commit(upstream, "a.txt", "1");
+    run(upstream, &["checkout", "-q", "-b", "second"]).unwrap();
+    commit(upstream, "b.txt", "2");
+    run(upstream, &["checkout", "-q", "main"]).unwrap();
+
+    let local_dir = std::env::temp_dir().join(format!("overnight-git-sync-{}", uuid::Uuid::new_v4()));
+    let local = local_dir.to_str().unwrap();
+    let tmp = std::env::temp_dir();
+    run(tmp.to_str().unwrap(), &["clone", "-q", "--origin", "sandbox-test", upstream, local]).unwrap();
+
+    let mut branches = fetch_and_list_sandbox_branches(local, "test").unwrap();
+    branches.sort();
+    assert_eq!(branches, vec!["main".to_string(), "second".to_string()]);
 
     fs::remove_dir_all(upstream_dir).unwrap();
     fs::remove_dir_all(local_dir).unwrap();

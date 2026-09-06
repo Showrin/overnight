@@ -56,6 +56,23 @@ export interface BranchSyncOutcome {
   status: BranchSyncStatus
 }
 
+// One branch's diff against base_branch: mount mode has exactly one (the
+// host's current branch, diffed against its live working tree); clone mode
+// has one per branch found on the sandbox's fetched sandbox-<name> remote.
+export interface BranchDiff {
+  branch: string
+  stat: string
+  patch: string
+}
+
+// Result of get_sandbox_diff, backing the Diff tab. base_branch is null when
+// this sandbox predates branch tracking (or its host repo wasn't on a
+// branch at creation time) — branches is always empty in that case.
+export interface SandboxDiff {
+  base_branch: string | null
+  branches: BranchDiff[]
+}
+
 export interface HostMetric {
   id: string
   captured_at: number

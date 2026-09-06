@@ -1396,6 +1396,67 @@ pub fn git_sync_sandbox(pool: State<DbPool>, id: String) -> std::result::Result<
   crate::git::sync_from_sandbox(&project.repo_path, &name).map_err(|e| e.to_string())
 }
 
+/// One branch's diff against `base_branch`: mount mode has exactly one
+/// (the host's current branch, diffed against its live working tree);
+/// clone mode has one per branch found on the sandbox's fetched
+/// `sandbox-<name>` remote.
+#[derive(Serialize)]
+pub struct BranchDiff {
+  pub branch: String,
+  pub stat: String,
+  pub patch: String,
+}
+
+/// Backs the Diff tab. `base_branch: None` means this sandbox predates
+/// branch tracking (or its host repo wasn't on a branch at creation time)
+/// — there's no ref to diff against, so `branches` is always empty in that
+/// case rather than guessing a fallback.
+#[derive(Serialize)]
+pub struct SandboxDiff {
+  pub base_branch: Option<String>,
+  pub branches: Vec<BranchDiff>,
+}
+
+/// Mount mode diffs `base_branch` against `project.repo_path`'s live
+/// working tree directly — no fetch needed, since a mount-mode sandbox
+/// shares the host's filesystem. Clone mode instead fetches
+/// `sandbox-<name>` (`git::fetch_and_list_sandbox_branches`, the same
+/// fetch-and-enumerate logic Git Sync uses) and three-dot diffs
+/// `base_branch` against every branch found there.
+#[tauri::command]
+pub fn get_sandbox_diff(pool: State<DbPool>, id: String) -> std::result::Result<SandboxDiff, String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  let sandbox = sandboxes::get(&conn, &id).map_err(|e| e.to_string())?;
+  let Some(base_branch) = sandbox.base_branch.clone() else {
+    return Ok(SandboxDiff { base_branch: None, branches: vec![] });
+  };
+  let project = projects::get(&conn, &sandbox.project_id).map_err(|e| e.to_string())?;
+
+  if sandbox.mode == "mount" {
+    let branch = crate::git::current_branch(&project.repo_path).unwrap_or_else(|| "HEAD".to_string());
+    let stat = crate::git::diff_stat(&project.repo_path, &base_branch, None).map_err(|e| e.to_string())?;
+    let patch = crate::git::diff(&project.repo_path, &base_branch, None).map_err(|e| e.to_string())?;
+    return Ok(SandboxDiff { base_branch: Some(base_branch), branches: vec![BranchDiff { branch, stat, patch }] });
+  }
+
+  let name = sandbox.sbx_name.ok_or_else(|| "sandbox isn't running".to_string())?;
+  let remote = format!("sandbox-{name}");
+  let sandbox_branches =
+    crate::git::fetch_and_list_sandbox_branches(&project.repo_path, &name).map_err(|e| e.to_string())?;
+
+  let branches = sandbox_branches
+    .into_iter()
+    .map(|branch| {
+      let target_ref = format!("{remote}/{branch}");
+      let stat = crate::git::diff_stat(&project.repo_path, &base_branch, Some(&target_ref)).map_err(|e| e.to_string())?;
+      let patch = crate::git::diff(&project.repo_path, &base_branch, Some(&target_ref)).map_err(|e| e.to_string())?;
+      Ok(BranchDiff { branch, stat, patch })
+    })
+    .collect::<std::result::Result<Vec<_>, String>>()?;
+
+  Ok(SandboxDiff { base_branch: Some(base_branch), branches })
+}
+
 #[tauri::command]
 pub fn open_sandbox_terminal(
   pool: State<DbPool>,

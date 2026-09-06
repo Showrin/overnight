@@ -66,6 +66,7 @@ pub fn run() {
       commands::open_sandbox_vscode,
       commands::open_sandbox_terminal,
       commands::git_sync_sandbox,
+      commands::get_sandbox_diff,
       commands::open_path_in_explorer,
       commands::get_host_stats,
       commands::get_host_stats_history,
