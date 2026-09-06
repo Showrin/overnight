@@ -1,16 +1,29 @@
 import { useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { Code, ExternalLink, Loader2, Play, Square, TerminalSquare, Trash2 } from 'lucide-react'
+import { Check, Code, ExternalLink, GitBranch, Loader2, Play, Square, TerminalSquare, Trash2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { notify } from '@/lib/notify'
 import { permissionBadgeVariant, statusBadgeVariant } from '@/lib/sandboxDisplay'
+import { TERMINAL_HOSTS, TERMINAL_HOST_LABELS } from '@/lib/terminalHost'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
-import type { Sandbox } from './types'
+import type { BranchSyncOutcome, Sandbox } from './types'
 
-type BusyAction = 'start' | 'stop' | 'delete' | 'vscode' | 'terminal' | null
+type BusyAction = 'start' | 'stop' | 'delete' | 'vscode' | 'terminal' | 'git-sync' | null
+
+function branchSyncStatusLabel(status: BranchSyncOutcome['status']): string {
+  switch (status) {
+    case 'fast_forwarded':
+      return 'fast-forwarded'
+    case 'needs_manual_merge':
+      return 'diverged — needs manual merge'
+    case 'new_branch':
+      return 'new branch available (fetched, not checked out)'
+  }
+}
 
 export function SandboxCard({
   sandbox,
@@ -26,9 +39,13 @@ export function SandboxCard({
   const projectRepoPath = useAppStore(
     (s) => s.projects.find((p) => p.id === sandbox.project_id)?.repo_path
   )
+  const defaultTerminalHost = useAppStore((s) => s.defaultTerminalHost)
+  const platform = useAppStore((s) => s.platform)
   const [busyAction, setBusyAction] = useState<BusyAction>(null)
   const [error, setError] = useState<string | null>(null)
   const [copiedInfo, setCopiedInfo] = useState(false)
+  const [gitSyncResult, setGitSyncResult] = useState<BranchSyncOutcome[] | null>(null)
+  const [terminalMenuOpen, setTerminalMenuOpen] = useState(false)
 
   const location = sandbox.folder_path ?? projectRepoPath
 
@@ -64,6 +81,21 @@ export function SandboxCard({
 
   function openLocation() {
     if (location) invoke('open_path_in_explorer', { path: location })
+  }
+
+  async function gitSync() {
+    setBusyAction('git-sync')
+    setError(null)
+    try {
+      const outcomes = await invoke<BranchSyncOutcome[]>('git_sync_sandbox', { id: sandbox.id })
+      setGitSyncResult(outcomes)
+      const fastForwarded = outcomes.filter((o) => o.status === 'fast_forwarded').length
+      notify('Git Sync complete', `${fastForwarded} of ${outcomes.length} branch(es) fast-forwarded.`)
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setBusyAction(null)
+    }
   }
 
   return (
@@ -126,6 +158,25 @@ export function SandboxCard({
 
         {error && <p className="text-destructive">{error}</p>}
 
+        {gitSyncResult && (
+          <div className="rounded-md border p-3 text-xs">
+            <p className="font-medium text-foreground">Git Sync result</p>
+            {gitSyncResult.length === 0 ? (
+              <p className="mt-1">No sandbox branches to sync.</p>
+            ) : (
+              <ul className="mt-1 flex flex-col gap-0.5">
+                {gitSyncResult.map((o) => (
+                  <li key={o.branch}>
+                    <span className="font-mono text-foreground">{o.branch}</span>
+                    {" — "}
+                    {branchSyncStatusLabel(o.status)}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
         <div className="flex flex-wrap gap-2">
           {sandbox.status === "running" && (
             <>
@@ -146,27 +197,73 @@ export function SandboxCard({
                 )}
                 Open in VS Code
               </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busyAction != null}
-                onClick={() =>
-                  run("terminal", () =>
-                    invoke("open_sandbox_terminal", { id: sandbox.id }),
-                  )
-                }
-              >
-                {busyAction === "terminal" ? (
-                  <Loader2 className="size-3.5 animate-spin" />
-                ) : (
-                  <TerminalSquare className="size-3.5" />
-                )}
-                Terminal
-              </Button>
+              {platform === "windows" ? (
+                <Popover open={terminalMenuOpen} onOpenChange={setTerminalMenuOpen}>
+                  <PopoverTrigger asChild>
+                    <Button size="sm" variant="outline" disabled={busyAction != null}>
+                      {busyAction === "terminal" ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        <TerminalSquare className="size-3.5" />
+                      )}
+                      Terminal
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="start" className="flex flex-col gap-0.5">
+                    {TERMINAL_HOSTS.map((host) => (
+                      <button
+                        key={host}
+                        type="button"
+                        onClick={() => {
+                          setTerminalMenuOpen(false)
+                          run("terminal", () =>
+                            invoke("open_sandbox_terminal", { id: sandbox.id, terminalHost: host }),
+                          )
+                        }}
+                        className="flex w-full items-center justify-between gap-4 rounded-md px-2 py-1.5 text-left text-sm outline-none hover:bg-accent hover:text-accent-foreground"
+                      >
+                        {TERMINAL_HOST_LABELS[host]}
+                        {host === defaultTerminalHost && <Check className="size-3.5" />}
+                      </button>
+                    ))}
+                  </PopoverContent>
+                </Popover>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busyAction != null}
+                  onClick={() =>
+                    run("terminal", () => invoke("open_sandbox_terminal", { id: sandbox.id }))
+                  }
+                >
+                  {busyAction === "terminal" ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <TerminalSquare className="size-3.5" />
+                  )}
+                  Terminal
+                </Button>
+              )}
               {sandbox.host_port != null && (
                 <Button size="sm" variant="outline" onClick={openInBrowser}>
                   <ExternalLink className="size-3.5" />
                   Open in browser
+                </Button>
+              )}
+              {sandbox.mode === "clone" && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busyAction != null}
+                  onClick={gitSync}
+                >
+                  {busyAction === "git-sync" ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <GitBranch className="size-3.5" />
+                  )}
+                  {busyAction === "git-sync" ? "Syncing…" : "Git Sync"}
                 </Button>
               )}
               <Button

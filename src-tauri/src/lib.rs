@@ -1,5 +1,6 @@
 mod commands;
 mod db;
+mod git;
 mod jira;
 mod notifications;
 mod process;
@@ -38,6 +39,9 @@ pub fn run() {
       commands::get_settings,
       commands::save_settings,
       commands::save_skill_folders,
+      commands::get_platform,
+      commands::get_default_terminal_host,
+      commands::save_default_terminal_host,
       commands::start_plan_session,
       commands::sbx_health_check,
       commands::init_sbx_policy,
@@ -50,6 +54,7 @@ pub fn run() {
       commands::get_sandbox_usage,
       commands::open_sandbox_vscode,
       commands::open_sandbox_terminal,
+      commands::git_sync_sandbox,
       commands::open_path_in_explorer,
       commands::get_host_stats,
       commands::get_host_stats_history,

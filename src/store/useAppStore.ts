@@ -16,6 +16,8 @@ interface AppStore {
   projects: Project[]
   sandboxes: Sandbox[]
   settings: AppSettings | null
+  platform: string | null
+  defaultTerminalHost: string
   hostStats: HostMetric | null
   hostStatsHistory: HostMetric[]
 
@@ -24,6 +26,9 @@ interface AppStore {
   loadSettings: () => Promise<void>
   saveSettings: (defaultClaudePermissionMode: string) => Promise<void>
   saveSkillFolders: (folders: string[]) => Promise<void>
+  loadPlatform: () => Promise<void>
+  loadDefaultTerminalHost: () => Promise<void>
+  saveDefaultTerminalHost: (terminalHost: string) => Promise<void>
   loadHostStatsHistory: () => Promise<void>
   loadHostStats: () => Promise<void>
 }
@@ -32,6 +37,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   projects: [],
   sandboxes: [],
   settings: null,
+  platform: null,
+  defaultTerminalHost: 'cmd',
   hostStats: null,
   hostStatsHistory: [],
 
@@ -70,6 +77,21 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }))
   },
 
+  async loadPlatform() {
+    const platform = await invoke<string>('get_platform')
+    set({ platform })
+  },
+
+  async loadDefaultTerminalHost() {
+    const terminalHost = await invoke<string>('get_default_terminal_host')
+    set({ defaultTerminalHost: terminalHost })
+  },
+
+  async saveDefaultTerminalHost(terminalHost) {
+    await invoke('save_default_terminal_host', { terminalHost })
+    set({ defaultTerminalHost: terminalHost })
+  },
+
   async loadHostStatsHistory() {
     const history = await invoke<HostMetric[]>('get_host_stats_history', {
       sinceMs: Date.now() - HOST_STATS_HISTORY_SEED_MS,
@@ -98,6 +120,8 @@ export function initAppStore() {
   useAppStore.getState().loadProjects()
   useAppStore.getState().loadSandboxes()
   useAppStore.getState().loadSettings()
+  useAppStore.getState().loadPlatform()
+  useAppStore.getState().loadDefaultTerminalHost()
   useAppStore.getState().loadHostStatsHistory()
   setInterval(() => {
     useAppStore.getState().loadSandboxes()

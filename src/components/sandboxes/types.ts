@@ -20,6 +20,13 @@ export interface SandboxUsage {
   output_tokens: number
 }
 
+export type BranchSyncStatus = 'fast_forwarded' | 'needs_manual_merge' | 'new_branch'
+
+export interface BranchSyncOutcome {
+  branch: string
+  status: BranchSyncStatus
+}
+
 export interface HostMetric {
   id: string
   captured_at: number

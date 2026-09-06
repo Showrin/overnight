@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { PERMISSION_MODES } from '@/lib/permissionModes'
+import { TERMINAL_HOSTS, TERMINAL_HOST_LABELS } from '@/lib/terminalHost'
 import { useAppStore } from '@/store/useAppStore'
 import { JiraConfigForm, type JiraConfig } from './JiraConfigForm'
 
@@ -14,6 +15,8 @@ export function SettingsScreen() {
   const settings = useAppStore((s) => s.settings)
   const saveSettings = useAppStore((s) => s.saveSettings)
   const saveSkillFolders = useAppStore((s) => s.saveSkillFolders)
+  const defaultTerminalHost = useAppStore((s) => s.defaultTerminalHost)
+  const saveDefaultTerminalHost = useAppStore((s) => s.saveDefaultTerminalHost)
   const [permissionMode, setPermissionMode] = useState<string>('default')
   const [savingMode, setSavingMode] = useState(false)
   const [modeError, setModeError] = useState<string | null>(null)
@@ -22,6 +25,10 @@ export function SettingsScreen() {
   const [savingSkillFolders, setSavingSkillFolders] = useState(false)
   const [skillFoldersError, setSkillFoldersError] = useState<string | null>(null)
 
+  const [terminalHost, setTerminalHost] = useState<string>('cmd')
+  const [savingTerminalHost, setSavingTerminalHost] = useState(false)
+  const [terminalHostError, setTerminalHostError] = useState<string | null>(null)
+
   const [jiraConfig, setJiraConfig] = useState<JiraConfig | null>(null)
   const [editingJira, setEditingJira] = useState(false)
 
@@ -29,6 +36,10 @@ export function SettingsScreen() {
     if (settings) setPermissionMode(settings.default_claude_permission_mode)
     if (settings) setSkillFolders(settings.skill_folders)
   }, [settings])
+
+  useEffect(() => {
+    setTerminalHost(defaultTerminalHost)
+  }, [defaultTerminalHost])
 
   async function loadJiraConfig() {
     const c = await invoke<JiraConfig>('get_jira_config')
@@ -48,6 +59,18 @@ export function SettingsScreen() {
       setModeError(String(e))
     } finally {
       setSavingMode(false)
+    }
+  }
+
+  async function handleSaveTerminalHost() {
+    setSavingTerminalHost(true)
+    setTerminalHostError(null)
+    try {
+      await saveDefaultTerminalHost(terminalHost)
+    } catch (e) {
+      setTerminalHostError(String(e))
+    } finally {
+      setSavingTerminalHost(false)
     }
   }
 
@@ -98,6 +121,33 @@ export function SettingsScreen() {
           {modeError && <p className="text-sm text-destructive">{modeError}</p>}
           <Button onClick={handleSaveMode} disabled={savingMode}>
             {savingMode ? 'Saving…' : 'Save'}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card className="w-full">
+        <CardHeader>
+          <CardTitle>Default terminal host (Windows)</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2">
+          <Select value={terminalHost} onValueChange={setTerminalHost}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {TERMINAL_HOSTS.map((host) => (
+                <SelectItem key={host} value={host}>
+                  {TERMINAL_HOST_LABELS[host]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            Which console app opens the sandbox terminal on Windows. Has no effect on macOS/Linux.
+          </p>
+          {terminalHostError && <p className="text-sm text-destructive">{terminalHostError}</p>}
+          <Button onClick={handleSaveTerminalHost} disabled={savingTerminalHost}>
+            {savingTerminalHost ? 'Saving…' : 'Save'}
           </Button>
         </CardContent>
       </Card>

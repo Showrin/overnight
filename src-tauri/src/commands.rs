@@ -208,6 +208,41 @@ pub fn save_skill_folders(pool: State<DbPool>, folders: Vec<String>) -> std::res
   Ok(())
 }
 
+/// The frontend has no other way to tell Windows apart from macOS/Linux
+/// (no `@tauri-apps/plugin-os` or similar dependency) — used to gate the
+/// Windows-only terminal-host popover in `open_sandbox_terminal`'s UI.
+#[tauri::command]
+pub fn get_platform() -> String {
+  std::env::consts::OS.to_string()
+}
+
+const SANDBOX_TERMINAL_HOST_KEY: &str = "default_terminal_host";
+const DEFAULT_TERMINAL_HOST: &str = "cmd";
+const VALID_TERMINAL_HOSTS: [&str; 2] = ["cmd", "powershell"];
+
+/// Windows-only: which console app wraps `sbx exec -it <name> bash` when a
+/// per-launch choice isn't given (see `open_sandbox_terminal`). Ignored on
+/// macOS/Linux, but kept unscoped by OS here — same shape as
+/// `default_claude_permission_mode` — since it's a harmless no-op elsewhere.
+#[tauri::command]
+pub fn get_default_terminal_host(pool: State<DbPool>) -> std::result::Result<String, String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  Ok(
+    settings::get(&conn, SANDBOX_TERMINAL_HOST_KEY)
+      .map_err(|e| e.to_string())?
+      .unwrap_or_else(|| DEFAULT_TERMINAL_HOST.to_string()),
+  )
+}
+
+#[tauri::command]
+pub fn save_default_terminal_host(pool: State<DbPool>, terminal_host: String) -> std::result::Result<(), String> {
+  if !VALID_TERMINAL_HOSTS.contains(&terminal_host.as_str()) {
+    return Err(format!("invalid terminal host: {terminal_host}"));
+  }
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  settings::set(&conn, SANDBOX_TERMINAL_HOST_KEY, &terminal_host).map_err(|e| e.to_string())
+}
+
 const JIRA_SITE_KEY: &str = "jira_site";
 const JIRA_EMAIL_KEY: &str = "jira_email";
 const JIRA_JQL_KEY: &str = "jira_jql";
@@ -808,18 +843,73 @@ pub fn open_path_in_explorer(path: String) -> std::result::Result<(), String> {
   Ok(())
 }
 
+/// `git fetch sandbox-<name>` on the host repo, fast-forwarding any local
+/// branch that can take the update cleanly. Plain host-side git — no `sbx`
+/// involved, since the daemon and remote are already wired up by `sbx`
+/// itself. Never pushes and never force-updates.
 #[tauri::command]
-pub fn open_sandbox_terminal(pool: State<DbPool>, id: String) -> std::result::Result<(), String> {
+pub fn git_sync_sandbox(pool: State<DbPool>, id: String) -> std::result::Result<Vec<crate::git::BranchSyncOutcome>, String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  let sandbox = sandboxes::get(&conn, &id).map_err(|e| e.to_string())?;
+  let name = sandbox.sbx_name.ok_or_else(|| "sandbox isn't running".to_string())?;
+  let project = projects::get(&conn, &sandbox.project_id).map_err(|e| e.to_string())?;
+
+  crate::git::sync_from_sandbox(&project.repo_path, &name).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn open_sandbox_terminal(
+  pool: State<DbPool>,
+  id: String,
+  terminal_host: Option<String>,
+) -> std::result::Result<(), String> {
   let conn = pool.get().map_err(|e| e.to_string())?;
   let sandbox = sandboxes::get(&conn, &id).map_err(|e| e.to_string())?;
   let name = sandbox.sbx_name.ok_or_else(|| "sandbox isn't running".to_string())?;
 
+  // Only the Windows block below consults this — keep it used unconditionally
+  // so non-Windows targets don't warn about an unused parameter.
+  let _ = &terminal_host;
+
   #[cfg(target_os = "windows")]
   {
-    std::process::Command::new("cmd")
-      .args(["/C", "start", "cmd", "/K", &format!("sbx exec -it {name} bash")])
+    // Unset means "use the app-wide default" — resolved per launch, not
+    // snapshotted onto the sandbox (unlike permission_mode at create time),
+    // since this only affects which host app opens right now.
+    let terminal_host = match terminal_host.filter(|h| !h.trim().is_empty()) {
+      Some(h) => {
+        if !VALID_TERMINAL_HOSTS.contains(&h.as_str()) {
+          return Err(format!("invalid terminal host: {h}"));
+        }
+        h
+      }
+      None => settings::get(&conn, SANDBOX_TERMINAL_HOST_KEY)
+        .map_err(|e| e.to_string())?
+        .unwrap_or_else(|| DEFAULT_TERMINAL_HOST.to_string()),
+    };
+
+    // Prefer a Windows Terminal tab (if `wt.exe` is on PATH) over a
+    // standalone console window; fall back to today's `cmd /C start ...`
+    // behavior on any spawn error (no PATH pre-check — see plan notes).
+    let wt_profile = if terminal_host == "powershell" { "PowerShell" } else { "Command Prompt" };
+    let wt_spawned = std::process::Command::new("wt.exe")
+      .args(["-w", "0", "new-tab", "-p", wt_profile, "--", "sbx", "exec", "-it", &name, "bash"])
       .spawn()
-      .map_err(|e| e.to_string())?;
+      .is_ok();
+
+    if !wt_spawned {
+      if terminal_host == "powershell" {
+        std::process::Command::new("cmd")
+          .args(["/C", "start", "powershell", "-NoExit", "-Command", &format!("sbx exec -it {name} bash")])
+          .spawn()
+          .map_err(|e| e.to_string())?;
+      } else {
+        std::process::Command::new("cmd")
+          .args(["/C", "start", "cmd", "/K", &format!("sbx exec -it {name} bash")])
+          .spawn()
+          .map_err(|e| e.to_string())?;
+      }
+    }
   }
   #[cfg(target_os = "macos")]
   {
