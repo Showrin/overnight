@@ -22,21 +22,8 @@ export function ProjectForm({
   const [devServerPort, setDevServerPort] = useState(
     initial?.dev_server_port != null ? String(initial.dev_server_port) : ''
   )
-  const [extraClonePaths, setExtraClonePaths] = useState<string[]>(initial?.extra_clone_paths ?? [])
-  const [newPattern, setNewPattern] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
-  function addPattern() {
-    const pattern = newPattern.trim()
-    if (!pattern) return
-    setExtraClonePaths((paths) => [...paths, pattern])
-    setNewPattern('')
-  }
-
-  function removePattern(index: number) {
-    setExtraClonePaths((paths) => paths.filter((_, i) => i !== index))
-  }
 
   async function browseRepoPath() {
     const path = await open({ directory: true, multiple: false })
@@ -48,14 +35,6 @@ export function ProjectForm({
     if (typeof path === 'string') setPlansPath(path)
   }
 
-  async function browseClonePath(kind: 'file' | 'folder') {
-    const selection = await open({ directory: kind === 'folder', multiple: true })
-    if (!selection) return
-    const paths = Array.isArray(selection) ? selection : [selection]
-    if (paths.length === 0) return
-    setExtraClonePaths((existing) => [...existing, ...paths])
-  }
-
   async function handleSave() {
     setSaving(true)
     setError(null)
@@ -65,7 +44,6 @@ export function ProjectForm({
         repoPath,
         plansPath: plansPath.trim() ? plansPath : null,
         devServerPort: devServerPort.trim() ? Number(devServerPort) : null,
-        extraClonePaths,
       }
       if (initial) {
         await invoke('update_project', { id: initial.id, ...args })
@@ -126,52 +104,6 @@ export function ProjectForm({
             value={devServerPort}
             onChange={(e) => setDevServerPort(e.target.value)}
           />
-        </div>
-        <div className="flex flex-col gap-1">
-          <Label>Extra files/folders to clone (optional)</Label>
-          <div className="flex gap-2">
-            <Input
-              placeholder="type a glob pattern, or browse below"
-              value={newPattern}
-              onChange={(e) => setNewPattern(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault()
-                  addPattern()
-                }
-              }}
-            />
-            <Button type="button" variant="outline" onClick={addPattern}>
-              Add
-            </Button>
-          </div>
-          <div className="flex gap-2">
-            <Button type="button" variant="outline" size="sm" onClick={() => browseClonePath('file')}>
-              Browse file(s)
-            </Button>
-            <Button type="button" variant="outline" size="sm" onClick={() => browseClonePath('folder')}>
-              Browse folder
-            </Button>
-          </div>
-          {extraClonePaths.length > 0 && (
-            <ul className="flex flex-col gap-1">
-              {extraClonePaths.map((pattern, index) => (
-                <li
-                  key={`${pattern}-${index}`}
-                  className="flex items-center justify-between gap-2 rounded-lg border border-border px-2.5 py-1 text-sm"
-                >
-                  <span className="truncate">{pattern}</span>
-                  <button
-                    type="button"
-                    onClick={() => removePattern(index)}
-                    className="text-muted-foreground hover:text-destructive"
-                  >
-                    Remove
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
         </div>
         {error && <p className="text-sm text-destructive">{error}</p>}
         <div className="flex gap-2">
