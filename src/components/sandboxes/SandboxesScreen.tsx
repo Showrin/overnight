@@ -14,6 +14,7 @@ function SandboxGroup({
   sandboxes,
   projectName,
   onAddNew,
+  addNewDisabled,
   onChanged,
   highlightedSandboxId,
 }: {
@@ -21,6 +22,7 @@ function SandboxGroup({
   sandboxes: Sandbox[]
   projectName: string
   onAddNew?: () => void
+  addNewDisabled?: boolean
   onChanged: () => void
   highlightedSandboxId?: string | null
 }) {
@@ -29,9 +31,15 @@ function SandboxGroup({
       <div className="flex items-center justify-between">
         <span className="text-xs font-normal text-muted-foreground">{title}</span>
         {onAddNew && (
-          <Button size="sm" variant="outline" onClick={onAddNew}>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onAddNew}
+            disabled={addNewDisabled}
+            title={addNewDisabled ? 'A mount-mode sandbox is already running for this project' : undefined}
+          >
             <Plus className="size-3.5" />
-            Add New
+            {addNewDisabled ? 'Sandbox running' : 'Add New'}
           </Button>
         )}
       </div>
@@ -115,18 +123,22 @@ export function SandboxesScreen({
       <div className="flex flex-1 flex-col gap-6">
         <h1 className="text-lg font-medium">Sandboxes</h1>
         <p className="text-xs text-muted-foreground">
-          If this is the first sandbox created on this machine, `sbx` may prompt for a network policy the first time —
-          run <code>sbx run claude</code> once yourself in a terminal beforehand if creation seems stuck.
+          If this is the first sandbox created on this machine, `sbx` may prompt
+          for a network policy the first time — run <code>sbx run claude</code>{" "}
+          once yourself in a terminal beforehand if creation seems stuck.
         </p>
 
-        <Dialog open={creatingForProjectId != null} onOpenChange={(open) => !open && setCreatingForProjectId(null)}>
+        <Dialog
+          open={creatingForProjectId != null}
+          onOpenChange={(open) => !open && setCreatingForProjectId(null)}
+        >
           <DialogContent title="New sandbox">
             {creatingForProjectId && (
               <CreateSandboxDialog
                 defaultProjectId={creatingForProjectId}
                 onCreated={() => {
-                  setCreatingForProjectId(null)
-                  loadSandboxes()
+                  setCreatingForProjectId(null);
+                  loadSandboxes();
                 }}
                 onCancel={() => setCreatingForProjectId(null)}
               />
@@ -135,20 +147,33 @@ export function SandboxesScreen({
         </Dialog>
 
         {projects.length === 0 && (
-          <p className="text-sm text-muted-foreground">Create a project first, then start a sandbox for it.</p>
+          <p className="text-sm text-muted-foreground">
+            Create a project first, then start a sandbox for it.
+          </p>
         )}
 
-        {projects.map((project) => (
-          <SandboxGroup
-            key={project.id}
-            title={project.name}
-            projectName={project.name}
-            sandboxes={sandboxes.filter((sb) => sb.project_id === project.id)}
-            onAddNew={() => setCreatingForProjectId(project.id)}
-            onChanged={loadSandboxes}
-            highlightedSandboxId={highlightedSandboxId}
-          />
-        ))}
+        {projects.map((project) => {
+          const projectSandboxes = sandboxes.filter(
+            (sb) => sb.project_id === project.id,
+          );
+          const hasActiveMount = projectSandboxes.some(
+            (sb) =>
+              sb.mode === "mount" &&
+              (sb.status === "starting" || sb.status === "running"),
+          );
+          return (
+            <SandboxGroup
+              key={project.id}
+              title={project.name}
+              projectName={project.name}
+              sandboxes={projectSandboxes}
+              onAddNew={() => setCreatingForProjectId(project.id)}
+              addNewDisabled={hasActiveMount}
+              onChanged={loadSandboxes}
+              highlightedSandboxId={highlightedSandboxId}
+            />
+          );
+        })}
 
         {orphanSandboxes.length > 0 && (
           <SandboxGroup
@@ -169,5 +194,5 @@ export function SandboxesScreen({
         <HostStatsPanel layout="bar" />
       </div>
     </div>
-  )
+  );
 }

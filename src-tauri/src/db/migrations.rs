@@ -198,6 +198,15 @@ pub fn migrations() -> Migrations<'static> {
     ALTER TABLE host_metrics ADD COLUMN network_rx_kb_per_sec REAL NOT NULL DEFAULT 0;
     ALTER TABLE host_metrics ADD COLUMN network_tx_kb_per_sec REAL NOT NULL DEFAULT 0;
     ",
+  ), M::up(
+    "
+    -- Enforces at most one active (starting/running) mount-mode sandbox per
+    -- project at the DB level, closing the TOCTOU window between
+    -- create_sandbox's pre-insert check and the insert itself.
+    CREATE UNIQUE INDEX ux_sandboxes_active_mount_per_project
+      ON sandboxes(project_id)
+      WHERE mode = 'mount' AND status IN ('starting', 'running');
+    ",
   )])
 }
 
