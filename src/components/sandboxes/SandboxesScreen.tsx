@@ -15,12 +15,14 @@ function SandboxGroup({
   projectName,
   onAddNew,
   onChanged,
+  highlightedSandboxId,
 }: {
   title: string
   sandboxes: Sandbox[]
   projectName: string
   onAddNew?: () => void
   onChanged: () => void
+  highlightedSandboxId?: string | null
 }) {
   return (
     <div className="flex flex-col gap-2">
@@ -38,7 +40,13 @@ function SandboxGroup({
       ) : (
         <div className="flex flex-col gap-2">
           {sandboxes.map((sandbox) => (
-            <SandboxCard key={sandbox.id} sandbox={sandbox} projectName={projectName} onChanged={onChanged} />
+            <SandboxCard
+              key={sandbox.id}
+              sandbox={sandbox}
+              projectName={projectName}
+              onChanged={onChanged}
+              highlighted={sandbox.id === highlightedSandboxId}
+            />
           ))}
         </div>
       )}
@@ -46,7 +54,11 @@ function SandboxGroup({
   )
 }
 
-export function SandboxesScreen() {
+export function SandboxesScreen({
+  highlightedSandboxId,
+}: {
+  highlightedSandboxId?: string | null
+} = {}) {
   const sandboxes = useAppStore((s) => s.sandboxes)
   const projects = useAppStore((s) => s.projects)
   const loadSandboxes = useAppStore((s) => s.loadSandboxes)
@@ -134,6 +146,7 @@ export function SandboxesScreen() {
             sandboxes={sandboxes.filter((sb) => sb.project_id === project.id)}
             onAddNew={() => setCreatingForProjectId(project.id)}
             onChanged={loadSandboxes}
+            highlightedSandboxId={highlightedSandboxId}
           />
         ))}
 
@@ -143,6 +156,7 @@ export function SandboxesScreen() {
             projectName="Unknown project"
             sandboxes={orphanSandboxes}
             onChanged={loadSandboxes}
+            highlightedSandboxId={highlightedSandboxId}
           />
         )}
       </div>

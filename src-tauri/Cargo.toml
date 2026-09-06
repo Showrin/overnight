@@ -24,6 +24,7 @@ log = "0.4"
 tauri = { version = "2.11.3", features = ["tray-icon"] }
 tauri-plugin-log = "2"
 tauri-plugin-notification = "2"
+notify-rust = "4"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 r2d2 = "0.8.10"
 r2d2_sqlite = "0.35.0"

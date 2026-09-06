@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { listen } from '@tauri-apps/api/event'
 import { Titlebar } from '@/components/titlebar'
 import { Sidebar, type Screen } from '@/components/sidebar'
 import { JiraIssueList } from '@/components/dashboard/JiraIssueList'
@@ -7,9 +8,13 @@ import { SandboxesScreen } from '@/components/sandboxes/SandboxesScreen'
 import { SettingsScreen } from '@/components/settings/SettingsScreen'
 import { initAppStore } from '@/store/useAppStore'
 
+// Matches the glow-pulse animation's duration (1.2s x 3) in index.css.
+const GLOW_DURATION_MS = 3600
+
 function App() {
   const [screen, setScreen] = useState<Screen>('projects')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [highlightedSandboxId, setHighlightedSandboxId] = useState<string | null>(null)
 
   useEffect(() => {
     initAppStore()
@@ -26,6 +31,17 @@ function App() {
     }
   }, [])
 
+  useEffect(() => {
+    const unlisten = listen<string>('notification-clicked', (event) => {
+      setScreen('sandboxes')
+      setHighlightedSandboxId(event.payload)
+      setTimeout(() => setHighlightedSandboxId(null), GLOW_DURATION_MS)
+    })
+    return () => {
+      unlisten.then((fn) => fn())
+    }
+  }, [])
+
   return (
     <div className="flex h-screen flex-col bg-background">
       <Titlebar
@@ -38,7 +54,7 @@ function App() {
           <div className="@container w-full max-w-[1024px] p-6">
             {screen === 'dashboard' && <JiraIssueList />}
             {screen === 'projects' && <ProjectsScreen />}
-            {screen === 'sandboxes' && <SandboxesScreen />}
+            {screen === 'sandboxes' && <SandboxesScreen highlightedSandboxId={highlightedSandboxId} />}
             {screen === 'settings' && <SettingsScreen />}
           </div>
         </main>
