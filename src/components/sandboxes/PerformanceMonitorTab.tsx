@@ -5,6 +5,7 @@ import { useAppStore } from '@/store/useAppStore'
 import type { ContainerMetric, HostMetric } from './types'
 
 const WINDOW_MS = 90 * 24 * 60 * 60 * 1000
+const CHART_HEIGHT = 160
 
 function formatKbPerSec(kbPerSec: number): string {
   return kbPerSec >= 1024 ? `${(kbPerSec / 1024).toFixed(1)}MB/s` : `${kbPerSec.toFixed(0)}KB/s`
@@ -29,7 +30,7 @@ function StatChart({
         <span className="text-xs font-normal text-muted-foreground">{label}</span>
         <span className="text-sm font-medium">{current ?? '—'}</span>
       </div>
-      <Sparkline data={data} max={max} value={value} />
+      <Sparkline data={data} max={max} value={value} height={CHART_HEIGHT} />
     </div>
   )
 }

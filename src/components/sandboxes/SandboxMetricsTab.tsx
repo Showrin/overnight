@@ -22,6 +22,7 @@ function StatChart({
   data,
   max,
   value,
+  height,
 }: {
   label: string
   current: string | null
@@ -29,18 +30,21 @@ function StatChart({
   data: number[]
   max?: number
   value?: number
+  height?: number
 }) {
   return (
-    <div className="flex min-w-36 flex-1 flex-col gap-1">
+    <div className="flex flex-col gap-1">
       <div className="flex items-baseline justify-between gap-2">
         <span className="text-xs font-normal text-muted-foreground">{label}</span>
         <span className="text-sm font-medium">{current ?? '—'}</span>
       </div>
-      <Sparkline data={data} max={max} value={value} />
+      <Sparkline data={data} max={max} value={value} height={height} />
       {caption && <span className="text-xs text-muted-foreground">{caption}</span>}
     </div>
   )
 }
+
+const CHART_HEIGHT = 200
 
 // Live CPU/memory/network for the SELECTED sandbox, read via `sbx exec`
 // /proc reads inside its VM — host `docker stats` can't see into a
@@ -111,18 +115,20 @@ export function SandboxMetricsTab({ sandbox }: { sandbox: Sandbox }) {
           Metrics are only sampled while the sandbox is running — showing the last known history.
         </p>
       )}
-      <div className="flex flex-wrap justify-between gap-4">
+      <div className="flex flex-col gap-4">
         <StatChart
           label="CPU"
           current={current ? `${current.cpu_percent.toFixed(0)}%` : null}
           data={points.map((m) => m.cpu_percent)}
           max={100}
           value={current?.cpu_percent}
+          height={CHART_HEIGHT}
         />
         <StatChart
           label="Memory"
           current={current ? `${(current.memory_mb / 1024).toFixed(2)} GB` : null}
           data={points.map((m) => m.memory_mb)}
+          height={CHART_HEIGHT}
         />
         <StatChart
           label="Network"
@@ -132,6 +138,7 @@ export function SandboxMetricsTab({ sandbox }: { sandbox: Sandbox }) {
               : null
           }
           data={points.map((m) => m.network_rx_bytes + m.network_tx_bytes)}
+          height={CHART_HEIGHT}
         />
       </div>
     </div>
