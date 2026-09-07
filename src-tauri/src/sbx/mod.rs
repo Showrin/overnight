@@ -109,6 +109,34 @@ pub fn clear_stale_host_key(name: &str) {
   }
 }
 
+/// Win32-OpenSSH's strict permission check refuses a config/known_hosts
+/// file whose ACL grants access to anyone besides the owner/Administrators/
+/// SYSTEM ("Bad owner or permissions..."), which can happen to sbx's
+/// managed ssh directory (e.g. a stray inherited ACE) and blocks ssh.exe
+/// before it even gets to host-key checks. Resets that directory's ACL to
+/// just the current user. No-op on non-Windows or if the directory doesn't
+/// exist yet.
+#[cfg(target_os = "windows")]
+pub fn fix_ssh_config_permissions() {
+  let Ok(local_app_data) = std::env::var("LOCALAPPDATA") else { return };
+  let ssh_dir = std::path::Path::new(&local_app_data).join("DockerSandboxes").join("sandboxes").join("config").join("ssh");
+  if !ssh_dir.exists() {
+    return;
+  }
+  let Ok(user) = std::env::var("USERNAME") else { return };
+  let dir = ssh_dir.to_string_lossy().to_string();
+  let run = |args: &[&str]| {
+    if let Err(e) = std::process::Command::new("icacls").args(args).output() {
+      log::warn!("fix_ssh_config_permissions: icacls {args:?} failed: {e}");
+    }
+  };
+  run(&[&dir, "/inheritance:r", "/T", "/C"]);
+  run(&[&dir, "/grant:r", &format!("{user}:(OI)(CI)F"), "/T", "/C"]);
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn fix_ssh_config_permissions() {}
+
 /// `sbx policy init <preset>` — one-time, machine-wide setup that answers
 /// the interactive network-policy prompt headlessly. `preset` must be one
 /// of `allow-all`, `balanced`, or `deny-all` (sbx's own accepted values).
