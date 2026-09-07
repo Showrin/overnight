@@ -2,13 +2,37 @@ import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { ChevronDown, ChevronRight, Loader2, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { DiffViewer } from './DiffViewer'
+import { DiffViewer, splitPatchByFile } from './DiffViewer'
 import type { BranchDiff, Sandbox, SandboxDiff } from './types'
 
 const BASE_BRANCH_UNKNOWN_COPY = 'Base branch unknown — this sandbox predates branch tracking.'
 
+function FileDiffSection({ filePath, patch }: { filePath: string; patch: string }) {
+  const [expanded, setExpanded] = useState(false)
+
+  return (
+    <div className="flex flex-col gap-2 rounded-md border border-border">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex items-center gap-2 p-2 text-left"
+      >
+        {expanded ? (
+          <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+        ) : (
+          <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+        )}
+        <span className="truncate font-mono text-xs text-foreground">{filePath}</span>
+      </button>
+
+      {expanded && <DiffViewer patch={patch} />}
+    </div>
+  )
+}
+
 function BranchDiffSection({ diff }: { diff: BranchDiff }) {
   const [expanded, setExpanded] = useState(false)
+  const files = expanded ? splitPatchByFile(diff.patch) : []
 
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border p-3">
@@ -30,7 +54,15 @@ function BranchDiffSection({ diff }: { diff: BranchDiff }) {
         </div>
       </button>
 
-      {expanded && <DiffViewer patch={diff.patch} />}
+      {expanded && (
+        <div className="flex flex-col gap-2">
+          {files.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No changes.</p>
+          ) : (
+            files.map((file) => <FileDiffSection key={file.filePath} filePath={file.filePath} patch={file.patch} />)
+          )}
+        </div>
+      )}
     </div>
   )
 }

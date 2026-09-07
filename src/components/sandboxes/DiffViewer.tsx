@@ -1,71 +1,179 @@
-export type DiffLineKind = 'meta' | 'hunk' | 'add' | 'remove' | 'context'
+export interface DiffFilePatch {
+  filePath: string
+  patch: string
+}
 
-export interface DiffLine {
-  kind: DiffLineKind
+// Hand-rolled per-file split — no diff npm package, matching the codebase's
+// existing preference for thin wrappers around real CLI output (see
+// git.rs's diff/diff_stat). `git diff` concatenates every changed file's
+// patch into one string, each starting with its own "diff --git a/X b/Y"
+// line, so splitting on that line boundary recovers per-file patches.
+export function splitPatchByFile(patch: string): DiffFilePatch[] {
+  if (!patch) return []
+  const lines = patch.split('\n')
+  const files: DiffFilePatch[] = []
+  let current: string[] | null = null
+
+  function pushCurrent() {
+    if (current) files.push({ filePath: extractFilePath(current[0]), patch: current.join('\n') })
+  }
+
+  for (const line of lines) {
+    if (line.startsWith('diff --git ')) {
+      pushCurrent()
+      current = [line]
+    } else if (current) {
+      current.push(line)
+    }
+  }
+  pushCurrent()
+  return files
+}
+
+// "diff --git a/old b/new" — prefer the "b/" (new) path since that's what
+// users recognize the file as; fall back to "a/" for a deleted file, where
+// "b/" points at /dev/null instead of a real path.
+function extractFilePath(diffGitLine: string): string {
+  const match = diffGitLine.match(/^diff --git a\/(.+) b\/(.+)$/)
+  if (!match) return diffGitLine
+  const [, oldPath, newPath] = match
+  return newPath !== '/dev/null' ? newPath : oldPath
+}
+
+export type DiffCellKind = 'context' | 'remove' | 'add' | 'empty'
+
+export interface DiffCell {
+  kind: DiffCellKind
   text: string
 }
 
-// Hand-rolled unified-diff line classifier — no diff npm package, matching
-// the codebase's existing preference for thin wrappers around real CLI
-// output (see git.rs's diff/diff_stat). Classifies each line by its first
-// character(s):
-//   - "diff --git", "index ", "--- ", "+++ "  -> meta (file/header lines)
-//   - "@@"                                    -> hunk (hunk header)
-//   - "+" (not "+++")                         -> add
-//   - "-" (not "---")                         -> remove
-//   - anything else                           -> context
-// The "---"/"+++ " file-header special-case matters: without it, those two
-// lines would be misclassified as a removed/added content line just
-// because they start with the same character.
-export function parseUnifiedDiff(patch: string): DiffLine[] {
-  if (!patch) return []
-  return patch.split('\n').map((text) => ({ kind: classifyLine(text), text }))
+export interface DiffRow {
+  left: DiffCell
+  right: DiffCell
 }
 
-function classifyLine(text: string): DiffLineKind {
-  if (
-    text.startsWith('diff --git') ||
-    text.startsWith('index ') ||
-    text.startsWith('--- ') ||
-    text.startsWith('+++ ')
-  ) {
-    return 'meta'
+export interface DiffHunk {
+  header: string
+  rows: DiffRow[]
+}
+
+// Pairs a single file's unified-diff hunks into side-by-side rows: within a
+// hunk, consecutive removed lines and consecutive added lines are zipped
+// row-by-row (the same pairing a side-by-side view conventionally shows,
+// treating a same-position remove+add as "this line changed" rather than
+// "a line vanished, then an unrelated one appeared"), padding the shorter
+// side with an empty cell. Context lines flush any pending pair first and
+// then appear identically on both sides. File-header lines ("diff --git",
+// "index", "---", "+++") are skipped — the accordion row above already
+// shows the filename.
+export function parseFileDiff(patch: string): DiffHunk[] {
+  const lines = patch.split('\n')
+  if (lines[lines.length - 1] === '') lines.pop()
+
+  const hunks: DiffHunk[] = []
+  let current: DiffHunk | null = null
+  let pendingRemoves: string[] = []
+  let pendingAdds: string[] = []
+
+  function flush() {
+    if (!current) return
+    const max = Math.max(pendingRemoves.length, pendingAdds.length)
+    for (let i = 0; i < max; i++) {
+      const removed = pendingRemoves[i]
+      const added = pendingAdds[i]
+      current.rows.push({
+        left: removed !== undefined ? { kind: 'remove', text: removed } : { kind: 'empty', text: '' },
+        right: added !== undefined ? { kind: 'add', text: added } : { kind: 'empty', text: '' },
+      })
+    }
+    pendingRemoves = []
+    pendingAdds = []
   }
-  if (text.startsWith('@@')) return 'hunk'
-  if (text.startsWith('+')) return 'add'
-  if (text.startsWith('-')) return 'remove'
-  return 'context'
+
+  for (const line of lines) {
+    if (line.startsWith('@@')) {
+      flush()
+      current = { header: line, rows: [] }
+      hunks.push(current)
+      continue
+    }
+    if (!current) continue
+    if (line.startsWith('\\')) continue // "\ No newline at end of file"
+    if (line.startsWith('-') && !line.startsWith('---')) {
+      pendingRemoves.push(line.slice(1))
+      continue
+    }
+    if (line.startsWith('+') && !line.startsWith('+++')) {
+      pendingAdds.push(line.slice(1))
+      continue
+    }
+    flush()
+    const text = line.startsWith(' ') ? line.slice(1) : line
+    current.rows.push({ left: { kind: 'context', text }, right: { kind: 'context', text } })
+  }
+  flush()
+  return hunks
 }
 
-// Reuses the app's existing semantic success/destructive theme tokens
-// (see badge.tsx) rather than raw Tailwind color utilities, so the diff
-// stays correctly themed in both light and dark mode without inventing a
-// second color system.
-const LINE_CLASS: Record<DiffLineKind, string> = {
-  meta: 'text-muted-foreground',
-  hunk: 'font-semibold text-foreground',
-  add: 'text-success',
-  remove: 'text-destructive',
+// Red/green only shows up as a tinted background — the code text itself
+// stays a faded neutral color (matching the Plans tab's faded-text
+// convention) rather than colored red/green, so the diff reads as "this
+// line's background says remove/add" instead of "this text is red/green".
+const CELL_CLASS: Record<DiffCellKind, string> = {
   context: 'text-muted-foreground',
+  remove: 'bg-destructive/10 text-foreground/70',
+  add: 'bg-success/10 text-foreground/70',
+  empty: 'bg-muted/20',
 }
 
-// Pure component: renders a unified-diff patch string as colored lines.
-// Takes no sandbox/fetch concerns of its own — SandboxDiffTab owns loading
-// and passes the patch string straight through.
-export function DiffViewer({ patch }: { patch: string }) {
-  const lines = parseUnifiedDiff(patch)
+// Common single-line/block comment markers across the languages this app's
+// diffs are likely to show — no per-language syntax awareness, just enough
+// to fade obviously-comment lines a bit more than regular code.
+const COMMENT_PREFIXES = ['//', '#', '--', '/*', '*', '<!--']
 
-  if (lines.length === 0) {
+function isCommentLine(text: string): boolean {
+  const trimmed = text.trimStart()
+  return COMMENT_PREFIXES.some((prefix) => trimmed.startsWith(prefix))
+}
+
+// Pure component: renders one file's patch as a side-by-side (old | new)
+// table. Takes no fetch concerns of its own — SandboxDiffTab owns loading.
+export function DiffViewer({ patch }: { patch: string }) {
+  const hunks = parseFileDiff(patch)
+
+  if (hunks.length === 0) {
     return <p className="text-sm text-muted-foreground">No changes.</p>
   }
 
   return (
-    <pre className="overflow-x-auto rounded-md border border-border bg-muted/30 p-3 text-xs leading-relaxed">
-      {lines.map((line, i) => (
-        <div key={i} className={LINE_CLASS[line.kind]}>
-          {line.text.length > 0 ? line.text : ' '}
+    <div className="overflow-x-auto rounded-md border border-border">
+      {hunks.map((hunk, i) => (
+        <div key={i}>
+          <div className="bg-muted/40 px-2 py-1 font-mono text-xs text-muted-foreground">{hunk.header}</div>
+          <table className="w-full table-fixed border-collapse text-xs leading-relaxed">
+            <tbody>
+              {hunk.rows.map((row, j) => (
+                <tr key={j}>
+                  <td
+                    className={`w-1/2 whitespace-normal px-2 align-top font-mono ${CELL_CLASS[row.left.kind]} ${
+                      isCommentLine(row.left.text) ? 'opacity-60' : ''
+                    }`}
+                  >
+                    {row.left.text.length > 0 ? row.left.text : ' '}
+                  </td>
+                  <td
+                    className={`w-1/2 whitespace-normal border-l border-border px-2 align-top font-mono ${CELL_CLASS[row.right.kind]} ${
+                      isCommentLine(row.right.text) ? 'opacity-60' : ''
+                    }`}
+                  >
+                    {row.right.text.length > 0 ? row.right.text : ' '}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       ))}
-    </pre>
+    </div>
   )
 }
