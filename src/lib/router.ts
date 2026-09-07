@@ -3,14 +3,14 @@
 // uses the id segment, for the sandbox detail page). Pairing this with the
 // browser's native History API gives real back/forward navigation for free.
 
-export type Screen = 'dashboard' | 'projects' | 'sandboxes' | 'settings'
+export type Screen = 'dashboard' | 'projects' | 'sandboxes' | 'performance-monitor' | 'settings'
 
 export interface Route {
   screen: Screen
   sandboxId?: string
 }
 
-const SCREENS: readonly Screen[] = ['dashboard', 'projects', 'sandboxes', 'settings']
+const SCREENS: readonly Screen[] = ['dashboard', 'projects', 'sandboxes', 'performance-monitor', 'settings']
 
 function isScreen(value: string): value is Screen {
   return (SCREENS as readonly string[]).includes(value)

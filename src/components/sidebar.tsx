@@ -1,4 +1,4 @@
-import { Box, FolderGit2, Settings } from 'lucide-react'
+import { Activity, Box, FolderGit2, Settings } from 'lucide-react'
 import { SidebarSandboxList } from '@/components/sandboxes/SidebarSandboxList'
 import type { Route, Screen } from '@/lib/router'
 
@@ -10,6 +10,7 @@ const groups: { label: string; items: NavItem[] }[] = [
     items: [
       { screen: 'projects', label: 'Projects', icon: FolderGit2 },
       { screen: 'sandboxes', label: 'Sandboxes', icon: Box },
+      { screen: 'performance-monitor', label: 'Performance Monitor', icon: Activity },
     ],
   },
   {

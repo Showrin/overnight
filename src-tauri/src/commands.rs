@@ -1298,7 +1298,7 @@ pub async fn get_sandbox_branch_info(app: AppHandle, pool: State<'_, DbPool>, id
   capture_branch_snapshot(&app, &pool, &id, &name).await
 }
 
-const HOST_METRICS_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1000;
+const HOST_METRICS_RETENTION_MS: i64 = 90 * 24 * 60 * 60 * 1000;
 
 /// Samples current host-wide CPU/memory/disk/network usage, records it,
 /// and prunes samples older than `HOST_METRICS_RETENTION_MS`. Called on

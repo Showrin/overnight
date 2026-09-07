@@ -4,6 +4,7 @@ import { Titlebar } from '@/components/titlebar'
 import { Sidebar } from '@/components/sidebar'
 import { JiraIssueList } from '@/components/dashboard/JiraIssueList'
 import { ProjectsScreen } from '@/components/projects/ProjectsScreen'
+import { PerformanceMonitorTab } from '@/components/sandboxes/PerformanceMonitorTab'
 import { SandboxesScreen } from '@/components/sandboxes/SandboxesScreen'
 import { SettingsScreen } from '@/components/settings/SettingsScreen'
 import { parseRoute, pushRoute, type Route } from '@/lib/router'
@@ -65,6 +66,7 @@ function App() {
             {route.screen === 'sandboxes' && (
               <SandboxesScreen sandboxId={route.sandboxId} navigate={navigate} />
             )}
+            {route.screen === 'performance-monitor' && <PerformanceMonitorTab />}
             {route.screen === 'settings' && <SettingsScreen />}
           </div>
         </main>
