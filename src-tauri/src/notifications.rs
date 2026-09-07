@@ -19,6 +19,8 @@ pub fn notify(
   sandbox_id: Option<String>,
 ) -> Result<(), String> {
   let mut notification = Notification::new();
+  let product_name = app.config().product_name.clone().unwrap_or_else(|| "Overnight".into());
+  notification.appname(&product_name);
   notification.summary(&title);
   if let Some(body) = &body {
     notification.body(body);
@@ -46,6 +48,7 @@ pub fn notify(
 
 fn focus_main_window(app: &AppHandle) {
   if let Some(window) = app.get_webview_window("main") {
+    let _ = window.unminimize();
     let _ = window.show();
     let _ = window.set_focus();
   }
