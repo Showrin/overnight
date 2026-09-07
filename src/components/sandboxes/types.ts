@@ -73,6 +73,14 @@ export interface SandboxDiff {
   branches: BranchDiff[]
 }
 
+// One `.md` file found under the sandbox's `/.claude/plans` after a
+// sync_sandbox_plans call.
+export interface PlanFile {
+  name: string
+  content: string
+  modified_at: number
+}
+
 export interface HostMetric {
   id: string
   captured_at: number

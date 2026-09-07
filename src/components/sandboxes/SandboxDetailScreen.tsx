@@ -8,14 +8,16 @@ import { useAppStore } from '@/store/useAppStore'
 import { SandboxBranchTab } from './SandboxBranchTab'
 import { SandboxDiffTab } from './SandboxDiffTab'
 import { SandboxMetricsTab } from './SandboxMetricsTab'
+import { SandboxPlansTab } from './SandboxPlansTab'
 
-type DetailTab = 'overview' | 'branch' | 'metrics' | 'diff'
+type DetailTab = 'overview' | 'branch' | 'metrics' | 'diff' | 'plans'
 
 const TABS: { id: DetailTab; label: string }[] = [
   { id: 'overview', label: 'Overview' },
   { id: 'branch', label: 'Branch' },
   { id: 'metrics', label: 'Metrics' },
   { id: 'diff', label: 'Diff' },
+  { id: 'plans', label: 'Plans' },
 ]
 
 export function SandboxDetailScreen({
@@ -122,6 +124,8 @@ export function SandboxDetailScreen({
       {tab === 'metrics' && <SandboxMetricsTab sandbox={sandbox} />}
 
       {tab === 'diff' && <SandboxDiffTab sandbox={sandbox} />}
+
+      {tab === 'plans' && <SandboxPlansTab sandbox={sandbox} />}
     </div>
   )
 }

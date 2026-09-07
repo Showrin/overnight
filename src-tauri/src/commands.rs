@@ -1107,6 +1107,9 @@ pub async fn delete_sandbox(app: AppHandle, pool: State<'_, DbPool>, id: String)
   };
   if let Some(name) = sandbox.sbx_name {
     crate::sbx::rm(&app, &name).await.map_err(|e| e.to_string())?;
+    if let Ok(dest) = plans_dest_dir(&app, &name) {
+      let _ = std::fs::remove_dir_all(&dest);
+    }
   }
 
   let conn = pool.get().map_err(|e| e.to_string())?;
@@ -1173,6 +1176,86 @@ pub async fn backup_sandbox_claude_data(app: AppHandle, pool: State<'_, DbPool>,
 
   let conn = pool.get().map_err(|e| e.to_string())?;
   sandboxes::record_backup(&conn, &id, &dest, at).map_err(|e| e.to_string())
+}
+
+/// The `claude` CLI's plans directory inside the sandbox — resynced to the
+/// host each time the Plans tab loads or "Resync" is clicked (unlike the
+/// Claude-data backup above, this path is re-synced in place rather than
+/// versioned per timestamp, since it's meant to always reflect the current
+/// in-sandbox plan files).
+const PLANS_SOURCE_PATH: &str = "/home/agent/.claude/plans";
+
+#[derive(Serialize)]
+pub struct PlanFile {
+  pub name: String,
+  pub content: String,
+  pub modified_at: i64,
+}
+
+fn plans_dest_dir(app: &AppHandle, sbx_name: &str) -> std::result::Result<std::path::PathBuf, String> {
+  Ok(app.path().app_data_dir().map_err(|e| e.to_string())?.join("plans").join(sbx_name))
+}
+
+fn read_plan_files(dir: &std::path::Path) -> std::io::Result<Vec<PlanFile>> {
+  let mut plans = Vec::new();
+  if !dir.exists() {
+    return Ok(plans);
+  }
+  for entry in std::fs::read_dir(dir)? {
+    let entry = entry?;
+    let path = entry.path();
+    if path.extension().and_then(|e| e.to_str()) != Some("md") {
+      continue;
+    }
+    let name = entry.file_name().to_string_lossy().to_string();
+    let content = std::fs::read_to_string(&path)?;
+    let modified_at = entry
+      .metadata()?
+      .modified()
+      .ok()
+      .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+      .map(|d| d.as_millis() as i64)
+      .unwrap_or(0);
+    plans.push(PlanFile { name, content, modified_at });
+  }
+  plans.sort_by(|a, b| b.modified_at.cmp(&a.modified_at));
+  Ok(plans)
+}
+
+/// Wipes and re-copies this sandbox's `/.claude/plans` to
+/// `<app_data_dir>/plans/<sbx_name>/` (rather than trusting `sbx cp`'s
+/// overwrite behavior, which is unverified — see `backup_sandbox_claude_data`)
+/// so a plan deleted inside the sandbox doesn't linger on the host, then
+/// returns every `.md` file found there.
+#[tauri::command]
+pub async fn sync_sandbox_plans(app: AppHandle, pool: State<'_, DbPool>, id: String) -> std::result::Result<Vec<PlanFile>, String> {
+  let sandbox = {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    sandboxes::get(&conn, &id).map_err(|e| e.to_string())?
+  };
+  if sandbox.status != "running" {
+    return Err("sandbox must be running to sync plans".to_string());
+  }
+  let name = sandbox.sbx_name.ok_or_else(|| "sandbox has no sbx sandbox yet".to_string())?;
+
+  let dest = plans_dest_dir(&app, &name)?;
+  if dest.exists() {
+    std::fs::remove_dir_all(&dest).map_err(|e| e.to_string())?;
+  }
+  std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+
+  crate::sbx::cp_from_sandbox(&app, &name, PLANS_SOURCE_PATH, &dest.to_string_lossy())
+    .await
+    .map_err(|e| e.to_string())?;
+
+  // `sbx cp`'s exact nesting behavior is unverified (see the comment above)
+  // — it may copy `plans/`'s *contents* into `dest`, or nest `plans/`
+  // itself one level inside it. Prefer the nested form if present so this
+  // works either way, rather than guessing wrong and silently finding
+  // nothing.
+  let nested = dest.join("plans");
+  let source_dir = if nested.is_dir() { nested } else { dest };
+  read_plan_files(&source_dir).map_err(|e| e.to_string())
 }
 
 /// Reads this sandbox's current branch/branch-list/worktrees (one `sbx
