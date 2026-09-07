@@ -12,12 +12,14 @@ function StatChart({
   caption,
   data,
   max,
+  value,
 }: {
   label: string
   current: string | null
   caption?: string
   data: number[]
   max?: number
+  value?: number
 }) {
   return (
     <div className="flex min-w-36 flex-1 flex-col gap-1">
@@ -25,7 +27,7 @@ function StatChart({
         <span className="text-xs font-normal text-muted-foreground">{label}</span>
         <span className="text-sm font-medium">{current ?? '—'}</span>
       </div>
-      <Sparkline data={data} max={max} />
+      <Sparkline data={data} max={max} value={value} />
       {caption && <span className="text-xs text-muted-foreground">{caption}</span>}
     </div>
   )
@@ -52,6 +54,7 @@ export function HostStatsPanel({ layout = 'sidebar' }: { layout?: 'sidebar' | 'b
           current={hostStats ? `${hostStats.cpu_percent.toFixed(0)}%` : null}
           data={hostStatsHistory.map((m) => m.cpu_percent)}
           max={100}
+          value={hostStats?.cpu_percent}
         />
         <StatChart
           label="Memory"
@@ -59,6 +62,7 @@ export function HostStatsPanel({ layout = 'sidebar' }: { layout?: 'sidebar' | 'b
           caption={hostStats ? `${(hostStats.memory_used_mb / 1024).toFixed(1)} / ${(hostStats.memory_total_mb / 1024).toFixed(1)} GB` : undefined}
           data={hostStatsHistory.map((m) => m.memory_percent)}
           max={100}
+          value={hostStats?.memory_percent}
         />
         <StatChart
           label="Disk"
@@ -66,6 +70,7 @@ export function HostStatsPanel({ layout = 'sidebar' }: { layout?: 'sidebar' | 'b
           caption={hostStats ? `${(hostStats.disk_used_mb / 1024).toFixed(0)} / ${(hostStats.disk_total_mb / 1024).toFixed(0)} GB` : undefined}
           data={hostStatsHistory.map((m) => m.disk_percent)}
           max={100}
+          value={hostStats?.disk_percent}
         />
         <StatChart
           label="Network"

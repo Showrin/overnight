@@ -5,7 +5,7 @@ import type { ContainerMetric, Sandbox } from './types'
 
 const POLL_MS = 5000
 const HISTORY_SEED_MS = 24 * 60 * 60 * 1000
-const HISTORY_MAX_POINTS = 500
+const HISTORY_MAX_POINTS = 150
 
 function formatKbPerSec(kbPerSec: number): string {
   return kbPerSec >= 1024 ? `${(kbPerSec / 1024).toFixed(1)}MB/s` : `${kbPerSec.toFixed(0)}KB/s`
@@ -21,12 +21,14 @@ function StatChart({
   caption,
   data,
   max,
+  value,
 }: {
   label: string
   current: string | null
   caption?: string
   data: number[]
   max?: number
+  value?: number
 }) {
   return (
     <div className="flex min-w-36 flex-1 flex-col gap-1">
@@ -34,7 +36,7 @@ function StatChart({
         <span className="text-xs font-normal text-muted-foreground">{label}</span>
         <span className="text-sm font-medium">{current ?? '—'}</span>
       </div>
-      <Sparkline data={data} max={max} />
+      <Sparkline data={data} max={max} value={value} />
       {caption && <span className="text-xs text-muted-foreground">{caption}</span>}
     </div>
   )
@@ -115,6 +117,7 @@ export function SandboxMetricsTab({ sandbox }: { sandbox: Sandbox }) {
           current={current ? `${current.cpu_percent.toFixed(0)}%` : null}
           data={points.map((m) => m.cpu_percent)}
           max={100}
+          value={current?.cpu_percent}
         />
         <StatChart
           label="Memory"

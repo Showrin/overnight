@@ -9,7 +9,7 @@ const SANDBOX_POLL_MS = 5000
 // than the plain DB-backed sandbox poll above (~20s instead of every 5s).
 const ORPHAN_ADOPTION_TICK_INTERVAL = 4
 const HOST_STATS_HISTORY_SEED_MS = 24 * 60 * 60 * 1000
-const HOST_STATS_HISTORY_MAX_POINTS = 500
+const HOST_STATS_HISTORY_MAX_POINTS = 150
 
 export interface AppSettings {
   default_claude_permission_mode: string
