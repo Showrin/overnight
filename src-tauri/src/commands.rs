@@ -1402,6 +1402,7 @@ pub async fn open_sandbox_vscode(app: AppHandle, pool: State<'_, DbPool>, id: St
   // resolves — documented as safe to re-run, so this replaces requiring
   // the user to run `sbx setup ssh` manually once beforehand.
   crate::sbx::setup_ssh(&app).await.map_err(|e| e.to_string())?;
+  crate::sbx::clear_stale_host_key(&name);
   let workspace_path = crate::sbx::workspace_path(&app, &name).await.map_err(|e| e.to_string())?;
   log::info!("open_sandbox_vscode: sbx ls reports workspace path {workspace_path:?}");
 

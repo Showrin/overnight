@@ -98,6 +98,17 @@ pub async fn setup_ssh<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
   Ok(())
 }
 
+/// Clears any stale `known_hosts` entry for `<name>.sbx` so a sandbox
+/// recreated under the same name (new host key) doesn't get blocked by
+/// OpenSSH's "REMOTE HOST IDENTIFICATION HAS CHANGED" refusal. Safe to
+/// call even if no entry exists.
+pub fn clear_stale_host_key(name: &str) {
+  let host = format!("{name}.sbx");
+  if let Err(e) = std::process::Command::new("ssh-keygen").args(["-R", &host]).output() {
+    log::warn!("clear_stale_host_key: ssh-keygen -R {host} failed: {e}");
+  }
+}
+
 /// `sbx policy init <preset>` — one-time, machine-wide setup that answers
 /// the interactive network-policy prompt headlessly. `preset` must be one
 /// of `allow-all`, `balanced`, or `deny-all` (sbx's own accepted values).
