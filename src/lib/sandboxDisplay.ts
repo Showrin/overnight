@@ -53,6 +53,26 @@ export function formatRelativeTime(pastMs: number): string {
   return rtf.format(Math.round(duration), 'year')
 }
 
+export interface DiffStatCounts {
+  filesChanged: number
+  insertions: number
+  deletions: number
+}
+
+const STAT_SUMMARY_RE = /(\d+) files? changed(?:, (\d+) insertions?\(\+\))?(?:, (\d+) deletions?\(-\))?/
+
+// Parses git's own `--stat` summary line (e.g. "2 files changed, 10
+// insertions(+), 3 deletions(-)") into numbers, rather than adding a
+// backend endpoint just for counts already present in text already fetched.
+export function parseDiffStat(stat: string): DiffStatCounts {
+  const match = stat.match(STAT_SUMMARY_RE)
+  return {
+    filesChanged: match ? Number(match[1]) : 0,
+    insertions: match?.[2] ? Number(match[2]) : 0,
+    deletions: match?.[3] ? Number(match[3]) : 0,
+  }
+}
+
 // Formats a sandbox's effective network policy as a short label — either
 // its own override, or "Global default (<preset>)" when it inherits one.
 export function formatNetworkPolicyLabel(

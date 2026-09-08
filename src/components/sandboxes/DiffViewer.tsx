@@ -45,6 +45,7 @@ export type DiffCellKind = 'context' | 'remove' | 'add' | 'empty'
 export interface DiffCell {
   kind: DiffCellKind
   text: string
+  lineNumber: number | null
 }
 
 export interface DiffRow {
@@ -57,6 +58,8 @@ export interface DiffHunk {
   rows: DiffRow[]
 }
 
+const HUNK_HEADER_RE = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/
+
 // Pairs a single file's unified-diff hunks into side-by-side rows: within a
 // hunk, consecutive removed lines and consecutive added lines are zipped
 // row-by-row (the same pairing a side-by-side view conventionally shows,
@@ -65,7 +68,9 @@ export interface DiffHunk {
 // side with an empty cell. Context lines flush any pending pair first and
 // then appear identically on both sides. File-header lines ("diff --git",
 // "index", "---", "+++") are skipped — the accordion row above already
-// shows the filename.
+// shows the filename. Line numbers are seeded from the hunk header and
+// incremented per side as each line is consumed, independent of the
+// left/right zipping above.
 export function parseFileDiff(patch: string): DiffHunk[] {
   const lines = patch.split('\n')
   if (lines[lines.length - 1] === '') lines.pop()
@@ -74,6 +79,8 @@ export function parseFileDiff(patch: string): DiffHunk[] {
   let current: DiffHunk | null = null
   let pendingRemoves: string[] = []
   let pendingAdds: string[] = []
+  let oldLine = 1
+  let newLine = 1
 
   function flush() {
     if (!current) return
@@ -82,8 +89,8 @@ export function parseFileDiff(patch: string): DiffHunk[] {
       const removed = pendingRemoves[i]
       const added = pendingAdds[i]
       current.rows.push({
-        left: removed !== undefined ? { kind: 'remove', text: removed } : { kind: 'empty', text: '' },
-        right: added !== undefined ? { kind: 'add', text: added } : { kind: 'empty', text: '' },
+        left: removed !== undefined ? { kind: 'remove', text: removed, lineNumber: oldLine++ } : { kind: 'empty', text: '', lineNumber: null },
+        right: added !== undefined ? { kind: 'add', text: added, lineNumber: newLine++ } : { kind: 'empty', text: '', lineNumber: null },
       })
     }
     pendingRemoves = []
@@ -93,6 +100,9 @@ export function parseFileDiff(patch: string): DiffHunk[] {
   for (const line of lines) {
     if (line.startsWith('@@')) {
       flush()
+      const match = line.match(HUNK_HEADER_RE)
+      oldLine = match ? Number(match[1]) : 1
+      newLine = match ? Number(match[2]) : 1
       current = { header: line, rows: [] }
       hunks.push(current)
       continue
@@ -109,20 +119,31 @@ export function parseFileDiff(patch: string): DiffHunk[] {
     }
     flush()
     const text = line.startsWith(' ') ? line.slice(1) : line
-    current.rows.push({ left: { kind: 'context', text }, right: { kind: 'context', text } })
+    current.rows.push({
+      left: { kind: 'context', text, lineNumber: oldLine++ },
+      right: { kind: 'context', text, lineNumber: newLine++ },
+    })
   }
   flush()
   return hunks
 }
 
-// Red/green only shows up as a tinted background — the code text itself
-// stays a faded neutral color (matching the Plans tab's faded-text
-// convention) rather than colored red/green, so the diff reads as "this
-// line's background says remove/add" instead of "this text is red/green".
+// Red/green shows as a tinted background plus a left-border accent — the
+// code text itself stays a faded neutral color (matching the Plans tab's
+// faded-text convention) rather than colored red/green, so the diff reads
+// as "this line's background/edge says remove/add" instead of "this text
+// is red/green".
 const CELL_CLASS: Record<DiffCellKind, string> = {
-  context: 'text-muted-foreground',
-  remove: 'bg-destructive/10 text-foreground/70',
-  add: 'bg-success/10 text-foreground/70',
+  context: 'text-muted-foreground border-l-2 border-l-transparent',
+  remove: 'bg-destructive/10 text-foreground/70 border-l-2 border-l-destructive',
+  add: 'bg-success/10 text-foreground/70 border-l-2 border-l-success',
+  empty: 'bg-muted/20 border-l-2 border-l-transparent',
+}
+
+const GUTTER_CLASS: Record<DiffCellKind, string> = {
+  context: 'text-muted-foreground/50',
+  remove: 'bg-destructive/10 text-muted-foreground/70',
+  add: 'bg-success/10 text-muted-foreground/70',
   empty: 'bg-muted/20',
 }
 
@@ -137,7 +158,7 @@ function isCommentLine(text: string): boolean {
 }
 
 // Pure component: renders one file's patch as a side-by-side (old | new)
-// table. Takes no fetch concerns of its own — SandboxDiffTab owns loading.
+// table. Takes no fetch concerns of its own — callers own loading.
 export function DiffViewer({ patch }: { patch: string }) {
   const hunks = parseFileDiff(patch)
 
@@ -146,27 +167,31 @@ export function DiffViewer({ patch }: { patch: string }) {
   }
 
   return (
-    <div className="overflow-x-auto rounded-md border border-border">
+    <div className="rounded-md border border-border">
       {hunks.map((hunk, i) => (
         <div key={i}>
           <div className="bg-muted/40 px-2 py-1 font-mono text-xs text-muted-foreground">{hunk.header}</div>
-          <table className="w-full table-fixed border-collapse text-xs leading-relaxed">
+          <table className="w-full table-fixed border-collapse text-xs leading-relaxed [tab-size:2]">
             <tbody>
               {hunk.rows.map((row, j) => (
                 <tr key={j}>
-                  <td
-                    className={`w-1/2 whitespace-normal px-2 align-top font-mono ${CELL_CLASS[row.left.kind]} ${
-                      isCommentLine(row.left.text) ? 'opacity-60' : ''
-                    }`}
-                  >
-                    {row.left.text.length > 0 ? row.left.text : ' '}
+                  <td className={`w-10 select-none px-2 text-right align-top font-mono tabular-nums ${GUTTER_CLASS[row.left.kind]}`}>
+                    {row.left.lineNumber ?? ''}
+                  </td>
+                  <td className={`w-[calc(50%-2.5rem)] px-2 align-top font-mono ${CELL_CLASS[row.left.kind]}`}>
+                    <div className={`overflow-x-auto whitespace-pre ${isCommentLine(row.left.text) ? 'opacity-60' : ''}`}>
+                      {row.left.text.length > 0 ? row.left.text : ' '}
+                    </div>
                   </td>
                   <td
-                    className={`w-1/2 whitespace-normal border-l border-border px-2 align-top font-mono ${CELL_CLASS[row.right.kind]} ${
-                      isCommentLine(row.right.text) ? 'opacity-60' : ''
-                    }`}
+                    className={`w-10 select-none border-l border-border px-2 text-right align-top font-mono tabular-nums ${GUTTER_CLASS[row.right.kind]}`}
                   >
-                    {row.right.text.length > 0 ? row.right.text : ' '}
+                    {row.right.lineNumber ?? ''}
+                  </td>
+                  <td className={`w-[calc(50%-2.5rem)] px-2 align-top font-mono ${CELL_CLASS[row.right.kind]}`}>
+                    <div className={`overflow-x-auto whitespace-pre ${isCommentLine(row.right.text) ? 'opacity-60' : ''}`}>
+                      {row.right.text.length > 0 ? row.right.text : ' '}
+                    </div>
                   </td>
                 </tr>
               ))}

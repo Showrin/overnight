@@ -73,6 +73,14 @@ export interface SandboxDiff {
   branches: BranchDiff[]
 }
 
+// One commit `get_branch_commits` found between a branch and its base.
+export interface CommitInfo {
+  hash: string
+  author: string
+  authored_at: number
+  message: string
+}
+
 // One `.md` file found under the sandbox's `/.claude/plans` after a
 // sync_sandbox_plans call.
 export interface PlanFile {

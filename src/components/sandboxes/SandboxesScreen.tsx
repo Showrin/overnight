@@ -5,6 +5,8 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import type { Route } from '@/lib/router'
 import { useAppStore } from '@/store/useAppStore'
+import { BranchDiffPage } from './BranchDiffPage'
+import { BranchesPage } from './BranchesPage'
 import { CreateSandboxDialog } from './CreateSandboxDialog'
 import { HostStatsPanel } from './HostStatsPanel'
 import { SandboxCard } from './SandboxCard'
@@ -66,9 +68,13 @@ function SandboxGroup({
 
 export function SandboxesScreen({
   sandboxId,
+  branches,
+  branch,
   navigate,
 }: {
   sandboxId?: string
+  branches?: boolean
+  branch?: string
   navigate: (route: Route) => void
 }) {
   const sandboxes = useAppStore((s) => s.sandboxes)
@@ -120,13 +126,16 @@ export function SandboxesScreen({
     )
   }
 
+  if (sandboxId && branch) {
+    return <BranchDiffPage key={`${sandboxId}:${branch}`} sandboxId={sandboxId} branch={branch} navigate={navigate} />
+  }
+
+  if (sandboxId && branches) {
+    return <BranchesPage sandboxId={sandboxId} navigate={navigate} />
+  }
+
   if (sandboxId) {
-    return (
-      <SandboxDetailScreen
-        sandboxId={sandboxId}
-        onBack={() => navigate({ screen: 'sandboxes' })}
-      />
-    )
+    return <SandboxDetailScreen sandboxId={sandboxId} navigate={navigate} />
   }
 
   const orphanSandboxes = sandboxes.filter((sb) => !projects.some((p) => p.id === sb.project_id))

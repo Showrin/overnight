@@ -1542,6 +1542,30 @@ pub fn get_sandbox_diff(pool: State<DbPool>, id: String) -> std::result::Result<
   Ok(SandboxDiff { base_branch: Some(base_branch), branches })
 }
 
+/// Commits `branch` added on top of `base_branch`. Mirrors `get_sandbox_diff`'s
+/// mount/clone branching so the list can't go stale relative to what the
+/// Branches page just fetched.
+#[tauri::command]
+pub fn get_branch_commits(
+  pool: State<DbPool>,
+  id: String,
+  branch: String,
+) -> std::result::Result<Vec<crate::git::CommitInfo>, String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  let sandbox = sandboxes::get(&conn, &id).map_err(|e| e.to_string())?;
+  let base_branch = sandbox.base_branch.clone().ok_or_else(|| "sandbox has no base branch".to_string())?;
+  let project = projects::get(&conn, &sandbox.project_id).map_err(|e| e.to_string())?;
+
+  if sandbox.mode == "mount" {
+    return crate::git::log(&project.repo_path, &base_branch, None).map_err(|e| e.to_string());
+  }
+
+  let name = sandbox.sbx_name.ok_or_else(|| "sandbox isn't running".to_string())?;
+  crate::git::fetch_and_list_sandbox_branches(&project.repo_path, &name).map_err(|e| e.to_string())?;
+  let target_ref = format!("sandbox-{name}/{branch}");
+  crate::git::log(&project.repo_path, &base_branch, Some(&target_ref)).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn open_sandbox_terminal(
   pool: State<DbPool>,

@@ -60,15 +60,26 @@ function App() {
       <div className="flex flex-1 overflow-hidden">
         <Sidebar current={route.screen} onNavigate={navigate} collapsed={sidebarCollapsed} />
         <main className="flex flex-1 justify-center overflow-auto">
-          <div className="@container w-full max-w-5xl h-fit p-6">
-            {route.screen === 'dashboard' && <JiraIssueList />}
-            {route.screen === 'projects' && <ProjectsScreen />}
-            {route.screen === 'sandboxes' && (
-              <SandboxesScreen sandboxId={route.sandboxId} navigate={navigate} />
-            )}
-            {route.screen === 'performance-monitor' && <PerformanceMonitorTab />}
-            {route.screen === 'settings' && <SettingsScreen />}
-          </div>
+          {route.screen === 'sandboxes' && route.branch ? (
+            <div className="@container w-full h-fit p-6">
+              <SandboxesScreen
+                sandboxId={route.sandboxId}
+                branches={route.branches}
+                branch={route.branch}
+                navigate={navigate}
+              />
+            </div>
+          ) : (
+            <div className="@container w-full max-w-5xl h-fit p-6">
+              {route.screen === 'dashboard' && <JiraIssueList />}
+              {route.screen === 'projects' && <ProjectsScreen />}
+              {route.screen === 'sandboxes' && (
+                <SandboxesScreen sandboxId={route.sandboxId} branches={route.branches} navigate={navigate} />
+              )}
+              {route.screen === 'performance-monitor' && <PerformanceMonitorTab />}
+              {route.screen === 'settings' && <SettingsScreen />}
+            </div>
+          )}
         </main>
       </div>
     </div>

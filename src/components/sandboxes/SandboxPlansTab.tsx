@@ -87,7 +87,7 @@ function extractHeadings(markdown: string): Heading[] {
 
 // Syncs on mount plus a manual "Resync" button — plans only change when the
 // agent inside the sandbox writes new ones, so no auto-polling here (same
-// reasoning as SandboxDiffTab).
+// reasoning as BranchesPage's "Refresh" button).
 export function SandboxPlansTab({ sandbox }: { sandbox: Sandbox }) {
   const [plans, setPlans] = useState<PlanFile[]>([])
   const [selected, setSelected] = useState<string | null>(null)

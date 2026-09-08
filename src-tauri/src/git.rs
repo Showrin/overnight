@@ -138,6 +138,40 @@ pub fn diff_stat(repo_path: &str, base_ref: &str, target_ref: Option<&str>) -> R
   }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct CommitInfo {
+  pub hash: String,
+  pub author: String,
+  pub authored_at: i64,
+  pub message: String,
+}
+
+/// Commits reachable from `target_ref` (or `HEAD` when `None`, the mount-mode
+/// case) but not from `base_ref` — two-dot log, the commit-listing analogue
+/// of `diff`'s three-dot comparison: "what did this branch add since it
+/// diverged from base".
+pub fn log(repo_path: &str, base_ref: &str, target_ref: Option<&str>) -> Result<Vec<CommitInfo>> {
+  let target = target_ref.unwrap_or("HEAD");
+  let range = format!("{base_ref}..{target}");
+  let output = run(repo_path, &["log", "--no-color", "--format=%H%x1f%an%x1f%at%x1f%s%x1e", &range])?;
+
+  Ok(
+    output
+      .split('\x1e')
+      .map(str::trim)
+      .filter(|record| !record.is_empty())
+      .filter_map(|record| {
+        let mut fields = record.splitn(4, '\x1f');
+        let hash = fields.next()?.to_string();
+        let author = fields.next()?.to_string();
+        let authored_at: i64 = fields.next()?.parse().ok()?;
+        let message = fields.next()?.to_string();
+        Some(CommitInfo { hash, author, authored_at: authored_at * 1000, message })
+      })
+      .collect(),
+  )
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -318,6 +352,47 @@ mod tests {
 
     assert_eq!(diff(repo, "main", None).unwrap(), "");
     assert_eq!(diff_stat(repo, "main", None).unwrap(), "");
+
+    fs::remove_dir_all(dir).unwrap();
+  }
+
+  #[test]
+  fn log_lists_commits_unique_to_target() {
+    let dir = init_repo();
+    let repo = dir.to_str().unwrap();
+    commit(repo, "a.txt", "1");
+    run(repo, &["checkout", "-q", "-b", "feature"]).unwrap();
+    let feature_commit = commit(repo, "b.txt", "feature-only");
+
+    let commits = log(repo, "main", Some("feature")).unwrap();
+    assert_eq!(commits.len(), 1);
+    assert_eq!(commits[0].hash, feature_commit);
+    assert_eq!(commits[0].message, "commit");
+
+    fs::remove_dir_all(dir).unwrap();
+  }
+
+  #[test]
+  fn log_with_no_target_ref_covers_head() {
+    let dir = init_repo();
+    let repo = dir.to_str().unwrap();
+    commit(repo, "a.txt", "1");
+    let ahead = commit(repo, "a.txt", "2");
+
+    let commits = log(repo, "HEAD~1", None).unwrap();
+    assert_eq!(commits.len(), 1);
+    assert_eq!(commits[0].hash, ahead);
+
+    fs::remove_dir_all(dir).unwrap();
+  }
+
+  #[test]
+  fn log_with_no_new_commits_is_empty() {
+    let dir = init_repo();
+    let repo = dir.to_str().unwrap();
+    commit(repo, "a.txt", "1");
+
+    assert_eq!(log(repo, "main", None).unwrap(), vec![]);
 
     fs::remove_dir_all(dir).unwrap();
   }
