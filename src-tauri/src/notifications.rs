@@ -30,6 +30,19 @@ pub fn notify(
   #[cfg(not(any(target_os = "windows", target_os = "macos")))]
   notification.action("default", "default");
 
+  // Windows toasts derive both the shown name and icon from `app_id` (the AUMID), not from
+  // `appname`. Leaving it unset falls back to `Toast::POWERSHELL_APP_ID`. Only set it once the
+  // app is installed (i.e. its Start Menu shortcut has registered this AUMID); in a dev build
+  // there's no such registration, so setting an arbitrary id would make toasts silently fail.
+  #[cfg(windows)]
+  if let Ok(exe) = tauri::utils::platform::current_exe() {
+    if let Some(exe_dir) = exe.parent() {
+      if let Some(id) = windows_app_id(&app.config().identifier, exe_dir) {
+        notification.app_id(&id);
+      }
+    }
+  }
+
   let handle = notification.show().map_err(|e| e.to_string())?;
 
   std::thread::spawn(move || {
@@ -51,5 +64,43 @@ fn focus_main_window(app: &AppHandle) {
     let _ = window.unminimize();
     let _ = window.show();
     let _ = window.set_focus();
+  }
+}
+
+/// Windows AUMID to use for the toast, or `None` to keep the (unregistered-in-dev) fallback.
+/// Mirrors `tauri-plugin-notification`'s own dev/prod detection so dev builds keep working.
+/// Kept free of `#[cfg(windows)]` (unlike its only call site) so it's unit-testable everywhere.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn windows_app_id(identifier: &str, exe_dir: &std::path::Path) -> Option<String> {
+  let in_target_debug_or_release = matches!(exe_dir.file_name().and_then(|n| n.to_str()), Some("debug" | "release"))
+    && matches!(exe_dir.parent().and_then(|p| p.file_name()).and_then(|n| n.to_str()), Some("target"));
+  if in_target_debug_or_release {
+    None
+  } else {
+    Some(identifier.to_string())
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use std::path::Path;
+
+  #[test]
+  fn dev_debug_build_keeps_fallback() {
+    assert_eq!(windows_app_id("com.sbhustles.overnight", Path::new("C:/project/target/debug")), None);
+  }
+
+  #[test]
+  fn dev_release_build_keeps_fallback() {
+    assert_eq!(windows_app_id("com.sbhustles.overnight", Path::new("C:/project/target/release")), None);
+  }
+
+  #[test]
+  fn installed_build_uses_identifier() {
+    assert_eq!(
+      windows_app_id("com.sbhustles.overnight", Path::new("C:/Program Files/Overnight")),
+      Some("com.sbhustles.overnight".to_string())
+    );
   }
 }
