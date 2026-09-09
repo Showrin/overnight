@@ -1,3 +1,5 @@
+![overnight--your_autonomous_development_partner](./public/overnight-brand-image.png)
+
 # Overnight
 
 Overnight is a desktop app for running autonomous coding-agent sessions
