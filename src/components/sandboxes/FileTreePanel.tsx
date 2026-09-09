@@ -1,20 +1,22 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Accordion as AccordionPrimitive } from 'radix-ui'
 import { ChevronRight, File, Folder, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import type { FileTreeNode } from '@/lib/buildFileTree'
+import { collectDirPaths, type FileTreeNode } from '@/lib/buildFileTree'
 
 function TreeNode({
   node,
   depth,
   selectedFile,
   onSelectFile,
+  defaultOpenDirs,
 }: {
   node: FileTreeNode
   depth: number
   selectedFile: string | null
   onSelectFile: (path: string) => void
+  defaultOpenDirs: string[]
 }) {
   const indent = { paddingLeft: `${depth * 14 + 8}px` }
 
@@ -48,9 +50,16 @@ function TreeNode({
         </AccordionPrimitive.Trigger>
       </AccordionPrimitive.Header>
       <AccordionPrimitive.Content>
-        <AccordionPrimitive.Root type="multiple">
+        <AccordionPrimitive.Root type="multiple" defaultValue={defaultOpenDirs}>
           {node.children.map((child) => (
-            <TreeNode key={child.path} node={child} depth={depth + 1} selectedFile={selectedFile} onSelectFile={onSelectFile} />
+            <TreeNode
+              key={child.path}
+              node={child}
+              depth={depth + 1}
+              selectedFile={selectedFile}
+              onSelectFile={onSelectFile}
+              defaultOpenDirs={defaultOpenDirs}
+            />
           ))}
         </AccordionPrimitive.Root>
       </AccordionPrimitive.Content>
@@ -68,6 +77,7 @@ export function FileTreePanel({
   onSelectFile: (path: string) => void
 }) {
   const [collapsed, setCollapsed] = useState(false)
+  const defaultOpenDirs = useMemo(() => collectDirPaths(tree), [tree])
 
   if (collapsed) {
     return (
@@ -87,9 +97,16 @@ export function FileTreePanel({
           <PanelLeftClose className="size-3.5" />
         </Button>
       </div>
-      <AccordionPrimitive.Root type="multiple" className="flex flex-col gap-0.5 overflow-auto">
+      <AccordionPrimitive.Root type="multiple" defaultValue={defaultOpenDirs} className="flex flex-col gap-0.5 overflow-auto">
         {tree.map((node) => (
-          <TreeNode key={node.path} node={node} depth={0} selectedFile={selectedFile} onSelectFile={onSelectFile} />
+          <TreeNode
+            key={node.path}
+            node={node}
+            depth={0}
+            selectedFile={selectedFile}
+            onSelectFile={onSelectFile}
+            defaultOpenDirs={defaultOpenDirs}
+          />
         ))}
       </AccordionPrimitive.Root>
     </div>

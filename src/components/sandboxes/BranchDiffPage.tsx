@@ -98,7 +98,9 @@ export function BranchDiffPage({
       ) : (
         <div className="flex flex-1 gap-4 overflow-hidden">
           <FileTreePanel tree={tree} selectedFile={selectedFile} onSelectFile={setClickedFile} />
-          <div className="min-w-0 flex-1 overflow-auto">{selectedPatch && <DiffViewer patch={selectedPatch} />}</div>
+          <div className="min-w-0 flex-1 overflow-auto">
+            {selectedPatch && selectedFile && <DiffViewer patch={selectedPatch} filePath={selectedFile} />}
+          </div>
         </div>
       )}
 

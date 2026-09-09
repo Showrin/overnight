@@ -1,3 +1,7 @@
+import { useState } from 'react'
+import { Check, Copy } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+
 export interface DiffFilePatch {
   filePath: string
   patch: string
@@ -157,9 +161,28 @@ function isCommentLine(text: string): boolean {
   return COMMENT_PREFIXES.some((prefix) => trimmed.startsWith(prefix))
 }
 
+function DiffViewerHeader({ filePath }: { filePath: string }) {
+  const [copied, setCopied] = useState(false)
+
+  async function copy() {
+    await navigator.clipboard.writeText(filePath)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-2 border-b border-border bg-muted/40 px-2 py-1.5 font-mono text-xs">
+      <span className="truncate text-foreground">{filePath}</span>
+      <Button size="sm" variant="ghost" onClick={copy} type="button" title="Copy file path">
+        {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+      </Button>
+    </div>
+  )
+}
+
 // Pure component: renders one file's patch as a side-by-side (old | new)
 // table. Takes no fetch concerns of its own — callers own loading.
-export function DiffViewer({ patch }: { patch: string }) {
+export function DiffViewer({ patch, filePath }: { patch: string; filePath: string }) {
   const hunks = parseFileDiff(patch)
 
   if (hunks.length === 0) {
@@ -167,7 +190,8 @@ export function DiffViewer({ patch }: { patch: string }) {
   }
 
   return (
-    <div className="rounded-md border border-border">
+    <div className="my-4 rounded-md border border-border bg-primary/5">
+      <DiffViewerHeader filePath={filePath} />
       {hunks.map((hunk, i) => (
         <div key={i}>
           <div className="bg-muted/40 px-2 py-1 font-mono text-xs text-muted-foreground">{hunk.header}</div>
@@ -179,7 +203,7 @@ export function DiffViewer({ patch }: { patch: string }) {
                     {row.left.lineNumber ?? ''}
                   </td>
                   <td className={`w-[calc(50%-2.5rem)] px-2 align-top font-mono ${CELL_CLASS[row.left.kind]}`}>
-                    <div className={`overflow-x-auto whitespace-pre ${isCommentLine(row.left.text) ? 'opacity-60' : ''}`}>
+                    <div className={`whitespace-pre-wrap break-all ${isCommentLine(row.left.text) ? 'opacity-60' : ''}`}>
                       {row.left.text.length > 0 ? row.left.text : ' '}
                     </div>
                   </td>
@@ -189,7 +213,7 @@ export function DiffViewer({ patch }: { patch: string }) {
                     {row.right.lineNumber ?? ''}
                   </td>
                   <td className={`w-[calc(50%-2.5rem)] px-2 align-top font-mono ${CELL_CLASS[row.right.kind]}`}>
-                    <div className={`overflow-x-auto whitespace-pre ${isCommentLine(row.right.text) ? 'opacity-60' : ''}`}>
+                    <div className={`whitespace-pre-wrap break-all ${isCommentLine(row.right.text) ? 'opacity-60' : ''}`}>
                       {row.right.text.length > 0 ? row.right.text : ' '}
                     </div>
                   </td>

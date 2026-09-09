@@ -53,3 +53,16 @@ export function buildFileTree(filePaths: string[]): FileTreeNode[] {
 
   return sortTree(root.children)
 }
+
+// All directory paths in a tree, used as the accordion's default-open set so
+// the tree renders fully expanded on first load.
+export function collectDirPaths(nodes: FileTreeNode[]): string[] {
+  const paths: string[] = []
+  for (const node of nodes) {
+    if (node.type === 'dir') {
+      paths.push(node.path)
+      paths.push(...collectDirPaths(node.children))
+    }
+  }
+  return paths
+}
