@@ -556,13 +556,14 @@ pub fn resume<R: Runtime>(app: &AppHandle<R>, name: &str) -> Result<()> {
 /// is the one command built for exactly that, so this is a direct,
 /// unwrapped shell-out rather than a thin layer over something else.
 ///
-/// **UNVERIFIED**: no real `sbx` install is available in this dev
-/// environment (see this module's top doc comment), so the exact `sbx cp`
-/// argument syntax for a directory source, and whether it creates
-/// `host_dest` itself or requires it to already exist, are unconfirmed —
-/// callers should keep pre-creating the destination directory (as
-/// `backup_sandbox_claude_data` does) until this has been exercised against
-/// a real sandbox.
+/// **CONFIRMED against a real sandbox** (docker-cp-style semantics): if
+/// `host_dest` already exists as a directory, the copy nests
+/// `remote_path`'s basename one level inside it instead of copying its
+/// contents directly — e.g. copying `.git` onto an existing `host_dest`
+/// lands at `host_dest/.git/...`, not `host_dest/...`. Callers that want
+/// `remote_path`'s *contents* placed directly at `host_dest` must leave
+/// `host_dest` non-existent (only its parent needs to exist) before
+/// calling this, so `sbx cp` creates it fresh from the source.
 pub async fn cp_from_sandbox<R: Runtime>(app: &AppHandle<R>, name: &str, remote_path: &str, host_dest: &str) -> Result<()> {
   let args = cp_from_sandbox_args(name, remote_path, host_dest);
   run(app, &args.iter().map(String::as_str).collect::<Vec<_>>()).await?;
@@ -571,6 +572,170 @@ pub async fn cp_from_sandbox<R: Runtime>(app: &AppHandle<R>, name: &str, remote_
 
 fn cp_from_sandbox_args(name: &str, remote_path: &str, host_dest: &str) -> Vec<String> {
   vec!["cp".to_string(), format!("{name}:{remote_path}"), host_dest.to_string()]
+}
+
+/// `sbx cp <host_src> <name>:<remote_path>` — copies a file or directory
+/// from the host into a running sandbox VM. Symmetric to `cp_from_sandbox`.
+/// Low-level primitive: prefer `restore_directory` for restoring a backup
+/// onto a path that already exists in the sandbox, since this nests
+/// unpredictably in that case (see its doc comment).
+///
+/// **CONFIRMED against a real sandbox, twice over**: nests one level
+/// whether or not `remote_path` already exists — first observed nesting
+/// `host_src`'s basename under an existing `remote_path`
+/// (`.git` restored onto `.git` produced `.git/git/...`); after removing
+/// `remote_path` first, it *still* nested — this time reproducing
+/// `remote_path`'s own basename as the child (`.git` → `.git/.git/...`).
+/// The exact rule isn't pinned down and may not be stable across `sbx`
+/// versions, so `restore_directory` treats the nesting depth as unknown
+/// and resolves it generically rather than assuming either shape.
+pub async fn cp_to_sandbox<R: Runtime>(app: &AppHandle<R>, name: &str, host_src: &str, remote_path: &str) -> Result<()> {
+  let args = cp_to_sandbox_args(name, host_src, remote_path);
+  run(app, &args.iter().map(String::as_str).collect::<Vec<_>>()).await?;
+  Ok(())
+}
+
+fn cp_to_sandbox_args(name: &str, host_src: &str, remote_path: &str) -> Vec<String> {
+  vec!["cp".to_string(), host_src.to_string(), format!("{name}:{remote_path}")]
+}
+
+/// `~/.claude` subdirectories that are their own mounted volumes rather
+/// than plain directories — confirmed against a real sandbox: each one has
+/// its own `lost+found` (only present at a filesystem's own root), and
+/// `rm -rf ~/.claude` failed on exactly these six with "Device or resource
+/// busy" while every plain file/directory alongside them removed cleanly.
+/// You cannot remove or replace a mount point itself — but this is also
+/// where conversation history (`claude -r` reads from `sessions`/`projects`)
+/// actually lives, so a `.claude` restore can't just skip them either.
+/// `restore_directory` clears and refills these in place instead of
+/// removing them outright. A plain additive merge (copy the backup's files
+/// in, leave whatever was already there) isn't equivalent to a real
+/// restore either: confirmed against a real sandbox that a full manual
+/// swap of the whole `.claude` folder behaved differently from our
+/// merge-only restore, meaning stale target-side leftovers coexisting with
+/// the backup's files inside these directories can itself cause problems —
+/// so the fix is to clear each one's contents before copying the backup in,
+/// not just layer on top.
+pub const CLAUDE_HOME_MOUNTED_DIRS: &[&str] = &["projects", "sessions", "shell-snapshots", "statsig", "todos", "skills"];
+
+/// Restores `host_src` into `remote_dest` inside the sandbox by merging one
+/// top-level entry at a time — never removing or replacing `remote_dest`
+/// itself. Most entries are fully replaced (remove that name under
+/// `remote_dest`, move the backup's version into its place); entries named
+/// in `merge_in_place` (`~/.claude`'s `CLAUDE_HOME_MOUNTED_DIRS`, which are
+/// mount points and can't be removed or replaced as a whole) instead get
+/// their *contents* cleared and then replaced with the backup's, so it's a
+/// real replace even though the mount point directory entry itself is
+/// never touched — restoring `.claude` still brings back conversation
+/// history in `sessions`/`projects` rather than skipping it, but without
+/// leaving stale target-side files mixed in with the restored ones. Copies
+/// into a scratch path first, then (one `sbx exec`) walks down through any
+/// wrapper directories that hold exactly one child before merging —
+/// regardless of how many levels deep `cp_to_sandbox` happens to nest it. A
+/// real backup (`.git`, `~/.claude`) always has multiple top-level entries,
+/// so this can't walk past the actual content into it by mistake.
+pub async fn restore_directory<R: Runtime>(
+  app: &AppHandle<R>,
+  name: &str,
+  host_src: &str,
+  remote_dest: &str,
+  merge_in_place: &[&str],
+) -> Result<()> {
+  let scratch = format!("/tmp/overnight-restore-{}", crate::db::models::new_id());
+  cp_to_sandbox(app, name, host_src, &scratch).await?;
+  let script = restore_directory_script(&scratch, remote_dest, merge_in_place);
+  run(app, &["exec", "-d", name, "sh", "-c", &script]).await?;
+  Ok(())
+}
+
+/// Pure POSIX globbing rather than `find -mindepth/-maxdepth` — a sandbox's
+/// shell is minimal (BusyBox-ish) and those flags aren't a safe assumption;
+/// a shell lacking them would silently make the whole loop a no-op instead
+/// of erroring, which is exactly the failure this is guarding against.
+/// `[ -e "$f" ] || [ -L "$f" ]` filters out glob patterns that matched
+/// nothing (passed through literally when nothing matches) — the standard
+/// portable way to detect an empty match without `nullglob`.
+///
+/// `merge_in_place` entries never go through `rm -rf`/`mv` on the entry
+/// itself (which would fail on a mount point) — instead their *contents*
+/// get cleared (`rm -rf dest/name/*` and hidden variants, best-effort: a
+/// stray root-owned `lost+found` may survive that, harmless) and then
+/// `cp -a "$entry"/. dest/name/` copies the backup's files in fresh. That
+/// two-step gives real replace semantics without ever removing the mount
+/// point directory entry itself.
+///
+/// The final cleanup (`rm -rf` the scratch copy) is deliberately
+/// best-effort: a mount-backed directory still gets copied into scratch
+/// wholesale (there's no way to `sbx cp` just its contents), and its
+/// contents can carry permissions (root-owned `lost+found`, etc.) our exec
+/// user can't remove — that must never fail the restore itself, since the
+/// actual merge above it already succeeded.
+///
+/// Tracks a `fail` flag across every entry instead of ending on a bare
+/// `true`: a script that always exits 0 regardless of what happened inside
+/// means a `mv`/`cp -a` that silently fails partway through (permissions,
+/// a busy mount, anything) is invisible to `run()`'s exit-status check —
+/// the restore gets reported as fully successful even though an entry
+/// never made it across. Only the genuinely best-effort steps (clearing a
+/// mount-backed dir's old contents, and the final scratch cleanup) stay
+/// swallowed; the actual data-carrying copy of every entry, mount-backed
+/// or not, now fails the whole script if it fails.
+///
+/// Plain entries try `mv` first, falling back to `cp -a` (source left
+/// behind for the final scratch cleanup to sweep up) rather than treating
+/// an `mv` failure as fatal outright. **Confirmed against a real
+/// sandbox**: `~/.claude` itself was owned by the exec user with normal
+/// `755` permissions, yet every `mv` of a plain top-level entry into it
+/// failed with "Permission denied" — while `cp -a` into the mount-backed
+/// subdirectories in that same run succeeded. That split (a `rename`-style
+/// move rejected, a plain copy accepted, on a directory the user
+/// demonstrably owns and can write to) points at the backing filesystem
+/// refusing `rename(2)` specifically rather than an actual permissions
+/// problem, a known limitation of some virtiofs/9p-style microVM home
+/// directories. `cp -a` uses `open`/`write` instead, so it isn't affected.
+fn restore_directory_script(scratch: &str, remote_dest: &str, merge_in_place: &[&str]) -> String {
+  let scratch_q = shell_quote(scratch);
+  let dest_q = shell_quote(remote_dest);
+  let merge_case = if merge_in_place.is_empty() {
+    String::new()
+  } else {
+    format!(
+      "case \"$name\" in {names}) \
+         if [ -d \"$entry\" ]; then \
+           mkdir -p {dest_q}/\"$name\" || fail=1; \
+           rm -rf {dest_q}/\"$name\"/.[!.]* {dest_q}/\"$name\"/..?* {dest_q}/\"$name\"/* 2>/dev/null; \
+           cp -a \"$entry\"/. {dest_q}/\"$name\"/ || fail=1; \
+           continue; \
+         fi ;; \
+       esac; ",
+      names = merge_in_place.join("|")
+    )
+  };
+  format!(
+    "src={scratch_q}; \
+     fail=0; \
+     while true; do \
+       n=0; only=''; \
+       for f in \"$src\"/.[!.]* \"$src\"/..?* \"$src\"/*; do \
+         [ -e \"$f\" ] || [ -L \"$f\" ] || continue; \
+         n=$((n + 1)); \
+         only=\"$f\"; \
+       done; \
+       [ \"$n\" -eq 1 ] || break; \
+       [ -d \"$only\" ] || break; \
+       src=\"$only\"; \
+     done; \
+     mkdir -p {dest_q}; \
+     for entry in \"$src\"/.[!.]* \"$src\"/..?* \"$src\"/*; do \
+       [ -e \"$entry\" ] || [ -L \"$entry\" ] || continue; \
+       name=${{entry##*/}}; \
+       {merge_case}\
+       rm -rf {dest_q}/\"$name\" || fail=1; \
+       mv \"$entry\" {dest_q}/\"$name\" 2>/dev/null || cp -a \"$entry\" {dest_q}/\"$name\" || fail=1; \
+     done; \
+     rm -rf {scratch_q} 2>/dev/null; \
+     exit $fail"
+  )
 }
 
 /// Force-removes the sandbox and its VM (used by explicit sandbox Delete).
@@ -1313,6 +1478,62 @@ mod tests {
   }
 
   #[test]
+  fn builds_cp_to_sandbox_args() {
+    assert_eq!(
+      cp_to_sandbox_args("my-sandbox", "/host/backup/claude", "/home/agent/.claude"),
+      vec!["cp", "/host/backup/claude", "my-sandbox:/home/agent/.claude"]
+    );
+  }
+
+  #[test]
+  fn restore_directory_script_quotes_both_paths() {
+    let script = restore_directory_script("/tmp/overnight-restore-abc", "/home/agent/.claude", &[]);
+    assert!(script.contains("src='/tmp/overnight-restore-abc'"));
+    assert!(script.contains("mkdir -p '/home/agent/.claude'"));
+    assert!(script.contains("rm -rf '/home/agent/.claude'/\"$name\" || fail=1"));
+    assert!(script.contains("mv \"$entry\" '/home/agent/.claude'/\"$name\" 2>/dev/null || cp -a \"$entry\" '/home/agent/.claude'/\"$name\" || fail=1"));
+    assert!(script.contains("rm -rf '/tmp/overnight-restore-abc' 2>/dev/null"));
+  }
+
+  #[test]
+  fn restore_directory_script_escapes_embedded_quotes() {
+    let script = restore_directory_script("/tmp/it's", "/dest/it's", &[]);
+    assert!(script.contains("'/tmp/it'\\''s'"));
+    assert!(script.contains("'/dest/it'\\''s'"));
+  }
+
+  #[test]
+  fn restore_directory_script_clears_then_refills_named_entries() {
+    let script = restore_directory_script("/tmp/scratch", "/home/agent/.claude", CLAUDE_HOME_MOUNTED_DIRS);
+    assert!(script.contains("case \"$name\" in projects|sessions|shell-snapshots|statsig|todos|skills)"));
+    // Clears existing contents before refilling — not a plain additive merge.
+    // The clear itself stays best-effort (a stray root-owned lost+found can
+    // survive it harmlessly); the actual copy-in must not be swallowed.
+    assert!(script.contains("rm -rf '/home/agent/.claude'/\"$name\"/.[!.]* '/home/agent/.claude'/\"$name\"/..?* '/home/agent/.claude'/\"$name\"/* 2>/dev/null"));
+    assert!(script.contains("cp -a \"$entry\"/. '/home/agent/.claude'/\"$name\"/ || fail=1"));
+    // Falls through to the normal replace path for everything else.
+    assert!(script.contains("rm -rf '/home/agent/.claude'/\"$name\" || fail=1;"));
+    assert!(script.contains("mv \"$entry\" '/home/agent/.claude'/\"$name\" 2>/dev/null || cp -a \"$entry\" '/home/agent/.claude'/\"$name\" || fail=1"));
+  }
+
+  #[test]
+  fn restore_directory_script_propagates_failure_instead_of_always_exiting_zero() {
+    let script = restore_directory_script("/tmp/scratch", "/home/agent/.claude", CLAUDE_HOME_MOUNTED_DIRS);
+    // A script that ends on a bare `true` masks every per-entry mv/cp
+    // failure that happened earlier — the restore would report success
+    // even if a file never made it across.
+    assert!(!script.trim_end().ends_with("true"));
+    assert!(script.contains("fail=0"));
+    assert!(script.trim_end().ends_with("exit $fail"));
+  }
+
+  #[test]
+  fn restore_directory_script_has_no_case_guard_when_nothing_merged() {
+    let script = restore_directory_script("/tmp/scratch", "/home/agent/.claude", &[]);
+    assert!(!script.contains("case \"$name\" in"));
+  }
+
+  #[test]
   fn builds_git_config_exec_args() {
     assert_eq!(
       git_config_exec_args("my-sandbox", "user.name", "Jane Doe"),
@@ -1502,3 +1723,6 @@ local    all          -        local-policy   -      default-fs-write-allow-all 
     assert_eq!(usage.network_tx_kb_per_sec, 0.0);
   }
 }
+
+
+

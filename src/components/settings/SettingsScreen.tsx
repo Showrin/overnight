@@ -4,6 +4,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import type { NetworkPolicySettings, NetworkRuleDecision } from '@/lib/networkPolicy'
 import { NETWORK_POLICY_PRESET_LABELS, NETWORK_POLICY_PRESETS } from '@/lib/networkPolicy'
@@ -21,6 +22,8 @@ export function SettingsScreen() {
   const saveSkillFolders = useAppStore((s) => s.saveSkillFolders)
   const defaultTerminalHost = useAppStore((s) => s.defaultTerminalHost)
   const saveDefaultTerminalHost = useAppStore((s) => s.saveDefaultTerminalHost)
+  const backupIntervalMinutes = useAppStore((s) => s.backupIntervalMinutes)
+  const saveBackupIntervalMinutes = useAppStore((s) => s.saveBackupIntervalMinutes)
   const [permissionMode, setPermissionMode] = useState<string>('default')
   const [savingMode, setSavingMode] = useState(false)
   const [modeError, setModeError] = useState<string | null>(null)
@@ -32,6 +35,10 @@ export function SettingsScreen() {
   const [terminalHost, setTerminalHost] = useState<string>('cmd')
   const [savingTerminalHost, setSavingTerminalHost] = useState(false)
   const [terminalHostError, setTerminalHostError] = useState<string | null>(null)
+
+  const [backupInterval, setBackupInterval] = useState<number>(15)
+  const [savingBackupInterval, setSavingBackupInterval] = useState(false)
+  const [backupIntervalError, setBackupIntervalError] = useState<string | null>(null)
 
   const [jiraConfig, setJiraConfig] = useState<JiraConfig | null>(null)
   const [editingJira, setEditingJira] = useState(false)
@@ -52,6 +59,10 @@ export function SettingsScreen() {
   useEffect(() => {
     setTerminalHost(defaultTerminalHost)
   }, [defaultTerminalHost])
+
+  useEffect(() => {
+    setBackupInterval(backupIntervalMinutes)
+  }, [backupIntervalMinutes])
 
   async function loadJiraConfig() {
     const c = await invoke<JiraConfig>('get_jira_config')
@@ -149,6 +160,18 @@ export function SettingsScreen() {
     }
   }
 
+  async function handleSaveBackupInterval() {
+    setSavingBackupInterval(true)
+    setBackupIntervalError(null)
+    try {
+      await saveBackupIntervalMinutes(backupInterval)
+    } catch (e) {
+      setBackupIntervalError(String(e))
+    } finally {
+      setSavingBackupInterval(false)
+    }
+  }
+
   async function addSkillFolders() {
     const selection = await open({ directory: true, multiple: true })
     if (!selection) return
@@ -223,6 +246,27 @@ export function SettingsScreen() {
           {terminalHostError && <p className="text-sm text-destructive">{terminalHostError}</p>}
           <Button onClick={handleSaveTerminalHost} disabled={savingTerminalHost}>
             {savingTerminalHost ? 'Saving…' : 'Save'}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card className="w-full">
+        <CardHeader>
+          <CardTitle>Automatic Backups</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2">
+          <Input
+            type="number"
+            min={1}
+            value={backupInterval}
+            onChange={(e) => setBackupInterval(Number(e.target.value))}
+          />
+          <p className="text-xs text-muted-foreground">
+            How often (in minutes) running sandboxes' .claude and .git folders are backed up.
+          </p>
+          {backupIntervalError && <p className="text-sm text-destructive">{backupIntervalError}</p>}
+          <Button onClick={handleSaveBackupInterval} disabled={savingBackupInterval}>
+            {savingBackupInterval ? 'Saving…' : 'Save'}
           </Button>
         </CardContent>
       </Card>

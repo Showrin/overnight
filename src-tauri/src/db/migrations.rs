@@ -256,6 +256,60 @@ pub fn migrations() -> Migrations<'static> {
     ALTER TABLE sandboxes ADD COLUMN worktrees TEXT NOT NULL DEFAULT '[]';
     ALTER TABLE sandboxes ADD COLUMN branch_snapshot_at INTEGER;
     ",
+  ), M::up(
+    "
+    -- Periodic (and pre-stop/pre-delete) backups of a sandbox's ~/.claude
+    -- and <workspace>/.git, kept as history — unlike sandboxes.last_backup_at
+    -- /last_backup_path, which only ever hold the single most recent manual
+    -- claude-only backup and are left untouched by this table.
+    CREATE TABLE sandbox_backups (
+      id TEXT PRIMARY KEY,
+      sandbox_id TEXT NOT NULL REFERENCES sandboxes(id) ON DELETE CASCADE,
+      created_at INTEGER NOT NULL,
+      trigger TEXT NOT NULL,
+      host_dir TEXT NOT NULL,
+      has_claude INTEGER NOT NULL,
+      has_git INTEGER NOT NULL,
+      base_branch TEXT,
+      current_branch TEXT,
+      branches TEXT NOT NULL DEFAULT '[]',
+      plan_file_count INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX ix_sandbox_backups_sandbox_created ON sandbox_backups(sandbox_id, created_at DESC);
+    ",
+  ), M::up(
+    "
+    -- Backups must survive their sandbox being deleted — they previously
+    -- cascaded away with it even though the on-disk copy stayed behind.
+    -- SQLite can't drop a foreign key in place, so recreate the table
+    -- without one. `sandbox_label` snapshots the sandbox's display name at
+    -- backup time so it can still show something readable once the live
+    -- sandbox row is gone.
+    CREATE TABLE sandbox_backups_new (
+      id TEXT PRIMARY KEY,
+      sandbox_id TEXT NOT NULL,
+      sandbox_label TEXT,
+      created_at INTEGER NOT NULL,
+      trigger TEXT NOT NULL,
+      host_dir TEXT NOT NULL,
+      has_claude INTEGER NOT NULL,
+      has_git INTEGER NOT NULL,
+      base_branch TEXT,
+      current_branch TEXT,
+      branches TEXT NOT NULL DEFAULT '[]',
+      plan_file_count INTEGER NOT NULL DEFAULT 0
+    );
+    INSERT INTO sandbox_backups_new (
+      id, sandbox_id, sandbox_label, created_at, trigger, host_dir, has_claude,
+      has_git, base_branch, current_branch, branches, plan_file_count
+    )
+      SELECT id, sandbox_id, NULL, created_at, trigger, host_dir, has_claude,
+             has_git, base_branch, current_branch, branches, plan_file_count
+      FROM sandbox_backups;
+    DROP TABLE sandbox_backups;
+    ALTER TABLE sandbox_backups_new RENAME TO sandbox_backups;
+    CREATE INDEX ix_sandbox_backups_sandbox_created ON sandbox_backups(sandbox_id, created_at DESC);
+    ",
   )])
 }
 
@@ -281,6 +335,6 @@ mod tests {
         |row| row.get(0),
       )
       .unwrap();
-    assert_eq!(table_count, 10);
+    assert_eq!(table_count, 11);
   }
 }

@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
-import type { Route } from '@/lib/router'
+import type { DetailTab, Route } from '@/lib/router'
 import { useAppStore } from '@/store/useAppStore'
 import { BranchDiffPage } from './BranchDiffPage'
 import { BranchesPage } from './BranchesPage'
@@ -21,6 +21,7 @@ function SandboxGroup({
   addNewDisabledReason,
   onChanged,
   onSelect,
+  navigate,
 }: {
   title: string
   sandboxes: Sandbox[]
@@ -29,6 +30,7 @@ function SandboxGroup({
   addNewDisabledReason?: string
   onChanged: () => void
   onSelect: (sandboxId: string) => void
+  navigate: (route: Route) => void
 }) {
   return (
     <div className="flex flex-col gap-2">
@@ -58,6 +60,7 @@ function SandboxGroup({
               projectName={projectName}
               onChanged={onChanged}
               onSelect={() => onSelect(sandbox.id)}
+              navigate={navigate}
             />
           ))}
         </div>
@@ -70,11 +73,13 @@ export function SandboxesScreen({
   sandboxId,
   branches,
   branch,
+  detailTab,
   navigate,
 }: {
   sandboxId?: string
   branches?: boolean
   branch?: string
+  detailTab?: DetailTab
   navigate: (route: Route) => void
 }) {
   const sandboxes = useAppStore((s) => s.sandboxes)
@@ -135,7 +140,7 @@ export function SandboxesScreen({
   }
 
   if (sandboxId) {
-    return <SandboxDetailScreen sandboxId={sandboxId} navigate={navigate} />
+    return <SandboxDetailScreen sandboxId={sandboxId} navigate={navigate} initialDetailTab={detailTab} />
   }
 
   const orphanSandboxes = sandboxes.filter((sb) => !projects.some((p) => p.id === sb.project_id))
@@ -200,6 +205,7 @@ export function SandboxesScreen({
               addNewDisabledReason={addNewDisabledReason}
               onChanged={loadSandboxes}
               onSelect={onSelect}
+              navigate={navigate}
             />
           );
         })}
@@ -211,6 +217,7 @@ export function SandboxesScreen({
             sandboxes={orphanSandboxes}
             onChanged={loadSandboxes}
             onSelect={onSelect}
+            navigate={navigate}
           />
         )}
       </div>

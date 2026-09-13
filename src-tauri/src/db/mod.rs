@@ -7,6 +7,7 @@ use tauri::{AppHandle, Manager};
 use crate::db::error::Result;
 
 pub mod activity;
+pub mod backups;
 pub mod container_metrics;
 pub mod error;
 pub mod host_metrics;

@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { invoke } from '@tauri-apps/api/core'
 import type { Project } from '@/components/projects/types'
 import type { HostMetric, Sandbox } from '@/components/sandboxes/types'
+import type { ActiveBackup, ActiveOperation } from '@/components/backups/types'
 import type { NetworkPolicySettings } from '@/lib/networkPolicy'
 
 const SANDBOX_POLL_MS = 5000
@@ -25,6 +26,9 @@ interface AppStore {
   networkPolicyPreset: string | null
   hostStats: HostMetric | null
   hostStatsHistory: HostMetric[]
+  backupIntervalMinutes: number
+  activeBackups: ActiveBackup[]
+  activeOperations: ActiveOperation[]
 
   loadProjects: () => Promise<void>
   loadSandboxes: () => Promise<void>
@@ -37,6 +41,10 @@ interface AppStore {
   loadNetworkPolicyPreset: () => Promise<void>
   loadHostStatsHistory: () => Promise<void>
   loadHostStats: () => Promise<void>
+  loadBackupIntervalMinutes: () => Promise<void>
+  saveBackupIntervalMinutes: (minutes: number) => Promise<void>
+  loadActiveBackups: () => Promise<void>
+  loadActiveOperations: () => Promise<void>
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
@@ -48,6 +56,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
   networkPolicyPreset: null,
   hostStats: null,
   hostStatsHistory: [],
+  backupIntervalMinutes: 15,
+  activeBackups: [],
+  activeOperations: [],
 
   async loadProjects() {
     const projects = await invoke<Project[]>('list_projects')
@@ -119,6 +130,26 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const stats = await invoke<HostMetric>('get_host_stats')
     set({ hostStats: stats, hostStatsHistory: [...get().hostStatsHistory, stats].slice(-HOST_STATS_HISTORY_MAX_POINTS) })
   },
+
+  async loadBackupIntervalMinutes() {
+    const minutes = await invoke<number>('get_backup_interval_minutes')
+    set({ backupIntervalMinutes: minutes })
+  },
+
+  async saveBackupIntervalMinutes(minutes) {
+    await invoke('save_backup_interval_minutes', { minutes })
+    set({ backupIntervalMinutes: minutes })
+  },
+
+  async loadActiveBackups() {
+    const activeBackups = await invoke<ActiveBackup[]>('list_active_backups')
+    set({ activeBackups })
+  },
+
+  async loadActiveOperations() {
+    const activeOperations = await invoke<ActiveOperation[]>('list_active_operations')
+    set({ activeOperations })
+  },
 }))
 
 let initialized = false
@@ -140,11 +171,16 @@ export function initAppStore() {
   useAppStore.getState().loadDefaultTerminalHost()
   useAppStore.getState().loadNetworkPolicyPreset()
   useAppStore.getState().loadHostStatsHistory()
+  useAppStore.getState().loadBackupIntervalMinutes()
+  useAppStore.getState().loadActiveBackups()
+  useAppStore.getState().loadActiveOperations()
   let tick = 0
   setInterval(() => {
     tick += 1
     useAppStore.getState().loadSandboxes()
     useAppStore.getState().loadHostStats()
+    useAppStore.getState().loadActiveBackups()
+    useAppStore.getState().loadActiveOperations()
     if (tick % ORPHAN_ADOPTION_TICK_INTERVAL === 0) {
       adoptOrphanSandboxes()
     }

@@ -4,8 +4,10 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
 use crate::db::error::{Error, Result};
-use crate::db::models::{ContainerMetric, HostMetric, JiraIssue, Project, Sandbox, Session, Task};
-use crate::db::{container_metrics, host_metrics, jira_issues, metrics, projects, sandboxes, sessions, settings, tasks, DbPool};
+use crate::db::models::{ContainerMetric, HostMetric, JiraIssue, Project, Sandbox, SandboxBackup, Session, Task};
+use crate::db::{
+  backups, container_metrics, host_metrics, jira_issues, metrics, projects, sandboxes, sessions, settings, tasks, DbPool,
+};
 use crate::jira::{self, JiraClient};
 use crate::providers::claude_code::ClaudeCodeProvider;
 use crate::providers::AgentProvider;
@@ -1131,51 +1133,135 @@ pub fn get_sandbox_usage(pool: State<DbPool>, id: String) -> std::result::Result
   Ok(SandboxUsage { input_tokens, output_tokens })
 }
 
-/// The `claude` CLI's own local config/state directory inside the sandbox —
-/// the thing `backup_sandbox_claude_data` copies out.
-const CLAUDE_DATA_SOURCE_PATH: &str = "/home/agent/.claude";
-
-/// Copies this sandbox's in-VM `~/.claude` directory out to a host-side
-/// backup folder under `<app_data_dir>/claude-backups/<sbx_name>/<unix_ms>/`
-/// — deliberately outside any project's git repo, not user-configurable
-/// this round. Only available while the sandbox is running (mirrors VS
-/// Code/Terminal/Git Sync's gating); manual only, no automatic/scheduled
-/// backups this round.
-///
-/// **UNVERIFIED**: no real `sbx` install is available in this dev
-/// environment, so it's unconfirmed whether `sbx cp` creates a pre-existing
-/// empty destination directory's *contents* from the source directory, or
-/// nests the source directory itself one level inside it — this
-/// pre-creates the destination (matching the plan's steps) rather than
-/// guessing which.
 #[tauri::command]
-pub async fn backup_sandbox_claude_data(app: AppHandle, pool: State<'_, DbPool>, id: String) -> std::result::Result<Sandbox, String> {
-  let sandbox = {
-    let conn = pool.get().map_err(|e| e.to_string())?;
-    sandboxes::get(&conn, &id).map_err(|e| e.to_string())?
-  };
-  if sandbox.status != "running" {
-    return Err("sandbox must be running to back up its Claude data".to_string());
-  }
-  let name = sandbox.sbx_name.ok_or_else(|| "sandbox has no sbx sandbox yet".to_string())?;
-
-  let at = crate::db::models::now_millis();
-  let dest = app
-    .path()
-    .app_data_dir()
-    .map_err(|e| e.to_string())?
-    .join("claude-backups")
-    .join(&name)
-    .join(at.to_string());
-  std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
-  let dest = dest.to_string_lossy().to_string();
-
-  crate::sbx::cp_from_sandbox(&app, &name, CLAUDE_DATA_SOURCE_PATH, &dest)
-    .await
-    .map_err(|e| e.to_string())?;
-
+pub fn get_backup_interval_minutes(pool: State<DbPool>) -> std::result::Result<i64, String> {
   let conn = pool.get().map_err(|e| e.to_string())?;
-  sandboxes::record_backup(&conn, &id, &dest, at).map_err(|e| e.to_string())
+  Ok(
+    settings::get(&conn, crate::backup::BACKUP_INTERVAL_KEY)
+      .map_err(|e| e.to_string())?
+      .and_then(|raw| raw.parse().ok())
+      .unwrap_or(crate::backup::DEFAULT_BACKUP_INTERVAL_MINUTES),
+  )
+}
+
+#[tauri::command]
+pub fn save_backup_interval_minutes(pool: State<DbPool>, minutes: i64) -> std::result::Result<(), String> {
+  if minutes < 1 {
+    return Err("backup interval must be at least 1 minute".to_string());
+  }
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  settings::set(&conn, crate::backup::BACKUP_INTERVAL_KEY, &minutes.to_string()).map_err(|e| e.to_string())
+}
+
+/// Sandboxes with a `.claude`/`.git` copy currently in flight — polled by
+/// the frontend to show a progress indicator and disable Stop/Delete.
+#[tauri::command]
+pub fn list_active_backups(app: AppHandle) -> Vec<crate::backup::ActiveBackup> {
+  crate::backup::active_backups(&app)
+}
+
+/// Manually triggers a backup outside the scheduler — used by the Backup
+/// menu (scope chosen by the user) and by the stop/delete confirmation
+/// dialog (always scope "all") when the user opts to back up first, instead
+/// of the app doing it silently.
+#[tauri::command]
+pub async fn backup_sandbox_now(
+  app: AppHandle,
+  pool: State<'_, DbPool>,
+  id: String,
+  trigger: String,
+  scope: String,
+) -> std::result::Result<SandboxBackup, String> {
+  let scope = crate::backup::BackupScope::parse(&scope)?;
+  let pool = pool.inner().clone();
+  crate::backup::backup_sandbox(&app, &pool, &id, &trigger, scope).await
+}
+
+/// The frontend already holds the full sandbox list in its store, so it
+/// resolves display names (grouping headers, etc.) client-side rather than
+/// this command joining them in.
+#[tauri::command]
+pub fn list_backups(pool: State<DbPool>) -> std::result::Result<Vec<SandboxBackup>, String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  backups::list_all(&conn).map_err(|e| e.to_string())
+}
+
+/// One entry in the global "operation in progress" indicator — a backup or
+/// a restore, whichever `kind` says. `source_sandbox_id`/`scope` are only
+/// meaningful for a restore; `trigger` only for a backup.
+#[derive(Debug, Clone, Serialize)]
+pub struct ActiveOperation {
+  pub kind: String,
+  pub sandbox_id: String,
+  pub source_sandbox_id: Option<String>,
+  pub scope: Option<String>,
+  pub trigger: Option<String>,
+  pub started_at: i64,
+}
+
+#[tauri::command]
+pub fn list_active_operations(app: AppHandle) -> Vec<ActiveOperation> {
+  let backups = crate::backup::active_backups(&app).into_iter().map(|b| ActiveOperation {
+    kind: "backup".to_string(),
+    sandbox_id: b.sandbox_id,
+    source_sandbox_id: None,
+    scope: None,
+    trigger: Some(b.trigger),
+    started_at: b.started_at,
+  });
+  let restores = crate::restore::active_restores(&app).into_iter().map(|r| ActiveOperation {
+    kind: "restore".to_string(),
+    sandbox_id: r.target_sandbox_id,
+    source_sandbox_id: Some(r.source_sandbox_id),
+    scope: Some(r.scope),
+    trigger: None,
+    started_at: r.started_at,
+  });
+  backups.chain(restores).collect()
+}
+
+/// Deletes one backup: its host directory (best-effort — an orphaned
+/// directory is harmless, so a removal failure doesn't block deleting the
+/// row) and its `sandbox_backups` row.
+#[tauri::command]
+pub fn delete_sandbox_backup(pool: State<DbPool>, id: String) -> std::result::Result<(), String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  let backup = backups::get(&conn, &id).map_err(|e| e.to_string())?;
+  if let Err(e) = std::fs::remove_dir_all(&backup.host_dir) {
+    log::warn!("delete_sandbox_backup: failed to remove {}: {e}", backup.host_dir);
+  }
+  backups::delete(&conn, &id).map_err(|e| e.to_string())
+}
+
+/// Deletes every backup belonging to `sandbox_id` — its host directories
+/// (best-effort, same reasoning as `delete_sandbox_backup`) and their rows.
+/// Works for a sandbox that no longer exists, since backups aren't scoped
+/// to a live sandbox row.
+#[tauri::command]
+pub fn delete_sandbox_backups_for_sandbox(pool: State<DbPool>, sandbox_id: String) -> std::result::Result<(), String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  let victims = backups::list_for_sandbox(&conn, &sandbox_id).map_err(|e| e.to_string())?;
+  for victim in victims {
+    if let Err(e) = std::fs::remove_dir_all(&victim.host_dir) {
+      log::warn!("delete_sandbox_backups_for_sandbox: failed to remove {}: {e}", victim.host_dir);
+    }
+  }
+  backups::delete_all_for_sandbox(&conn, &sandbox_id).map_err(|e| e.to_string())
+}
+
+/// Restores a backup's `.claude` and/or `.git` copy (per `scope`) back into
+/// a running sandbox.
+#[tauri::command]
+pub async fn restore_backup(
+  app: AppHandle,
+  pool: State<'_, DbPool>,
+  backup_id: String,
+  target_sandbox_id: String,
+  scope: String,
+) -> std::result::Result<(), String> {
+  let scope = crate::backup::BackupScope::parse(&scope)?;
+  let pool = pool.inner().clone();
+  crate::restore::restore_backup(&app, &pool, &backup_id, &target_sandbox_id, scope).await
 }
 
 /// The `claude` CLI's plans directory inside the sandbox — resynced to the
@@ -1447,6 +1533,20 @@ pub async fn open_sandbox_vscode(app: AppHandle, pool: State<'_, DbPool>, id: St
       ))
     }
   }
+}
+
+/// Opens the root folder every sandbox's backups are nested under
+/// (`<app_data_dir>/sandbox-backups`), for the global Backups page's
+/// "Open Folder" button — a level up from any single backup's `host_dir`.
+/// Creates it first (best-effort) so this works even before the first
+/// backup has run.
+#[tauri::command]
+pub fn open_backups_root_folder(app: AppHandle) -> std::result::Result<(), String> {
+  let root = app.path().app_data_dir().map_err(|e| e.to_string())?.join(crate::backup::BACKUPS_ROOT_DIR_NAME);
+  if let Err(e) = std::fs::create_dir_all(&root) {
+    log::warn!("open_backups_root_folder: failed to create {}: {e}", root.display());
+  }
+  open_path_in_explorer(root.to_string_lossy().to_string())
 }
 
 #[tauri::command]

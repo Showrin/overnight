@@ -146,6 +146,34 @@ pub struct Sandbox {
   pub branch_snapshot_at: Option<i64>,
 }
 
+/// One periodic (or pre-stop/pre-delete) backup of a sandbox's `~/.claude`
+/// and `<workspace>/.git` directories. See `db::backups::insert`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SandboxBackup {
+  pub id: String,
+  pub sandbox_id: String,
+  /// Snapshot of the sandbox's display name at backup time — `sandboxes`
+  /// rows are no longer cascade-deleted with their backups, so once the
+  /// live sandbox is gone this is the only way left to show something
+  /// readable instead of a bare id.
+  pub sandbox_label: Option<String>,
+  pub created_at: i64,
+  /// "scheduled" | "pre_stop" | "pre_delete"
+  pub trigger: String,
+  /// Host directory this backup's `claude`/`git` subfolders live under.
+  pub host_dir: String,
+  pub has_claude: bool,
+  pub has_git: bool,
+  pub base_branch: Option<String>,
+  pub current_branch: Option<String>,
+  pub branches: Vec<String>,
+  pub plan_file_count: i64,
+  /// Total on-disk size of `host_dir`, computed live rather than stored —
+  /// backups are immutable after creation, but computing this at read time
+  /// means every existing row gets a correct value with no backfill step.
+  pub size_bytes: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JiraIssue {
   pub id: String,

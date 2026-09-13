@@ -1,29 +1,31 @@
 import { useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { GitBranch } from 'lucide-react'
+import { DatabaseBackup, GitBranch } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import type { Route } from '@/lib/router'
+import type { DetailTab, Route } from '@/lib/router'
 import { formatNetworkPolicyLabel, permissionBadgeVariant, statusBadgeVariant } from '@/lib/sandboxDisplay'
 import { useAppStore } from '@/store/useAppStore'
+import { SandboxBackupsTab } from './SandboxBackupsTab'
 import { SandboxBranchTab } from './SandboxBranchTab'
 import { SandboxBreadcrumb } from './SandboxBreadcrumb'
 import { SandboxMetricsTab } from './SandboxMetricsTab'
 import { SandboxPlansTab } from './SandboxPlansTab'
 
-type DetailTab = 'overview' | 'metrics' | 'plans'
-
 export function SandboxDetailScreen({
   sandboxId,
   navigate,
+  initialDetailTab,
 }: {
   sandboxId: string
   navigate: (route: Route) => void
+  initialDetailTab?: DetailTab
 }) {
-  const [tab, setTab] = useState<DetailTab>('overview')
+  const [tab, setTab] = useState<DetailTab>(initialDetailTab ?? 'overview')
   const sandbox = useAppStore((s) => s.sandboxes.find((sb) => sb.id === sandboxId))
   const project = useAppStore((s) => s.projects.find((p) => p.id === sandbox?.project_id))
   const networkPolicyPreset = useAppStore((s) => s.networkPolicyPreset)
+  const isBackingUp = useAppStore((s) => s.activeBackups.some((b) => b.sandbox_id === sandboxId))
 
   const toSandboxes = () => navigate({ screen: 'sandboxes' })
 
@@ -53,6 +55,16 @@ export function SandboxDetailScreen({
         <div className="flex items-center gap-2">
           <h1 className="text-lg font-medium">{title}</h1>
           <Badge variant={statusBadgeVariant(sandbox.status)}>{sandbox.status}</Badge>
+          {isBackingUp && (
+            <button
+              type="button"
+              onClick={() => setTab('backups')}
+              title="Backup in progress — view details"
+              className="ml-auto text-muted-foreground hover:text-foreground"
+            >
+              <DatabaseBackup className="size-4 animate-pulse" />
+            </button>
+          )}
         </div>
         {sandbox.sbx_name && <p className="text-xs text-muted-foreground">{sandbox.sbx_name}</p>}
       </div>
@@ -75,6 +87,9 @@ export function SandboxDetailScreen({
         </Button>
         <Button type="button" size="sm" variant={tab === 'plans' ? 'default' : 'outline'} onClick={() => setTab('plans')}>
           Plans
+        </Button>
+        <Button type="button" size="sm" variant={tab === 'backups' ? 'default' : 'outline'} onClick={() => setTab('backups')}>
+          Backups
         </Button>
       </div>
 
@@ -121,6 +136,8 @@ export function SandboxDetailScreen({
       {tab === 'metrics' && <SandboxMetricsTab sandbox={sandbox} />}
 
       {tab === 'plans' && <SandboxPlansTab sandbox={sandbox} />}
+
+      {tab === 'backups' && <SandboxBackupsTab sandbox={sandbox} />}
     </div>
   )
 }

@@ -53,6 +53,15 @@ export function formatRelativeTime(pastMs: number): string {
   return rtf.format(Math.round(duration), 'year')
 }
 
+// Formats a byte count as "1.2 GB"-style text for backup-size display.
+export function formatBytes(bytes: number): string {
+  if (bytes <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
+  const value = bytes / 1024 ** exponent
+  return `${exponent === 0 ? value : value.toFixed(1)} ${units[exponent]}`
+}
+
 export interface DiffStatCounts {
   filesChanged: number
   insertions: number

@@ -18,10 +18,17 @@ pub fn notify(
   body: Option<String>,
   sandbox_id: Option<String>,
 ) -> Result<(), String> {
+  notify_plain(&app, &title, body.as_deref(), sandbox_id)
+}
+
+/// Body of `notify`, callable directly from Rust (e.g. the backup
+/// scheduler) without a frontend round trip through the command.
+pub fn notify_plain(app: &AppHandle, title: &str, body: Option<&str>, sandbox_id: Option<String>) -> Result<(), String> {
+  let app = app.clone();
   let mut notification = Notification::new();
   let product_name = app.config().product_name.clone().unwrap_or_else(|| "Overnight".into());
   notification.appname(&product_name);
-  notification.summary(&title);
+  notification.summary(title);
   if let Some(body) = &body {
     notification.body(body);
   }

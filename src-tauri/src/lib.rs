@@ -1,3 +1,4 @@
+mod backup;
 mod commands;
 mod db;
 mod git;
@@ -5,6 +6,7 @@ mod jira;
 mod notifications;
 mod process;
 mod providers;
+mod restore;
 mod sbx;
 mod skills;
 
@@ -61,7 +63,15 @@ pub fn run() {
       commands::start_sandbox,
       commands::delete_sandbox,
       commands::get_sandbox_usage,
-      commands::backup_sandbox_claude_data,
+      commands::get_backup_interval_minutes,
+      commands::save_backup_interval_minutes,
+      commands::list_active_backups,
+      commands::list_active_operations,
+      commands::backup_sandbox_now,
+      commands::list_backups,
+      commands::delete_sandbox_backup,
+      commands::delete_sandbox_backups_for_sandbox,
+      commands::restore_backup,
       commands::sync_sandbox_plans,
       commands::get_sandbox_branch_info,
       commands::open_sandbox_vscode,
@@ -70,6 +80,7 @@ pub fn run() {
       commands::get_sandbox_diff,
       commands::get_branch_commits,
       commands::open_path_in_explorer,
+      commands::open_backups_root_folder,
       commands::get_host_stats,
       commands::get_host_stats_history,
       commands::get_sandbox_resource_usage,
@@ -99,12 +110,16 @@ pub fn run() {
           "projects",
           "sandboxes",
           "host_metrics",
+          "sandbox_backups",
         ];
         for table in table_names {
           let count: i64 = conn.query_row(&format!("SELECT count(*) FROM {table}"), [], |row| row.get(0))?;
           log::info!("db: {table} has {count} row(s)");
         }
       }
+      app.manage(std::sync::Mutex::new(backup::BackupState::default()));
+      app.manage(std::sync::Mutex::new(restore::RestoreState::default()));
+      tauri::async_runtime::spawn(backup::run_scheduler(app.handle().clone(), pool.clone()));
       app.manage(pool);
       app.manage(std::sync::Mutex::new(sbx::HostMonitor::new()));
       app.manage(std::sync::Mutex::new(sbx::SandboxMonitor::new()));

@@ -5,16 +5,22 @@
 // containing "/" round-trip safely). Pairing this with the browser's native
 // History API gives real back/forward navigation for free.
 
-export type Screen = 'dashboard' | 'projects' | 'sandboxes' | 'performance-monitor' | 'settings'
+export type Screen = 'dashboard' | 'projects' | 'sandboxes' | 'performance-monitor' | 'backups' | 'settings'
+
+// Sandbox detail page tabs. Not persisted into the hash — a same-session
+// navigation hint only (e.g. jumping straight to Backups from an
+// in-progress indicator), so a page refresh lands back on Overview.
+export type DetailTab = 'overview' | 'metrics' | 'plans' | 'backups'
 
 export interface Route {
   screen: Screen
   sandboxId?: string
   branches?: boolean
   branch?: string
+  detailTab?: DetailTab
 }
 
-const SCREENS: readonly Screen[] = ['dashboard', 'projects', 'sandboxes', 'performance-monitor', 'settings']
+const SCREENS: readonly Screen[] = ['dashboard', 'projects', 'sandboxes', 'performance-monitor', 'backups', 'settings']
 
 function isScreen(value: string): value is Screen {
   return (SCREENS as readonly string[]).includes(value)

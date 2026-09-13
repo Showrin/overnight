@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import { Titlebar } from '@/components/titlebar'
 import { Sidebar } from '@/components/sidebar'
+import { OperationsIndicator } from '@/components/OperationsIndicator'
+import { BackupsScreen } from '@/components/backups/BackupsScreen'
 import { JiraIssueList } from '@/components/dashboard/JiraIssueList'
 import { ProjectsScreen } from '@/components/projects/ProjectsScreen'
 import { PerformanceMonitorTab } from '@/components/sandboxes/PerformanceMonitorTab'
@@ -74,14 +76,21 @@ function App() {
               {route.screen === 'dashboard' && <JiraIssueList />}
               {route.screen === 'projects' && <ProjectsScreen />}
               {route.screen === 'sandboxes' && (
-                <SandboxesScreen sandboxId={route.sandboxId} branches={route.branches} navigate={navigate} />
+                <SandboxesScreen
+                  sandboxId={route.sandboxId}
+                  branches={route.branches}
+                  detailTab={route.detailTab}
+                  navigate={navigate}
+                />
               )}
               {route.screen === 'performance-monitor' && <PerformanceMonitorTab />}
+              {route.screen === 'backups' && <BackupsScreen />}
               {route.screen === 'settings' && <SettingsScreen />}
             </div>
           )}
         </main>
       </div>
+      <OperationsIndicator navigate={navigate} />
     </div>
   )
 }

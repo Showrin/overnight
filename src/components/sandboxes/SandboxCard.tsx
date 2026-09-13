@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { Check, Code, DatabaseBackup, ExternalLink, FolderOpen, GitBranch, Loader2, Play, Square, TerminalSquare, Trash2 } from 'lucide-react'
+import { Check, Code, DatabaseBackup, ExternalLink, GitBranch, Loader2, Play, Square, TerminalSquare, Trash2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { NetworkRuleEditor } from '@/components/settings/NetworkRuleEditor'
+import type { Route } from '@/lib/router'
 import type { NetworkRuleDecision, PolicyRule, SandboxNetworkPresetOverride } from '@/lib/networkPolicy'
 import {
   NETWORK_POLICY_PRESET_LABELS,
@@ -16,12 +18,20 @@ import {
 import { notify } from '@/lib/notify'
 import { formatRelativeTime, permissionBadgeVariant, statusBadgeVariant } from '@/lib/sandboxDisplay'
 import { TERMINAL_HOSTS, TERMINAL_HOST_LABELS } from '@/lib/terminalHost'
+import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
 import type { BranchSyncOutcome, Sandbox } from './types'
 
 const DEFAULT_NETWORK_OVERRIDE = '__global_default__'
 
+const BACKUP_SCOPES: { value: 'all' | 'claude' | 'git'; label: string }[] = [
+  { value: 'all', label: 'Backup all' },
+  { value: 'claude', label: 'Backup .claude' },
+  { value: 'git', label: 'Backup .git' },
+]
+
 type BusyAction = 'start' | 'stop' | 'delete' | 'vscode' | 'terminal' | 'git-sync' | 'backup' | null
+type ConfirmAction = 'stop' | 'delete' | null
 
 function branchSyncStatusLabel(status: BranchSyncOutcome['status']): string {
   switch (status) {
@@ -39,11 +49,13 @@ export function SandboxCard({
   projectName,
   onChanged,
   onSelect,
+  navigate,
 }: {
   sandbox: Sandbox
   projectName: string
   onChanged: () => void
   onSelect: () => void
+  navigate: (route: Route) => void
 }) {
   const projectRepoPath = useAppStore(
     (s) => s.projects.find((p) => p.id === sandbox.project_id)?.repo_path
@@ -51,11 +63,14 @@ export function SandboxCard({
   const defaultTerminalHost = useAppStore((s) => s.defaultTerminalHost)
   const platform = useAppStore((s) => s.platform)
   const networkPolicyPreset = useAppStore((s) => s.networkPolicyPreset)
+  const isBackingUp = useAppStore((s) => s.activeBackups.some((b) => b.sandbox_id === sandbox.id))
   const [busyAction, setBusyAction] = useState<BusyAction>(null)
   const [error, setError] = useState<string | null>(null)
   const [copiedInfo, setCopiedInfo] = useState(false)
   const [gitSyncResult, setGitSyncResult] = useState<BranchSyncOutcome[] | null>(null)
   const [terminalMenuOpen, setTerminalMenuOpen] = useState(false)
+  const [backupMenuOpen, setBackupMenuOpen] = useState(false)
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null)
 
   const [networkRules, setNetworkRules] = useState<PolicyRule[]>([])
   const [loadingNetworkRules, setLoadingNetworkRules] = useState(false)
@@ -129,6 +144,24 @@ export function SandboxCard({
     }
   }
 
+  async function handleBackupChoice(withBackup: boolean) {
+    const action = confirmAction
+    if (!action) return
+    setConfirmAction(null)
+    if (withBackup) {
+      setBusyAction(action)
+      setError(null)
+      try {
+        await invoke('backup_sandbox_now', { id: sandbox.id, trigger: action === 'stop' ? 'pre_stop' : 'pre_delete', scope: 'all' })
+      } catch (e) {
+        setError(String(e))
+        setBusyAction(null)
+        return
+      }
+    }
+    await run(action, () => invoke(action === 'stop' ? 'stop_sandbox' : 'delete_sandbox', { id: sandbox.id }))
+  }
+
   function openInBrowser() {
     if (sandbox.host_port != null) {
       window.open(`http://localhost:${sandbox.host_port}`, '_blank')
@@ -146,16 +179,11 @@ export function SandboxCard({
     if (location) invoke('open_path_in_explorer', { path: location })
   }
 
-  function openBackupFolder() {
-    if (sandbox.last_backup_path) invoke('open_path_in_explorer', { path: sandbox.last_backup_path })
-  }
-
-  async function backupClaudeData() {
+  async function handleBackupNow(scope: 'all' | 'claude' | 'git') {
     setBusyAction('backup')
     setError(null)
     try {
-      await invoke('backup_sandbox_claude_data', { id: sandbox.id })
-      notify('Claude data backed up', `${sandbox.name ?? projectName}'s ~/.claude has been copied to the host.`, sandbox.id)
+      await invoke('backup_sandbox_now', { id: sandbox.id, trigger: 'manual', scope })
       onChanged()
     } catch (e) {
       setError(String(e))
@@ -180,7 +208,10 @@ export function SandboxCard({
   }
 
   return (
-    <Card className="gap-6" size="sm">
+    <Card
+      className={cn('gap-6', isBackingUp && 'ring-2 ring-primary/50 shadow-md shadow-primary/30 transition-shadow')}
+      size="sm"
+    >
       <CardHeader className="gap-1.5">
         <div className="flex items-center gap-2">
           <CardTitle>
@@ -196,6 +227,16 @@ export function SandboxCard({
           <Badge variant={statusBadgeVariant(sandbox.status)}>
             {sandbox.status}
           </Badge>
+          {isBackingUp && (
+            <button
+              type="button"
+              onClick={() => navigate({ screen: 'sandboxes', sandboxId: sandbox.id, detailTab: 'backups' })}
+              title="Backup in progress — view details"
+              className="ml-auto text-muted-foreground hover:text-foreground"
+            >
+              <DatabaseBackup className="size-4 animate-pulse" />
+            </button>
+          )}
         </div>
         {sandbox.sbx_name && (
           <button
@@ -299,22 +340,7 @@ export function SandboxCard({
         )}
 
         {sandbox.last_backup_at != null && (
-          <p className="text-xs">
-            Last backup: {formatRelativeTime(sandbox.last_backup_at)}
-            {sandbox.last_backup_path && (
-              <>
-                {" — "}
-                <button
-                  type="button"
-                  onClick={openBackupFolder}
-                  className="inline-flex items-center gap-1 text-left hover:text-foreground hover:underline"
-                >
-                  <FolderOpen className="size-3" />
-                  Open folder
-                </button>
-              </>
-            )}
-          </p>
+          <p className="text-xs">Last backup: {formatRelativeTime(sandbox.last_backup_at)}</p>
         )}
 
         {error && <p className="text-destructive">{error}</p>}
@@ -427,26 +453,38 @@ export function SandboxCard({
                   {busyAction === "git-sync" ? "Syncing…" : "Git Sync"}
                 </Button>
               )}
+              <Popover open={backupMenuOpen} onOpenChange={setBackupMenuOpen}>
+                <PopoverTrigger asChild>
+                  <Button size="sm" variant="outline" disabled={busyAction != null || isBackingUp}>
+                    {busyAction === "backup" ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <DatabaseBackup className="size-3.5" />
+                    )}
+                    {busyAction === "backup" ? "Backing up…" : "Backup"}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="start" className="flex flex-col gap-0.5">
+                  {BACKUP_SCOPES.map(({ value, label }) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => {
+                        setBackupMenuOpen(false)
+                        handleBackupNow(value)
+                      }}
+                      className="flex w-full items-center justify-between gap-4 rounded-md px-2 py-1.5 text-left text-sm outline-none hover:bg-accent hover:text-accent-foreground"
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </PopoverContent>
+              </Popover>
               <Button
                 size="sm"
                 variant="outline"
-                disabled={busyAction != null}
-                onClick={backupClaudeData}
-              >
-                {busyAction === "backup" ? (
-                  <Loader2 className="size-3.5 animate-spin" />
-                ) : (
-                  <DatabaseBackup className="size-3.5" />
-                )}
-                {busyAction === "backup" ? "Backing up…" : "Backup .claude"}
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busyAction != null}
-                onClick={() =>
-                  run("stop", () => invoke("stop_sandbox", { id: sandbox.id }))
-                }
+                disabled={busyAction != null || isBackingUp}
+                onClick={() => setConfirmAction("stop")}
               >
                 {busyAction === "stop" ? (
                   <Loader2 className="size-3.5 animate-spin" />
@@ -477,10 +515,8 @@ export function SandboxCard({
           <Button
             size="sm"
             variant="destructive"
-            disabled={busyAction != null}
-            onClick={() =>
-              run("delete", () => invoke("delete_sandbox", { id: sandbox.id }))
-            }
+            disabled={busyAction != null || isBackingUp}
+            onClick={() => setConfirmAction("delete")}
           >
             {busyAction === "delete" ? (
               <Loader2 className="size-3.5 animate-spin" />
@@ -491,6 +527,32 @@ export function SandboxCard({
           </Button>
         </div>
       </CardContent>
+
+      <Dialog open={confirmAction != null} onOpenChange={(open) => !open && setConfirmAction(null)}>
+        <DialogContent title={confirmAction === "stop" ? "Stop sandbox?" : "Delete sandbox?"}>
+          <Card className="w-full">
+            <CardHeader>
+              <CardTitle>{confirmAction === "stop" ? "Stop sandbox?" : "Delete sandbox?"}</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-4">
+              <p className="text-sm text-muted-foreground">
+                Back up this sandbox's .claude and .git folders before {confirmAction === "stop" ? "stopping" : "deleting"} it?
+              </p>
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button variant="ghost" onClick={() => setConfirmAction(null)}>
+                  Cancel
+                </Button>
+                <Button variant="outline" onClick={() => handleBackupChoice(false)}>
+                  Skip & {confirmAction === "stop" ? "stop" : "delete"}
+                </Button>
+                <Button onClick={() => handleBackupChoice(true)}>
+                  Back up & {confirmAction === "stop" ? "stop" : "delete"}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
