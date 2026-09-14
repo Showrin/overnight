@@ -2,15 +2,20 @@ import { useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { DatabaseBackup, GitBranch } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import type { DetailTab, Route } from '@/lib/router'
 import { formatNetworkPolicyLabel, permissionBadgeVariant, statusBadgeVariant } from '@/lib/sandboxDisplay'
+import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
+import { SandboxActions } from './SandboxActions'
 import { SandboxBackupsTab } from './SandboxBackupsTab'
 import { SandboxBranchTab } from './SandboxBranchTab'
 import { SandboxBreadcrumb } from './SandboxBreadcrumb'
 import { SandboxMetricsTab } from './SandboxMetricsTab'
 import { SandboxPlansTab } from './SandboxPlansTab'
+
+const TAB_LINK_CLASS =
+  "-mb-px flex items-center gap-1.5 border-b-2 border-transparent px-0.5 pb-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+const TAB_LINK_ACTIVE_CLASS = "border-foreground text-foreground"
 
 export function SandboxDetailScreen({
   sandboxId,
@@ -26,6 +31,7 @@ export function SandboxDetailScreen({
   const project = useAppStore((s) => s.projects.find((p) => p.id === sandbox?.project_id))
   const networkPolicyPreset = useAppStore((s) => s.networkPolicyPreset)
   const isBackingUp = useAppStore((s) => s.activeBackups.some((b) => b.sandbox_id === sandboxId))
+  const loadSandboxes = useAppStore((s) => s.loadSandboxes)
 
   const toSandboxes = () => navigate({ screen: 'sandboxes' })
 
@@ -69,28 +75,45 @@ export function SandboxDetailScreen({
         {sandbox.sbx_name && <p className="text-xs text-muted-foreground">{sandbox.sbx_name}</p>}
       </div>
 
-      <div className="flex gap-2 border-b border-border pb-2">
-        <Button type="button" size="sm" variant={tab === 'overview' ? 'default' : 'outline'} onClick={() => setTab('overview')}>
-          Overview
-        </Button>
-        <Button
+      <SandboxActions sandbox={sandbox} projectName={project?.name ?? 'Sandbox'} onChanged={loadSandboxes} />
+
+      <div className="flex gap-4 border-b border-border">
+        <button
           type="button"
-          size="sm"
-          variant="outline"
+          onClick={() => setTab('overview')}
+          className={cn(TAB_LINK_CLASS, tab === 'overview' && TAB_LINK_ACTIVE_CLASS)}
+        >
+          Overview
+        </button>
+        <button
+          type="button"
           onClick={() => navigate({ screen: 'sandboxes', sandboxId: sandbox.id, branches: true })}
+          className={TAB_LINK_CLASS}
         >
           <GitBranch className="size-3.5" />
           Branches
-        </Button>
-        <Button type="button" size="sm" variant={tab === 'metrics' ? 'default' : 'outline'} onClick={() => setTab('metrics')}>
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab('metrics')}
+          className={cn(TAB_LINK_CLASS, tab === 'metrics' && TAB_LINK_ACTIVE_CLASS)}
+        >
           Metrics
-        </Button>
-        <Button type="button" size="sm" variant={tab === 'plans' ? 'default' : 'outline'} onClick={() => setTab('plans')}>
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab('plans')}
+          className={cn(TAB_LINK_CLASS, tab === 'plans' && TAB_LINK_ACTIVE_CLASS)}
+        >
           Plans
-        </Button>
-        <Button type="button" size="sm" variant={tab === 'backups' ? 'default' : 'outline'} onClick={() => setTab('backups')}>
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab('backups')}
+          className={cn(TAB_LINK_CLASS, tab === 'backups' && TAB_LINK_ACTIVE_CLASS)}
+        >
           Backups
-        </Button>
+        </button>
       </div>
 
       {tab === 'overview' && (
