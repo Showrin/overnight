@@ -34,6 +34,7 @@ pub fn spawn<R: Runtime>(
   program: &str,
   args: &[String],
   cwd: Option<&Path>,
+  on_terminate: impl FnOnce(bool, Option<i32>, Option<String>) + Send + 'static,
 ) -> Result<SpawnedProcess> {
   let mut command = app.shell().command(program).args(args);
   if let Some(cwd) = cwd {
@@ -43,19 +44,24 @@ pub fn spawn<R: Runtime>(
 
   Ok(SpawnedProcess {
     child,
-    stdout_lines: stdout_lines_from_events(rx),
+    stdout_lines: stdout_lines_from_events(rx, on_terminate),
   })
 }
 
 /// Converts a raw `CommandEvent` receiver from `tauri-plugin-shell` into a
-/// stream of stdout lines. Stderr/Error/Terminated events are logged, not
-/// streamed — split out from `spawn` so this conversion logic is testable
-/// without going through a full shell-plugin process spawn.
+/// stream of stdout lines. Stderr is logged as it arrives (also accumulated
+/// so `on_terminate` gets it), not streamed — split out from `spawn` so
+/// this conversion logic is testable without going through a full
+/// shell-plugin process spawn. `on_terminate` fires exactly once, with
+/// whatever exit code/error the process ended with.
 fn stdout_lines_from_events(
   mut rx: tokio::sync::mpsc::Receiver<CommandEvent>,
+  on_terminate: impl FnOnce(bool, Option<i32>, Option<String>) + Send + 'static,
 ) -> Pin<Box<dyn Stream<Item = String> + Send>> {
   let (line_tx, line_rx) = tokio::sync::mpsc::channel::<String>(64);
   tauri::async_runtime::spawn(async move {
+    let mut on_terminate = Some(on_terminate);
+    let mut stderr_lines: Vec<String> = Vec::new();
     while let Some(event) = rx.recv().await {
       match event {
         CommandEvent::Stdout(bytes) => {
@@ -65,13 +71,22 @@ fn stdout_lines_from_events(
           }
         }
         CommandEvent::Stderr(bytes) => {
-          log::warn!("child process stderr: {}", String::from_utf8_lossy(&bytes).trim_end());
+          let line = String::from_utf8_lossy(&bytes).trim_end().to_string();
+          log::warn!("child process stderr: {line}");
+          stderr_lines.push(line);
         }
         CommandEvent::Error(err) => {
           log::error!("child process error: {err}");
+          if let Some(cb) = on_terminate.take() {
+            cb(false, None, Some(err));
+          }
         }
         CommandEvent::Terminated(payload) => {
           log::info!("child process terminated: {payload:?}");
+          if let Some(cb) = on_terminate.take() {
+            let stderr = (!stderr_lines.is_empty()).then(|| stderr_lines.join("\n"));
+            cb(payload.code == Some(0), payload.code, stderr);
+          }
           break;
         }
         _ => {}
@@ -104,7 +119,7 @@ mod tests {
     tx.send(CommandEvent::Stdout(b"line two\r\n".to_vec())).await.unwrap();
     drop(tx);
 
-    let lines: Vec<String> = stdout_lines_from_events(rx).collect().await;
+    let lines: Vec<String> = stdout_lines_from_events(rx, |_, _, _| {}).collect().await;
     assert_eq!(lines, vec!["line one".to_string(), "line two".to_string()]);
   }
 
@@ -121,7 +136,7 @@ mod tests {
     tx.send(CommandEvent::Stdout(b"after\n".to_vec())).await.unwrap();
     drop(tx);
 
-    let lines: Vec<String> = stdout_lines_from_events(rx).collect().await;
+    let lines: Vec<String> = stdout_lines_from_events(rx, |_, _, _| {}).collect().await;
     assert_eq!(lines, vec!["before".to_string()]);
   }
 
@@ -133,7 +148,7 @@ mod tests {
     tx.send(CommandEvent::Stdout(b"ok\n".to_vec())).await.unwrap();
     drop(tx);
 
-    let lines: Vec<String> = stdout_lines_from_events(rx).collect().await;
+    let lines: Vec<String> = stdout_lines_from_events(rx, |_, _, _| {}).collect().await;
     assert_eq!(lines, vec!["ok".to_string()]);
   }
 }

@@ -1,5 +1,6 @@
 mod backup;
 mod commands;
+mod daemon_log;
 mod db;
 mod git;
 mod jira;
@@ -87,6 +88,12 @@ pub fn run() {
       commands::get_host_stats_history,
       commands::get_sandbox_resource_usage,
       commands::get_sandbox_resource_history,
+      commands::list_command_log,
+      commands::count_command_log,
+      commands::list_command_log_operations,
+      commands::get_daemon_log_path,
+      commands::save_daemon_log_path,
+      commands::read_daemon_log,
       notifications::notify,
     ])
     .setup(|app| {
@@ -112,11 +119,14 @@ pub fn run() {
           "projects",
           "sandboxes",
           "host_metrics",
+          "command_log",
           "sandbox_backups",
         ];
         for table in table_names {
-          let count: i64 = conn.query_row(&format!("SELECT count(*) FROM {table}"), [], |row| row.get(0))?;
-          log::info!("db: {table} has {count} row(s)");
+          match conn.query_row(&format!("SELECT count(*) FROM {table}"), [], |row| row.get::<_, i64>(0)) {
+            Ok(count) => log::info!("db: {table} has {count} row(s)"),
+            Err(e) => log::warn!("db: couldn't read {table}: {e}"),
+          }
         }
       }
       app.manage(std::sync::Mutex::new(backup::BackupState::default()));

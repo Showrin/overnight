@@ -310,6 +310,24 @@ pub fn migrations() -> Migrations<'static> {
     ALTER TABLE sandbox_backups_new RENAME TO sandbox_backups;
     CREATE INDEX ix_sandbox_backups_sandbox_created ON sandbox_backups(sandbox_id, created_at DESC);
     ",
+  ), M::up(
+    "
+    -- Every subprocess the app itself runs (sbx, git, launching VS Code /
+    -- a terminal / the file explorer), for the Developer > Command Log
+    -- page. exit_code is NULL for fire-and-forget spawns (VS Code, the
+    -- terminal launchers) where there's nothing to await.
+    CREATE TABLE command_log (
+      id TEXT PRIMARY KEY,
+      occurred_at INTEGER NOT NULL,
+      operation TEXT NOT NULL,
+      program TEXT NOT NULL,
+      args TEXT NOT NULL,
+      success INTEGER NOT NULL,
+      exit_code INTEGER,
+      stderr TEXT
+    );
+    CREATE INDEX ix_command_log_occurred_at ON command_log(occurred_at);
+    ",
   )])
 }
 
@@ -335,6 +353,6 @@ mod tests {
         |row| row.get(0),
       )
       .unwrap();
-    assert_eq!(table_count, 11);
+    assert_eq!(table_count, 12);
   }
 }

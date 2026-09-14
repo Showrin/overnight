@@ -8,8 +8,19 @@ function Select({ ...props }: React.ComponentProps<typeof SelectPrimitive.Root>)
   return <SelectPrimitive.Root data-slot="select" {...props} />
 }
 
-function SelectValue({ ...props }: React.ComponentProps<typeof SelectPrimitive.Value>) {
-  return <SelectPrimitive.Value data-slot="select-value" {...props} />
+function SelectValue({
+  className,
+  ...props
+}: React.ComponentProps<typeof SelectPrimitive.Value>) {
+  // Radix's Select.Value destructures className/style out of its own props
+  // and never spreads them back onto the span it renders, so they're
+  // silently dropped if passed directly to it — wrap it in a real element
+  // instead so truncation actually has somewhere to apply.
+  return (
+    <span data-slot="select-value" className={cn("min-w-0 truncate", className)}>
+      <SelectPrimitive.Value {...props} />
+    </span>
+  )
 }
 
 function SelectTrigger({

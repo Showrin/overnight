@@ -3,10 +3,14 @@ use std::sync::Mutex;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
+use crate::daemon_log;
 use crate::db::error::{Error, Result};
-use crate::db::models::{ContainerMetric, HostMetric, JiraIssue, Project, Sandbox, SandboxBackup, Session, Task};
+use crate::db::models::{
+  CommandLogEntry, ContainerMetric, HostMetric, JiraIssue, Project, Sandbox, SandboxBackup, Session, Task,
+};
 use crate::db::{
-  backups, container_metrics, host_metrics, jira_issues, metrics, projects, sandboxes, sessions, settings, tasks, DbPool,
+  backups, command_log, container_metrics, host_metrics, jira_issues, metrics, projects, sandboxes, sessions,
+  settings, tasks, DbPool,
 };
 use crate::jira::{self, JiraClient};
 use crate::providers::claude_code::ClaudeCodeProvider;
@@ -243,6 +247,28 @@ pub fn save_default_terminal_host(pool: State<DbPool>, terminal_host: String) ->
   }
   let conn = pool.get().map_err(|e| e.to_string())?;
   settings::set(&conn, SANDBOX_TERMINAL_HOST_KEY, &terminal_host).map_err(|e| e.to_string())
+}
+
+const DAEMON_LOG_PATH_KEY: &str = "daemon_log_path";
+
+/// Developer > Telemetry page. Falls back to `daemon_log::default_path()`
+/// (an OS-specific guess, not a confirmed real location) until the user
+/// saves their own path.
+#[tauri::command]
+pub fn get_daemon_log_path(pool: State<DbPool>) -> std::result::Result<String, String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  Ok(settings::get(&conn, DAEMON_LOG_PATH_KEY).map_err(|e| e.to_string())?.unwrap_or_else(daemon_log::default_path))
+}
+
+#[tauri::command]
+pub fn save_daemon_log_path(pool: State<DbPool>, path: String) -> std::result::Result<(), String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  settings::set(&conn, DAEMON_LOG_PATH_KEY, &path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn read_daemon_log(path: String) -> std::result::Result<daemon_log::DaemonLogResult, String> {
+  daemon_log::read_tail(&path).map_err(|e| e.to_string())
 }
 
 const JIRA_SITE_KEY: &str = "jira_site";
@@ -1535,7 +1561,11 @@ pub async fn open_sandbox_vscode(app: AppHandle, pool: State<'_, DbPool>, id: St
     cmd.get_program(),
     cmd.get_args().collect::<Vec<_>>()
   );
-  match cmd.spawn() {
+  let program = cmd.get_program().to_string_lossy().to_string();
+  let cmd_args: Vec<String> = cmd.get_args().map(|a| a.to_string_lossy().to_string()).collect();
+  let result = cmd.spawn();
+  log_spawn_result(&pool, "Open sandbox in VS Code", &program, &cmd_args, &result);
+  match result {
     Ok(child) => {
       log::info!("open_sandbox_vscode: spawned pid {:?}", child.id());
       Ok(())
@@ -1549,36 +1579,50 @@ pub async fn open_sandbox_vscode(app: AppHandle, pool: State<'_, DbPool>, id: St
   }
 }
 
+/// Logs the outcome of a fire-and-forget `std::process::Command::spawn()`
+/// (VS Code, the file explorer, a terminal launcher) to the Developer >
+/// Command Log page. `exit_code` is always `None` — nothing is awaited, so
+/// there's no exit status, only whether the spawn itself succeeded.
+fn log_spawn_result(
+  pool: &State<DbPool>,
+  operation: &str,
+  program: &str,
+  args: &[String],
+  result: &std::io::Result<std::process::Child>,
+) {
+  let Ok(conn) = pool.get() else { return };
+  let (success, stderr) = match result {
+    Ok(_) => (true, None),
+    Err(e) => (false, Some(e.to_string())),
+  };
+  let _ = command_log::append(&conn, operation, program, args, success, None, stderr.as_deref());
+}
+
 /// Opens the root folder every sandbox's backups are nested under
 /// (`<app_data_dir>/sandbox-backups`), for the global Backups page's
 /// "Open Folder" button — a level up from any single backup's `host_dir`.
 /// Creates it first (best-effort) so this works even before the first
 /// backup has run.
 #[tauri::command]
-pub fn open_backups_root_folder(app: AppHandle) -> std::result::Result<(), String> {
+pub fn open_backups_root_folder(app: AppHandle, pool: State<DbPool>) -> std::result::Result<(), String> {
   let root = app.path().app_data_dir().map_err(|e| e.to_string())?.join(crate::backup::BACKUPS_ROOT_DIR_NAME);
   if let Err(e) = std::fs::create_dir_all(&root) {
     log::warn!("open_backups_root_folder: failed to create {}: {e}", root.display());
   }
-  open_path_in_explorer(root.to_string_lossy().to_string())
+  open_path_in_explorer(pool, root.to_string_lossy().to_string())
 }
 
 #[tauri::command]
-pub fn open_path_in_explorer(path: String) -> std::result::Result<(), String> {
+pub fn open_path_in_explorer(pool: State<DbPool>, path: String) -> std::result::Result<(), String> {
   #[cfg(target_os = "windows")]
-  {
-    std::process::Command::new("explorer").arg(&path).spawn().map_err(|e| e.to_string())?;
-  }
+  let (program, result) = ("explorer", std::process::Command::new("explorer").arg(&path).spawn());
   #[cfg(target_os = "macos")]
-  {
-    std::process::Command::new("open").arg(&path).spawn().map_err(|e| e.to_string())?;
-  }
+  let (program, result) = ("open", std::process::Command::new("open").arg(&path).spawn());
   #[cfg(target_os = "linux")]
-  {
-    std::process::Command::new("xdg-open").arg(&path).spawn().map_err(|e| e.to_string())?;
-  }
+  let (program, result) = ("xdg-open", std::process::Command::new("xdg-open").arg(&path).spawn());
 
-  Ok(())
+  log_spawn_result(&pool, "Open path in file explorer", program, &[path], &result);
+  result.map(|_| ()).map_err(|e| e.to_string())
 }
 
 /// `git fetch sandbox-<name>` on the host repo, fast-forwarding any local
@@ -1592,7 +1636,18 @@ pub fn git_sync_sandbox(pool: State<DbPool>, id: String) -> std::result::Result<
   let name = sandbox.sbx_name.ok_or_else(|| "sandbox isn't running".to_string())?;
   let project = projects::get(&conn, &sandbox.project_id).map_err(|e| e.to_string())?;
 
-  crate::git::sync_from_sandbox(&project.repo_path, &name).map_err(|e| e.to_string())
+  let result = crate::git::sync_from_sandbox(&project.repo_path, &name).map_err(|e| e.to_string());
+  let stderr = result.as_ref().err().cloned();
+  let _ = command_log::append(
+    &conn,
+    "Sync sandbox branches",
+    "git",
+    &[project.repo_path.clone(), name],
+    result.is_ok(),
+    None,
+    stderr.as_deref(),
+  );
+  result
 }
 
 /// One branch's diff against `base_branch`: mount mode has exactly one
@@ -1631,29 +1686,43 @@ pub fn get_sandbox_diff(pool: State<DbPool>, id: String) -> std::result::Result<
   };
   let project = projects::get(&conn, &sandbox.project_id).map_err(|e| e.to_string())?;
 
-  if sandbox.mode == "mount" {
-    let branch = crate::git::current_branch(&project.repo_path).unwrap_or_else(|| "HEAD".to_string());
-    let stat = crate::git::diff_stat(&project.repo_path, &base_branch, None).map_err(|e| e.to_string())?;
-    let patch = crate::git::diff(&project.repo_path, &base_branch, None).map_err(|e| e.to_string())?;
-    return Ok(SandboxDiff { base_branch: Some(base_branch), branches: vec![BranchDiff { branch, stat, patch }] });
-  }
+  let result: std::result::Result<SandboxDiff, String> = (|| {
+    if sandbox.mode == "mount" {
+      let branch = crate::git::current_branch(&project.repo_path).unwrap_or_else(|| "HEAD".to_string());
+      let stat = crate::git::diff_stat(&project.repo_path, &base_branch, None).map_err(|e| e.to_string())?;
+      let patch = crate::git::diff(&project.repo_path, &base_branch, None).map_err(|e| e.to_string())?;
+      return Ok(SandboxDiff { base_branch: Some(base_branch.clone()), branches: vec![BranchDiff { branch, stat, patch }] });
+    }
 
-  let name = sandbox.sbx_name.ok_or_else(|| "sandbox isn't running".to_string())?;
-  let remote = format!("sandbox-{name}");
-  let sandbox_branches =
-    crate::git::fetch_and_list_sandbox_branches(&project.repo_path, &name).map_err(|e| e.to_string())?;
+    let name = sandbox.sbx_name.clone().ok_or_else(|| "sandbox isn't running".to_string())?;
+    let remote = format!("sandbox-{name}");
+    let sandbox_branches =
+      crate::git::fetch_and_list_sandbox_branches(&project.repo_path, &name).map_err(|e| e.to_string())?;
 
-  let branches = sandbox_branches
-    .into_iter()
-    .map(|branch| {
-      let target_ref = format!("{remote}/{branch}");
-      let stat = crate::git::diff_stat(&project.repo_path, &base_branch, Some(&target_ref)).map_err(|e| e.to_string())?;
-      let patch = crate::git::diff(&project.repo_path, &base_branch, Some(&target_ref)).map_err(|e| e.to_string())?;
-      Ok(BranchDiff { branch, stat, patch })
-    })
-    .collect::<std::result::Result<Vec<_>, String>>()?;
+    let branches = sandbox_branches
+      .into_iter()
+      .map(|branch| {
+        let target_ref = format!("{remote}/{branch}");
+        let stat = crate::git::diff_stat(&project.repo_path, &base_branch, Some(&target_ref)).map_err(|e| e.to_string())?;
+        let patch = crate::git::diff(&project.repo_path, &base_branch, Some(&target_ref)).map_err(|e| e.to_string())?;
+        Ok(BranchDiff { branch, stat, patch })
+      })
+      .collect::<std::result::Result<Vec<_>, String>>()?;
 
-  Ok(SandboxDiff { base_branch: Some(base_branch), branches })
+    Ok(SandboxDiff { base_branch: Some(base_branch.clone()), branches })
+  })();
+
+  let stderr = result.as_ref().err().cloned();
+  let _ = command_log::append(
+    &conn,
+    "Diff sandbox against base branch",
+    "git",
+    &[project.repo_path.clone(), base_branch],
+    result.is_ok(),
+    None,
+    stderr.as_deref(),
+  );
+  result
 }
 
 /// Commits `branch` added on top of `base_branch`. Mirrors `get_sandbox_diff`'s
@@ -1670,14 +1739,28 @@ pub fn get_branch_commits(
   let base_branch = sandbox.base_branch.clone().ok_or_else(|| "sandbox has no base branch".to_string())?;
   let project = projects::get(&conn, &sandbox.project_id).map_err(|e| e.to_string())?;
 
-  if sandbox.mode == "mount" {
-    return crate::git::log(&project.repo_path, &base_branch, None).map_err(|e| e.to_string());
-  }
+  let result: std::result::Result<Vec<crate::git::CommitInfo>, String> = (|| {
+    if sandbox.mode == "mount" {
+      return crate::git::log(&project.repo_path, &base_branch, None).map_err(|e| e.to_string());
+    }
 
-  let name = sandbox.sbx_name.ok_or_else(|| "sandbox isn't running".to_string())?;
-  crate::git::fetch_and_list_sandbox_branches(&project.repo_path, &name).map_err(|e| e.to_string())?;
-  let target_ref = format!("sandbox-{name}/{branch}");
-  crate::git::log(&project.repo_path, &base_branch, Some(&target_ref)).map_err(|e| e.to_string())
+    let name = sandbox.sbx_name.clone().ok_or_else(|| "sandbox isn't running".to_string())?;
+    crate::git::fetch_and_list_sandbox_branches(&project.repo_path, &name).map_err(|e| e.to_string())?;
+    let target_ref = format!("sandbox-{name}/{branch}");
+    crate::git::log(&project.repo_path, &base_branch, Some(&target_ref)).map_err(|e| e.to_string())
+  })();
+
+  let stderr = result.as_ref().err().cloned();
+  let _ = command_log::append(
+    &conn,
+    "List branch commits",
+    "git",
+    &[project.repo_path.clone(), base_branch, branch],
+    result.is_ok(),
+    None,
+    stderr.as_deref(),
+  );
+  result
 }
 
 #[tauri::command]
@@ -1715,38 +1798,73 @@ pub fn open_sandbox_terminal(
     // standalone console window; fall back to today's `cmd /C start ...`
     // behavior on any spawn error (no PATH pre-check — see plan notes).
     let wt_profile = if terminal_host == "powershell" { "PowerShell" } else { "Command Prompt" };
-    let wt_spawned = std::process::Command::new("wt.exe")
-      .args(["-w", "0", "new-tab", "-p", wt_profile, "--", "sbx", "exec", "-it", &name, "bash"])
-      .spawn()
-      .is_ok();
+    let wt_args: Vec<String> =
+      ["-w", "0", "new-tab", "-p", wt_profile, "--", "sbx", "exec", "-it", name.as_str(), "bash"].map(String::from).to_vec();
+    let wt_result = std::process::Command::new("wt.exe").args(&wt_args).spawn();
+    let wt_spawned = wt_result.is_ok();
+    log_spawn_result(&pool, "Open sandbox terminal", "wt.exe", &wt_args, &wt_result);
 
     if !wt_spawned {
-      if terminal_host == "powershell" {
-        std::process::Command::new("cmd")
-          .args(["/C", "start", "powershell", "-NoExit", "-Command", &format!("sbx exec -it {name} bash")])
-          .spawn()
-          .map_err(|e| e.to_string())?;
+      let fallback_args: Vec<String> = if terminal_host == "powershell" {
+        vec!["/C".to_string(), "start".to_string(), "powershell".to_string(), "-NoExit".to_string(), "-Command".to_string(), format!("sbx exec -it {name} bash")]
       } else {
-        std::process::Command::new("cmd")
-          .args(["/C", "start", "cmd", "/K", &format!("sbx exec -it {name} bash")])
-          .spawn()
-          .map_err(|e| e.to_string())?;
-      }
+        vec!["/C".to_string(), "start".to_string(), "cmd".to_string(), "/K".to_string(), format!("sbx exec -it {name} bash")]
+      };
+      let fallback_result = std::process::Command::new("cmd").args(&fallback_args).spawn();
+      log_spawn_result(&pool, "Open sandbox terminal", "cmd", &fallback_args, &fallback_result);
+      fallback_result.map_err(|e| e.to_string())?;
     }
   }
   #[cfg(target_os = "macos")]
   {
     let script = format!("tell application \"Terminal\" to do script \"sbx exec -it {name} bash\"");
-    std::process::Command::new("osascript").arg("-e").arg(script).spawn().map_err(|e| e.to_string())?;
+    let result = std::process::Command::new("osascript").arg("-e").arg(&script).spawn();
+    log_spawn_result(&pool, "Open sandbox terminal", "osascript", &["-e".to_string(), script], &result);
+    result.map_err(|e| e.to_string())?;
   }
   #[cfg(target_os = "linux")]
   {
-    std::process::Command::new("x-terminal-emulator")
-      .arg("-e")
-      .arg(format!("sbx exec -it {name} bash"))
-      .spawn()
-      .map_err(|e| e.to_string())?;
+    let script = format!("sbx exec -it {name} bash");
+    let result = std::process::Command::new("x-terminal-emulator").arg("-e").arg(&script).spawn();
+    log_spawn_result(&pool, "Open sandbox terminal", "x-terminal-emulator", &["-e".to_string(), script], &result);
+    result.map_err(|e| e.to_string())?;
   }
 
   Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub fn list_command_log(
+  pool: State<DbPool>,
+  limit: i64,
+  offset: i64,
+  success_only: Option<bool>,
+  since_ms: Option<i64>,
+  until_ms: Option<i64>,
+  operation: Option<String>,
+) -> std::result::Result<Vec<CommandLogEntry>, String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  let filter = command_log::CommandLogFilter { success_only, since_ms, until_ms, operation: operation.as_deref() };
+  command_log::list(&conn, limit, offset, &filter).map_err(|e| e.to_string())
+}
+
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub fn count_command_log(
+  pool: State<DbPool>,
+  success_only: Option<bool>,
+  since_ms: Option<i64>,
+  until_ms: Option<i64>,
+  operation: Option<String>,
+) -> std::result::Result<i64, String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  let filter = command_log::CommandLogFilter { success_only, since_ms, until_ms, operation: operation.as_deref() };
+  command_log::count(&conn, &filter).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn list_command_log_operations(pool: State<DbPool>) -> std::result::Result<Vec<String>, String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  command_log::list_operations(&conn).map_err(|e| e.to_string())
 }

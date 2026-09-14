@@ -210,6 +210,22 @@ pub struct Setting {
   pub updated_at: i64,
 }
 
+/// One subprocess the app ran on its own behalf (sbx, git, opening VS Code
+/// / a terminal / the file explorer), for the Developer > Command Log page.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandLogEntry {
+  pub id: String,
+  pub occurred_at: i64,
+  pub operation: String,
+  pub program: String,
+  /// JSON-encoded `Vec<String>`.
+  pub args: String,
+  pub success: bool,
+  /// `None` for a fire-and-forget spawn (nothing awaited to get a code from).
+  pub exit_code: Option<i64>,
+  pub stderr: Option<String>,
+}
+
 pub fn now_millis() -> i64 {
   std::time::SystemTime::now()
     .duration_since(std::time::UNIX_EPOCH)

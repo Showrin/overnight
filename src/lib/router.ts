@@ -5,7 +5,15 @@
 // containing "/" round-trip safely). Pairing this with the browser's native
 // History API gives real back/forward navigation for free.
 
-export type Screen = 'dashboard' | 'projects' | 'sandboxes' | 'performance-monitor' | 'backups' | 'settings'
+export type Screen =
+  | 'dashboard'
+  | 'projects'
+  | 'sandboxes'
+  | 'performance-monitor'
+  | 'dev-telemetry'
+  | 'dev-commands'
+  | 'backups'
+  | 'settings'
 
 // Sandbox detail page tabs. Not persisted into the hash — a same-session
 // navigation hint only (e.g. jumping straight to Backups from an
@@ -20,7 +28,16 @@ export interface Route {
   detailTab?: DetailTab
 }
 
-const SCREENS: readonly Screen[] = ['dashboard', 'projects', 'sandboxes', 'performance-monitor', 'backups', 'settings']
+const SCREENS: readonly Screen[] = [
+  'dashboard',
+  'projects',
+  'sandboxes',
+  'performance-monitor',
+  'dev-telemetry',
+  'dev-commands',
+  'backups',
+  'settings',
+]
 
 function isScreen(value: string): value is Screen {
   return (SCREENS as readonly string[]).includes(value)

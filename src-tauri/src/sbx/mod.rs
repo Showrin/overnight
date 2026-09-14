@@ -10,10 +10,11 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Instant;
 
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_shell::ShellExt;
 
 use crate::db::models::WorktreeInfo;
+use crate::db::{command_log, DbPool};
 use crate::process::SpawnedProcess;
 
 #[derive(Debug, thiserror::Error)]
@@ -34,10 +35,12 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-async fn run<R: Runtime>(app: &AppHandle<R>, args: &[&str]) -> Result<String> {
+async fn run<R: Runtime>(app: &AppHandle<R>, operation: &str, args: &[&str]) -> Result<String> {
   let output = app.shell().command("sbx").args(args).output().await?;
-  if !output.status.success() {
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+  let success = output.status.success();
+  let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+  record(app, operation, args, success, output.status.code().map(i64::from), (!stderr.is_empty()).then_some(stderr.as_str()));
+  if !success {
     if stderr.contains("network policy has not been initialized") {
       return Err(Error::PolicyNotInitialized);
     }
@@ -53,6 +56,18 @@ async fn run<R: Runtime>(app: &AppHandle<R>, args: &[&str]) -> Result<String> {
     )));
   }
   Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Persists one row to the Developer > Command Log page. Best-effort: a
+/// missing pool (not yet `app.manage`d, e.g. in a test) or a write failure
+/// just skips logging rather than failing the underlying sbx call.
+fn record<R: Runtime>(app: &AppHandle<R>, operation: &str, args: &[&str], success: bool, exit_code: Option<i64>, stderr: Option<&str>) {
+  let Some(pool) = app.try_state::<DbPool>() else { return };
+  let Ok(conn) = pool.get() else { return };
+  let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+  if let Err(e) = command_log::append(&conn, operation, "sbx", &args, success, exit_code, stderr) {
+    log::error!("failed to persist command log: {e}");
+  }
 }
 
 /// sbx runs agents in its own microVMs rather than plain Docker containers,
@@ -94,7 +109,7 @@ fn container_start_failed_message(stderr: &str) -> String {
 /// invoke this before every VS Code launch instead of requiring the user
 /// to run it once manually first.
 pub async fn setup_ssh<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
-  run(app, &["setup", "ssh"]).await?;
+  run(app, "Setup SSH", &["setup", "ssh"]).await?;
   Ok(())
 }
 
@@ -141,7 +156,7 @@ pub fn fix_ssh_config_permissions() {}
 /// the interactive network-policy prompt headlessly. `preset` must be one
 /// of `allow-all`, `balanced`, or `deny-all` (sbx's own accepted values).
 pub async fn policy_init<R: Runtime>(app: &AppHandle<R>, preset: &str) -> Result<()> {
-  run(app, &["policy", "init", preset]).await?;
+  run(app, "Initialize network policy", &["policy", "init", preset]).await?;
   Ok(())
 }
 
@@ -154,7 +169,7 @@ pub async fn policy_init<R: Runtime>(app: &AppHandle<R>, preset: &str) -> Result
 /// get explicit user confirmation before calling this, never invoke it
 /// silently as part of an "apply preset" flow.
 pub async fn policy_reset<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
-  run(app, &["policy", "reset", "--force"]).await?;
+  run(app, "Reset network policy", &["policy", "reset", "--force"]).await?;
   Ok(())
 }
 
@@ -192,7 +207,8 @@ async fn policy_mutate<R: Runtime>(app: &AppHandle<R>, verb: &str, sandbox: Opti
     args.push(name);
   }
   args.push(hosts);
-  run(app, &args).await?;
+  let operation = if verb == "allow" { "Allow network rule" } else { "Deny network rule" };
+  run(app, operation, &args).await?;
   Ok(())
 }
 
@@ -208,7 +224,7 @@ pub async fn policy_rm<R: Runtime>(app: &AppHandle<R>, sandbox: Option<&str>, re
   }
   args.push("--resource");
   args.push(resource);
-  run(app, &args).await?;
+  run(app, "Remove network rule", &args).await?;
   Ok(())
 }
 
@@ -232,7 +248,7 @@ pub async fn policy_list<R: Runtime>(app: &AppHandle<R>, sandbox: Option<&str>) 
     args.push(name);
   }
   args.push("--wide");
-  let output = run(app, &args).await?;
+  let output = run(app, "List network policy rules", &args).await?;
   Ok(parse_policy_rules(&output))
 }
 
@@ -322,7 +338,7 @@ fn parse_policy_rules(output: &str) -> Vec<PolicyRule> {
 /// authenticates via the host-side proxy instead of needing an interactive
 /// `/login` inside each sandbox.
 pub async fn set_anthropic_secret<R: Runtime>(app: &AppHandle<R>, token: &str) -> Result<()> {
-  run(app, &["secret", "set", "anthropic", "-t", token]).await?;
+  run(app, "Set Anthropic API key", &["secret", "set", "anthropic", "-t", token]).await?;
   Ok(())
 }
 
@@ -331,7 +347,7 @@ pub async fn set_anthropic_secret<R: Runtime>(app: &AppHandle<R>, token: &str) -
 /// network-policy prompt — it errors cleanly if `sbx` isn't installed or
 /// isn't logged in.
 pub async fn health_check<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
-  run(app, &["ls"]).await?;
+  run(app, "Sandbox health check", &["ls"]).await?;
   Ok(())
 }
 
@@ -350,7 +366,7 @@ pub async fn create<R: Runtime>(app: &AppHandle<R>, name: &str, clone: bool, wor
   }
   args.push("claude");
   args.push(workspace);
-  run(app, &args).await?;
+  run(app, "Create sandbox", &args).await?;
   Ok(())
 }
 
@@ -379,6 +395,7 @@ pub async fn create<R: Runtime>(app: &AppHandle<R>, name: &str, clone: bool, wor
 pub async fn set_claude_default_permission_mode<R: Runtime>(app: &AppHandle<R>, name: &str, mode: &str) -> Result<()> {
   run(
     app,
+    "Set default Claude permission mode",
     &[
       "exec",
       "-d",
@@ -399,7 +416,7 @@ pub async fn set_claude_default_permission_mode<R: Runtime>(app: &AppHandle<R>, 
 /// persistent-shell-file trick.
 pub async fn set_git_config<R: Runtime>(app: &AppHandle<R>, name: &str, key: &str, value: &str) -> Result<()> {
   let args = git_config_exec_args(name, key, value);
-  run(app, &args.iter().map(String::as_str).collect::<Vec<_>>()).await?;
+  run(app, "Set sandbox git config", &args.iter().map(String::as_str).collect::<Vec<_>>()).await?;
   Ok(())
 }
 
@@ -464,7 +481,17 @@ pub async fn read_branch_snapshot<R: Runtime>(
      git -C {ws} for-each-ref --format='%(refname:short)' refs/heads; echo ---; \
      git -C {ws} worktree list --porcelain"
   );
-  let output = app.shell().command("sbx").args(["exec", "-d", name, "sh", "-c", &script]).output().await?;
+  let exec_args = ["exec", "-d", name, "sh", "-c", &script];
+  let output = app.shell().command("sbx").args(exec_args).output().await?;
+  let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+  record(
+    app,
+    "Read sandbox branch snapshot",
+    &exec_args,
+    output.status.success(),
+    output.status.code().map(i64::from),
+    (!stderr.is_empty()).then_some(stderr.as_str()),
+  );
   Ok(parse_branch_snapshot(&String::from_utf8_lossy(&output.stdout)))
 }
 
@@ -528,7 +555,7 @@ fn parse_worktrees(output: &str) -> Vec<WorktreeInfo> {
 }
 
 pub async fn stop<R: Runtime>(app: &AppHandle<R>, name: &str) -> Result<()> {
-  run(app, &["stop", name]).await?;
+  run(app, "Stop sandbox", &["stop", name]).await?;
   Ok(())
 }
 
@@ -544,7 +571,11 @@ pub async fn stop<R: Runtime>(app: &AppHandle<R>, name: &str) -> Result<()> {
 /// in the background the same way `sbx run` would from a terminal.
 pub fn resume<R: Runtime>(app: &AppHandle<R>, name: &str) -> Result<()> {
   let args = vec!["run".to_string(), "--name".to_string(), name.to_string()];
-  crate::process::spawn(app, "sbx", &args, None)?;
+  let log_app = app.clone();
+  let log_args = args.clone();
+  crate::process::spawn(app, "sbx", &args, None, move |success, code, stderr| {
+    record(&log_app, "Resume sandbox", &log_args.iter().map(String::as_str).collect::<Vec<_>>(), success, code.map(i64::from), stderr.as_deref());
+  })?;
   Ok(())
 }
 
@@ -566,7 +597,7 @@ pub fn resume<R: Runtime>(app: &AppHandle<R>, name: &str) -> Result<()> {
 /// calling this, so `sbx cp` creates it fresh from the source.
 pub async fn cp_from_sandbox<R: Runtime>(app: &AppHandle<R>, name: &str, remote_path: &str, host_dest: &str) -> Result<()> {
   let args = cp_from_sandbox_args(name, remote_path, host_dest);
-  run(app, &args.iter().map(String::as_str).collect::<Vec<_>>()).await?;
+  run(app, "Copy files from sandbox", &args.iter().map(String::as_str).collect::<Vec<_>>()).await?;
   Ok(())
 }
 
@@ -591,7 +622,7 @@ fn cp_from_sandbox_args(name: &str, remote_path: &str, host_dest: &str) -> Vec<S
 /// and resolves it generically rather than assuming either shape.
 pub async fn cp_to_sandbox<R: Runtime>(app: &AppHandle<R>, name: &str, host_src: &str, remote_path: &str) -> Result<()> {
   let args = cp_to_sandbox_args(name, host_src, remote_path);
-  run(app, &args.iter().map(String::as_str).collect::<Vec<_>>()).await?;
+  run(app, "Copy files to sandbox", &args.iter().map(String::as_str).collect::<Vec<_>>()).await?;
   Ok(())
 }
 
@@ -644,7 +675,7 @@ pub async fn restore_directory<R: Runtime>(
   let scratch = format!("/tmp/overnight-restore-{}", crate::db::models::new_id());
   cp_to_sandbox(app, name, host_src, &scratch).await?;
   let script = restore_directory_script(&scratch, remote_dest, merge_in_place);
-  run(app, &["exec", "-d", name, "sh", "-c", &script]).await?;
+  run(app, "Restore backup into sandbox", &["exec", "-d", name, "sh", "-c", &script]).await?;
   Ok(())
 }
 
@@ -740,14 +771,14 @@ fn restore_directory_script(scratch: &str, remote_dest: &str, merge_in_place: &[
 
 /// Force-removes the sandbox and its VM (used by explicit sandbox Delete).
 pub async fn rm<R: Runtime>(app: &AppHandle<R>, name: &str) -> Result<()> {
-  run(app, &["rm", "--force", name]).await?;
+  run(app, "Remove sandbox", &["rm", "--force", name]).await?;
   Ok(())
 }
 
 /// Publishes `sandbox_port` on an OS-assigned host port. Use `host_port`
 /// afterward to find out which port was assigned.
 pub async fn publish_port<R: Runtime>(app: &AppHandle<R>, name: &str, sandbox_port: u16) -> Result<()> {
-  run(app, &["ports", name, "--publish", &sandbox_port.to_string()]).await?;
+  run(app, "Publish sandbox port", &["ports", name, "--publish", &sandbox_port.to_string()]).await?;
   Ok(())
 }
 
@@ -756,7 +787,7 @@ pub async fn publish_port<R: Runtime>(app: &AppHandle<R>, name: &str, sandbox_po
 /// `127.0.0.1:8080->3000/tcp` — no confirmed `--format json`, so this is a
 /// best-effort regex-free parse of that pattern.
 pub async fn host_port<R: Runtime>(app: &AppHandle<R>, name: &str, sandbox_port: u16) -> Result<Option<u16>> {
-  let output = run(app, &["ports", name]).await?;
+  let output = run(app, "List sandbox ports", &["ports", name]).await?;
   Ok(parse_host_port(&output, sandbox_port))
 }
 
@@ -779,7 +810,7 @@ fn parse_host_port(output: &str, sandbox_port: u16) -> Option<u16> {
 /// the same drive-letter-to-POSIX translation a mount-mode host path
 /// would, regardless of mode.
 pub async fn workspace_path<R: Runtime>(app: &AppHandle<R>, name: &str) -> Result<Option<String>> {
-  let output = run(app, &["ls"]).await?;
+  let output = run(app, "List sandboxes", &["ls"]).await?;
   Ok(parse_workspace_path(&output, name).map(|path| expand_home(&windows_path_to_posix(&path))))
 }
 
@@ -844,7 +875,7 @@ pub struct SbxListRow {
 /// does). The parser itself degrades to an empty list rather than
 /// misparsing if the real layout differs.
 pub async fn list_all<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<SbxListRow>> {
-  let output = run(app, &["ls"]).await?;
+  let output = run(app, "List sandboxes", &["ls"]).await?;
   Ok(
     parse_sandbox_rows(&output)
       .into_iter()
@@ -899,7 +930,7 @@ fn parse_sandbox_status(output: &str, name: &str) -> Option<String> {
 /// sandbox's connectivity and stops it — confirmed against a real `sbx`
 /// install for a per-sandbox "Locked Down" override).
 pub async fn current_status<R: Runtime>(app: &AppHandle<R>, name: &str) -> Result<Option<String>> {
-  let output = run(app, &["ls"]).await?;
+  let output = run(app, "List sandboxes", &["ls"]).await?;
   Ok(parse_sandbox_status(&output, name))
 }
 
@@ -916,7 +947,7 @@ pub async fn wait_until_ready<R: Runtime>(
 ) -> Result<()> {
   let deadline = std::time::Instant::now() + timeout;
   loop {
-    let output = run(app, &["ls"]).await?;
+    let output = run(app, "List sandboxes", &["ls"]).await?;
     if parse_sandbox_status(&output, name).as_deref() == Some("running") {
       return Ok(());
     }
@@ -938,7 +969,11 @@ pub async fn wait_until_ready<R: Runtime>(
 pub fn run_agent<R: Runtime>(app: &AppHandle<R>, name: &str, claude_args: &[String]) -> Result<SpawnedProcess> {
   let mut args = vec!["run".to_string(), "--name".to_string(), name.to_string(), "claude".to_string(), "--".to_string()];
   args.extend_from_slice(claude_args);
-  Ok(crate::process::spawn(app, "sbx", &args, None)?)
+  let log_app = app.clone();
+  let log_args = args.clone();
+  Ok(crate::process::spawn(app, "sbx", &args, None, move |success, code, stderr| {
+    record(&log_app, "Run agent session", &log_args.iter().map(String::as_str).collect::<Vec<_>>(), success, code.map(i64::from), stderr.as_deref());
+  })?)
 }
 
 /// Free host RAM in megabytes, for the pre-create memory heuristic. sbx

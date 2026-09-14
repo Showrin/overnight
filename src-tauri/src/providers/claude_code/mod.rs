@@ -49,7 +49,12 @@ impl ClaudeCodeProvider {
     }
     args.extend_from_slice(extra_args);
 
-    let spawned = crate::process::spawn(app, CLAUDE_BIN, &args, repo_path.map(Path::new))?;
+    let log_pool = pool.clone();
+    let log_args = args.clone();
+    let spawned = crate::process::spawn(app, CLAUDE_BIN, &args, repo_path.map(Path::new), move |success, code, stderr| {
+      let Ok(conn) = log_pool.get() else { return };
+      let _ = db::command_log::append(&conn, "Run plan session", CLAUDE_BIN, &log_args, success, code.map(i64::from), stderr.as_deref());
+    })?;
     let session = db::sessions::create(&conn, task_id, PROVIDER_NAME, "plan", parent_session_id)?;
 
     Ok(SessionHandle {

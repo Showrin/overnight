@@ -1,4 +1,4 @@
-import { Activity, Archive, Box, FolderGit2, Settings } from 'lucide-react'
+import { Activity, Archive, Box, FolderGit2, ScrollText, Settings, Terminal } from 'lucide-react'
 import { SidebarSandboxList } from '@/components/sandboxes/SidebarSandboxList'
 import type { Route, Screen } from '@/lib/router'
 
@@ -12,6 +12,13 @@ const groups: { label: string; items: NavItem[] }[] = [
       { screen: 'sandboxes', label: 'Sandboxes', icon: Box },
       { screen: 'performance-monitor', label: 'Performance Monitor', icon: Activity },
       { screen: 'backups', label: 'Backups', icon: Archive },
+    ],
+  },
+  {
+    label: 'Developer',
+    items: [
+      { screen: 'dev-telemetry', label: 'Daemon Logs', icon: ScrollText },
+      { screen: 'dev-commands', label: 'Command Logs', icon: Terminal },
     ],
   },
   {

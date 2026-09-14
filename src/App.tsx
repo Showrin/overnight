@@ -9,6 +9,8 @@ import { ProjectsScreen } from '@/components/projects/ProjectsScreen'
 import { PerformanceMonitorTab } from '@/components/sandboxes/PerformanceMonitorTab'
 import { SandboxesScreen } from '@/components/sandboxes/SandboxesScreen'
 import { SettingsScreen } from '@/components/settings/SettingsScreen'
+import { TelemetryTab } from '@/components/developer/TelemetryTab'
+import { CommandLogTab } from '@/components/developer/CommandLogTab'
 import { parseRoute, pushRoute, type Route } from '@/lib/router'
 import { initAppStore } from '@/store/useAppStore'
 
@@ -70,6 +72,11 @@ function App() {
                 branch={route.branch}
                 navigate={navigate}
               />
+            </div>
+          ) : route.screen === 'dev-telemetry' || route.screen === 'dev-commands' ? (
+            <div className="@container flex h-full w-full max-w-5xl flex-col p-6">
+              {route.screen === 'dev-telemetry' && <TelemetryTab />}
+              {route.screen === 'dev-commands' && <CommandLogTab />}
             </div>
           ) : (
             <div className="@container w-full max-w-5xl h-fit p-6">
