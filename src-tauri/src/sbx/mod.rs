@@ -31,6 +31,8 @@ pub enum Error {
   PolicyAlreadyInitialized,
   #[error("{0}")]
   ContainerStartFailed(String),
+  #[error("sandbox not found — it may have already been removed outside the app")]
+  NotFound,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -41,14 +43,8 @@ async fn run<R: Runtime>(app: &AppHandle<R>, operation: &str, args: &[&str]) -> 
   let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
   record(app, operation, args, success, output.status.code().map(i64::from), (!stderr.is_empty()).then_some(stderr.as_str()));
   if !success {
-    if stderr.contains("network policy has not been initialized") {
-      return Err(Error::PolicyNotInitialized);
-    }
-    if stderr.contains("already initialized") {
-      return Err(Error::PolicyAlreadyInitialized);
-    }
-    if stderr.contains("failed to run sandbox container") {
-      return Err(Error::ContainerStartFailed(container_start_failed_message(&stderr)));
+    if let Some(err) = classify_command_failure(&stderr) {
+      return Err(err);
     }
     return Err(Error::CommandFailed(format!(
       "sbx {args:?} exited with {:?}: {stderr}",
@@ -68,6 +64,36 @@ fn record<R: Runtime>(app: &AppHandle<R>, operation: &str, args: &[&str], succes
   if let Err(e) = command_log::append(&conn, operation, "sbx", &args, success, exit_code, stderr) {
     log::error!("failed to persist command log: {e}");
   }
+}
+
+/// Classifies a non-zero `sbx` exit's stderr into a specific `Error`
+/// variant when it matches a known failure shape, so callers get something
+/// more actionable than the generic `CommandFailed`. `None` when nothing
+/// recognized matches. Pure/stderr-only (no `AppHandle`) so each pattern is
+/// directly unit-testable without a real `sbx` install.
+fn classify_command_failure(stderr: &str) -> Option<Error> {
+  if stderr.contains("network policy has not been initialized") {
+    return Some(Error::PolicyNotInitialized);
+  }
+  if stderr.contains("already initialized") {
+    return Some(Error::PolicyAlreadyInitialized);
+  }
+  if stderr.contains("failed to run sandbox container") {
+    return Some(Error::ContainerStartFailed(container_start_failed_message(stderr)));
+  }
+  // UNVERIFIED, same caveat as container_start_failed_message above: no
+  // real `sbx` install is available in this dev environment to confirm
+  // `sbx rm`'s exact "sandbox doesn't exist" stderr wording. Matches
+  // tolerantly on two plausible phrasings — a too-narrow match just
+  // regresses to CommandFailed (delete_sandbox still fails safely, the
+  // force-delete dialog simply won't be offered), which is safer than a
+  // too-broad match that could misclassify a real transient rm failure as
+  // NotFound. Needs verifying against a real `sbx rm <nonexistent-name>`
+  // failure before shipping.
+  if stderr.contains("not found") || stderr.contains("no such sandbox") {
+    return Some(Error::NotFound);
+  }
+  None
 }
 
 /// sbx runs agents in its own microVMs rather than plain Docker containers,
@@ -887,16 +913,32 @@ pub async fn list_all<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<SbxListRow>>
   )
 }
 
-/// Parses every non-header row of `sbx ls` output using the same
-/// fixed-position layout `parse_sandbox_status`/`parse_workspace_path`
-/// already assume (`SANDBOX AGENT STATUS [PORTS] WORKSPACE`): first token
-/// is the name, third is status, last is the workspace path — but only
-/// when there are more than 3 tokens, so a row with no workspace column
-/// doesn't misread its own status token as a path.
+/// Parses every data row from `sbx ls` output using the same fixed-position
+/// layout `parse_sandbox_status`/`parse_workspace_path` already assume
+/// (`SANDBOX AGENT STATUS [PORTS] WORKSPACE`): first token is the name,
+/// third is status, last is the workspace path — but only when there are
+/// more than 3 tokens, so a row with no workspace column doesn't misread
+/// its own status token as a path.
+///
+/// Requires seeing a real header line first (first non-empty line whose
+/// first token is literally "SANDBOX", case-insensitive) before treating
+/// anything as a data row. With zero sandboxes, `sbx ls` prints a decorated
+/// empty-state message instead of a table — without this guard, lines of
+/// that message (e.g. box-drawing borders, "No Sandboxes found.") satisfy
+/// the `>=3` tokens heuristic and get misread as fake sandbox rows. If no
+/// header is ever found, this isn't a table at all, so this degrades to an
+/// empty Vec rather than misparsing.
 fn parse_sandbox_rows(output: &str) -> Vec<SbxListRow> {
-  output
-    .lines()
-    .filter(|line| !line.trim().is_empty())
+  let mut lines = output.lines().filter(|line| !line.trim().is_empty());
+
+  let saw_header = lines
+    .by_ref()
+    .any(|line| line.split_whitespace().next().is_some_and(|t| t.eq_ignore_ascii_case("SANDBOX")));
+  if !saw_header {
+    return Vec::new();
+  }
+
+  lines
     .filter_map(|line| {
       let tokens: Vec<&str> = line.split_whitespace().collect();
       if tokens.len() < 3 || tokens[0].eq_ignore_ascii_case("SANDBOX") {
@@ -1324,6 +1366,24 @@ mod tests {
   }
 
   #[test]
+  fn classify_command_failure_recognizes_not_found_variants() {
+    assert!(matches!(classify_command_failure("Error: sandbox 'foo' not found"), Some(Error::NotFound)));
+    assert!(matches!(classify_command_failure("no such sandbox: foo"), Some(Error::NotFound)));
+  }
+
+  #[test]
+  fn classify_command_failure_falls_through_for_unrecognized_stderr() {
+    assert!(classify_command_failure("some other unexpected failure").is_none());
+  }
+
+  #[test]
+  fn classify_command_failure_still_recognizes_existing_policy_and_container_errors() {
+    assert!(matches!(classify_command_failure("network policy has not been initialized"), Some(Error::PolicyNotInitialized)));
+    assert!(matches!(classify_command_failure("already initialized"), Some(Error::PolicyAlreadyInitialized)));
+    assert!(matches!(classify_command_failure("failed to run sandbox container: boom"), Some(Error::ContainerStartFailed(_))));
+  }
+
+  #[test]
   fn parses_full_branch_snapshot() {
     let output = "main\n\
                    ---\n\
@@ -1467,6 +1527,30 @@ mod tests {
   #[test]
   fn parse_sandbox_rows_handles_empty_output() {
     assert_eq!(parse_sandbox_rows(""), Vec::new());
+  }
+
+  #[test]
+  fn parse_sandbox_rows_returns_empty_when_no_header_row_is_present() {
+    let output = "some   garbage   line\nanother   line   here";
+    assert_eq!(parse_sandbox_rows(output), Vec::new());
+  }
+
+  #[test]
+  fn parse_sandbox_rows_skips_leading_blank_lines_before_header() {
+    let output = "\n\nSANDBOX AGENT STATUS WORKSPACE\nfoo claude running /repo\n";
+    assert_eq!(parse_sandbox_rows(output).len(), 1);
+  }
+
+  #[test]
+  fn parse_sandbox_rows_ignores_the_no_sandboxes_empty_state_box() {
+    // `sbx ls` with nothing running prints a bordered empty-state message,
+    // not a table — reproduces the user-reported bug where every line of
+    // this box (>=3 whitespace tokens, first token != "SANDBOX") was
+    // misread as a data row, fabricating 2-3 orphan sandboxes per poll.
+    let output = "\
+      \u{2502}  No Sandboxes found.        \u{2502}\n\
+      \u{2502}  Launch one: sbx run claude \u{2502}";
+    assert_eq!(parse_sandbox_rows(output), Vec::new());
   }
 
   #[test]

@@ -1127,21 +1127,66 @@ pub async fn start_sandbox(app: AppHandle, pool: State<'_, DbPool>, id: String) 
 }
 
 #[tauri::command]
-pub async fn delete_sandbox(app: AppHandle, pool: State<'_, DbPool>, id: String) -> std::result::Result<(), String> {
+pub async fn delete_sandbox(app: AppHandle, pool: State<'_, DbPool>, id: String, force: bool) -> std::result::Result<(), String> {
   let pool = pool.inner().clone();
   let sandbox = {
     let conn = pool.get().map_err(|e| e.to_string())?;
     sandboxes::get(&conn, &id).map_err(|e| e.to_string())?
   };
-  if let Some(name) = sandbox.sbx_name {
-    crate::sbx::rm(&app, &name).await.map_err(|e| e.to_string())?;
-    if let Ok(dest) = plans_dest_dir(&app, &name) {
+  if let Some(name) = &sandbox.sbx_name {
+    let rm_result = crate::sbx::rm(&app, name).await;
+    finalize_sandbox_rm(name, rm_result, force).map_err(|e| e.to_string())?;
+    if let Ok(dest) = plans_dest_dir(&app, name) {
       let _ = std::fs::remove_dir_all(&dest);
     }
   }
 
   let conn = pool.get().map_err(|e| e.to_string())?;
   sandboxes::delete(&conn, &id).map_err(|e| e.to_string())
+}
+
+/// Decides whether a `sbx rm` outcome should block `delete_sandbox`'s DB
+/// row removal. `force: true` only swallows `sbx::Error::NotFound` — any
+/// other error (a real transient failure, a policy error, etc.) still
+/// propagates, so a Retry after a genuine failure can't accidentally
+/// force-delete the DB row for a sandbox that's actually still there.
+/// Split out from `delete_sandbox` so this decision is unit-testable
+/// against a hand-built `sbx::Result` instead of a real `sbx` install.
+fn finalize_sandbox_rm(name: &str, rm_result: crate::sbx::Result<()>, force: bool) -> crate::sbx::Result<()> {
+  match rm_result {
+    Ok(()) => Ok(()),
+    Err(crate::sbx::Error::NotFound) if force => {
+      log::warn!("delete_sandbox: sbx rm reported {name} not found; force-deleting DB row only");
+      Ok(())
+    }
+    Err(e) => Err(e),
+  }
+}
+
+#[cfg(test)]
+mod finalize_sandbox_rm_tests {
+  use super::*;
+
+  #[test]
+  fn passes_through_success() {
+    assert!(finalize_sandbox_rm("foo", Ok(()), false).is_ok());
+  }
+
+  #[test]
+  fn propagates_not_found_when_not_forced() {
+    assert!(matches!(finalize_sandbox_rm("foo", Err(crate::sbx::Error::NotFound), false), Err(crate::sbx::Error::NotFound)));
+  }
+
+  #[test]
+  fn swallows_not_found_when_forced() {
+    assert!(finalize_sandbox_rm("foo", Err(crate::sbx::Error::NotFound), true).is_ok());
+  }
+
+  #[test]
+  fn still_propagates_other_errors_when_forced() {
+    let result = finalize_sandbox_rm("foo", Err(crate::sbx::Error::CommandFailed("boom".into())), true);
+    assert!(matches!(result, Err(crate::sbx::Error::CommandFailed(_))));
+  }
 }
 
 #[derive(Serialize)]

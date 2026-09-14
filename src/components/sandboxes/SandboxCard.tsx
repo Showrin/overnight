@@ -71,6 +71,7 @@ export function SandboxCard({
   const [terminalMenuOpen, setTerminalMenuOpen] = useState(false)
   const [backupMenuOpen, setBackupMenuOpen] = useState(false)
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null)
+  const [notFoundDialogOpen, setNotFoundDialogOpen] = useState(false)
 
   const [networkRules, setNetworkRules] = useState<PolicyRule[]>([])
   const [loadingNetworkRules, setLoadingNetworkRules] = useState(false)
@@ -138,10 +139,23 @@ export function SandboxCard({
       if (which === 'delete') notify('Sandbox deleted', `${title} has been deleted.`, sandbox.id)
       onChanged()
     } catch (e) {
-      setError(String(e))
+      const message = String(e)
+      setError(message)
+      if (which === 'delete' && message.includes('sandbox not found')) {
+        setNotFoundDialogOpen(true)
+      }
     } finally {
       setBusyAction(null)
     }
+  }
+
+  async function attemptDelete(force: boolean) {
+    await run('delete', () => invoke('delete_sandbox', { id: sandbox.id, force }))
+  }
+
+  async function retryDeleteAsForce() {
+    setNotFoundDialogOpen(false)
+    await attemptDelete(true)
   }
 
   async function handleBackupChoice(withBackup: boolean) {
@@ -159,7 +173,11 @@ export function SandboxCard({
         return
       }
     }
-    await run(action, () => invoke(action === 'stop' ? 'stop_sandbox' : 'delete_sandbox', { id: sandbox.id }))
+    if (action === 'delete') {
+      await attemptDelete(false)
+    } else {
+      await run(action, () => invoke('stop_sandbox', { id: sandbox.id }))
+    }
   }
 
   function openInBrowser() {
@@ -547,6 +565,31 @@ export function SandboxCard({
                 </Button>
                 <Button onClick={() => handleBackupChoice(true)}>
                   Back up & {confirmAction === "stop" ? "stop" : "delete"}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={notFoundDialogOpen} onOpenChange={(open) => !open && setNotFoundDialogOpen(false)}>
+        <DialogContent title="Sandbox not found">
+          <Card className="w-full">
+            <CardHeader>
+              <CardTitle>Sandbox not found</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-4">
+              <p className="text-sm text-muted-foreground">
+                sbx no longer knows about this sandbox — it may have already been removed outside the
+                app. Remove it from this list anyway?
+              </p>
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button variant="ghost" onClick={() => setNotFoundDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button variant="destructive" disabled={busyAction != null} onClick={retryDeleteAsForce}>
+                  {busyAction === "delete" && <Loader2 className="size-3.5 animate-spin" />}
+                  Retry
                 </Button>
               </div>
             </CardContent>
