@@ -1153,6 +1153,20 @@ pub fn save_backup_interval_minutes(pool: State<DbPool>, minutes: i64) -> std::r
   settings::set(&conn, crate::backup::BACKUP_INTERVAL_KEY, &minutes.to_string()).map_err(|e| e.to_string())
 }
 
+/// Whether `run_scheduler`'s periodic ticking is active — manual backups
+/// and the pre-stop/pre-delete consent backup always work regardless.
+#[tauri::command]
+pub fn get_auto_backup_enabled(pool: State<DbPool>) -> std::result::Result<bool, String> {
+  Ok(crate::backup::is_auto_backup_enabled(pool.inner()))
+}
+
+#[tauri::command]
+pub fn save_auto_backup_enabled(pool: State<DbPool>, enabled: bool) -> std::result::Result<(), String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  settings::set(&conn, crate::backup::AUTO_BACKUP_ENABLED_KEY, if enabled { "true" } else { "false" })
+    .map_err(|e| e.to_string())
+}
+
 /// Sandboxes with a `.claude`/`.git` copy currently in flight — polled by
 /// the frontend to show a progress indicator and disable Stop/Delete.
 #[tauri::command]

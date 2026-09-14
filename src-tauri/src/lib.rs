@@ -65,6 +65,8 @@ pub fn run() {
       commands::get_sandbox_usage,
       commands::get_backup_interval_minutes,
       commands::save_backup_interval_minutes,
+      commands::get_auto_backup_enabled,
+      commands::save_auto_backup_enabled,
       commands::list_active_backups,
       commands::list_active_operations,
       commands::backup_sandbox_now,

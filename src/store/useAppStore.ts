@@ -27,6 +27,7 @@ interface AppStore {
   hostStats: HostMetric | null
   hostStatsHistory: HostMetric[]
   backupIntervalMinutes: number
+  autoBackupEnabled: boolean
   activeBackups: ActiveBackup[]
   activeOperations: ActiveOperation[]
 
@@ -43,6 +44,8 @@ interface AppStore {
   loadHostStats: () => Promise<void>
   loadBackupIntervalMinutes: () => Promise<void>
   saveBackupIntervalMinutes: (minutes: number) => Promise<void>
+  loadAutoBackupEnabled: () => Promise<void>
+  saveAutoBackupEnabled: (enabled: boolean) => Promise<void>
   loadActiveBackups: () => Promise<void>
   loadActiveOperations: () => Promise<void>
 }
@@ -57,6 +60,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   hostStats: null,
   hostStatsHistory: [],
   backupIntervalMinutes: 15,
+  autoBackupEnabled: true,
   activeBackups: [],
   activeOperations: [],
 
@@ -141,6 +145,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ backupIntervalMinutes: minutes })
   },
 
+  async loadAutoBackupEnabled() {
+    const enabled = await invoke<boolean>('get_auto_backup_enabled')
+    set({ autoBackupEnabled: enabled })
+  },
+
+  async saveAutoBackupEnabled(enabled) {
+    await invoke('save_auto_backup_enabled', { enabled })
+    set({ autoBackupEnabled: enabled })
+  },
+
   async loadActiveBackups() {
     const activeBackups = await invoke<ActiveBackup[]>('list_active_backups')
     set({ activeBackups })
@@ -172,6 +186,7 @@ export function initAppStore() {
   useAppStore.getState().loadNetworkPolicyPreset()
   useAppStore.getState().loadHostStatsHistory()
   useAppStore.getState().loadBackupIntervalMinutes()
+  useAppStore.getState().loadAutoBackupEnabled()
   useAppStore.getState().loadActiveBackups()
   useAppStore.getState().loadActiveOperations()
   let tick = 0

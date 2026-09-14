@@ -23,6 +23,11 @@ const SCHEDULER_TICK_SECS: u64 = 60;
 pub const BACKUP_INTERVAL_KEY: &str = "backup_interval_minutes";
 pub const DEFAULT_BACKUP_INTERVAL_MINUTES: i64 = 15;
 const BACKUP_LAST_RUN_KEY: &str = "backup_last_run_at";
+/// Gates only `run_scheduler`'s periodic ticking — manual backups and the
+/// pre-stop/pre-delete consent backup are unaffected either way. Absent
+/// (e.g. an existing install that predates this setting) means enabled,
+/// matching the scheduler's behavior before this toggle existed.
+pub const AUTO_BACKUP_ENABLED_KEY: &str = "auto_backup_enabled";
 
 /// Which halves of a sandbox a backup (or restore) covers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -260,14 +265,28 @@ fn read_i64_setting(pool: &DbPool, key: &str) -> Option<i64> {
   settings::get(&conn, key).ok().flatten()?.parse().ok()
 }
 
-/// Ticks every `SCHEDULER_TICK_SECS`, re-reading the interval setting each
-/// time so a change in Settings takes effect on the next tick with no
-/// restart. `backup_last_run_at` is a plain settings key (not a new table)
-/// so the interval survives app restarts without a double-backup burst on
-/// launch.
+pub fn is_auto_backup_enabled(pool: &DbPool) -> bool {
+  let Ok(conn) = pool.get() else { return true };
+  match settings::get(&conn, AUTO_BACKUP_ENABLED_KEY) {
+    Ok(Some(raw)) => raw != "false",
+    _ => true,
+  }
+}
+
+/// Ticks every `SCHEDULER_TICK_SECS`, re-reading the interval (and
+/// enabled/disabled) settings each time so a change in Settings takes
+/// effect on the next tick with no restart. `backup_last_run_at` is a
+/// plain settings key (not a new table) so the interval survives app
+/// restarts without a double-backup burst on launch. Left untouched while
+/// disabled, so re-enabling doesn't itself trigger an immediate backup
+/// unless the interval had already elapsed since the last real one.
 pub async fn run_scheduler(app: AppHandle, pool: DbPool) {
   loop {
     tokio::time::sleep(std::time::Duration::from_secs(SCHEDULER_TICK_SECS)).await;
+
+    if !is_auto_backup_enabled(&pool) {
+      continue;
+    }
 
     let interval_minutes = read_i64_setting(&pool, BACKUP_INTERVAL_KEY).unwrap_or(DEFAULT_BACKUP_INTERVAL_MINUTES);
     let last_run_at = read_i64_setting(&pool, BACKUP_LAST_RUN_KEY).unwrap_or(0);
@@ -407,6 +426,27 @@ mod tests {
       std::fs::remove_dir_all(dir).ok();
     }
     drop(conn);
+    drop(pool);
+    std::fs::remove_file(&db_path).ok();
+  }
+
+  #[test]
+  fn auto_backup_enabled_by_default_and_toggleable() {
+    let (pool, db_path) = test_pool();
+    assert!(is_auto_backup_enabled(&pool));
+
+    {
+      let conn = pool.get().unwrap();
+      settings::set(&conn, AUTO_BACKUP_ENABLED_KEY, "false").unwrap();
+    }
+    assert!(!is_auto_backup_enabled(&pool));
+
+    {
+      let conn = pool.get().unwrap();
+      settings::set(&conn, AUTO_BACKUP_ENABLED_KEY, "true").unwrap();
+    }
+    assert!(is_auto_backup_enabled(&pool));
+
     drop(pool);
     std::fs::remove_file(&db_path).ok();
   }

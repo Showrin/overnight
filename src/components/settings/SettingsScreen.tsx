@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import type { NetworkPolicySettings, NetworkRuleDecision } from '@/lib/networkPolicy'
 import { NETWORK_POLICY_PRESET_LABELS, NETWORK_POLICY_PRESETS } from '@/lib/networkPolicy'
 import { PERMISSION_MODES } from '@/lib/permissionModes'
@@ -24,6 +25,8 @@ export function SettingsScreen() {
   const saveDefaultTerminalHost = useAppStore((s) => s.saveDefaultTerminalHost)
   const backupIntervalMinutes = useAppStore((s) => s.backupIntervalMinutes)
   const saveBackupIntervalMinutes = useAppStore((s) => s.saveBackupIntervalMinutes)
+  const autoBackupEnabled = useAppStore((s) => s.autoBackupEnabled)
+  const saveAutoBackupEnabled = useAppStore((s) => s.saveAutoBackupEnabled)
   const [permissionMode, setPermissionMode] = useState<string>('default')
   const [savingMode, setSavingMode] = useState(false)
   const [modeError, setModeError] = useState<string | null>(null)
@@ -39,6 +42,8 @@ export function SettingsScreen() {
   const [backupInterval, setBackupInterval] = useState<number>(15)
   const [savingBackupInterval, setSavingBackupInterval] = useState(false)
   const [backupIntervalError, setBackupIntervalError] = useState<string | null>(null)
+  const [togglingAutoBackup, setTogglingAutoBackup] = useState(false)
+  const [autoBackupToggleError, setAutoBackupToggleError] = useState<string | null>(null)
 
   const [jiraConfig, setJiraConfig] = useState<JiraConfig | null>(null)
   const [editingJira, setEditingJira] = useState(false)
@@ -172,6 +177,18 @@ export function SettingsScreen() {
     }
   }
 
+  async function handleToggleAutoBackup(enabled: boolean) {
+    setTogglingAutoBackup(true)
+    setAutoBackupToggleError(null)
+    try {
+      await saveAutoBackupEnabled(enabled)
+    } catch (e) {
+      setAutoBackupToggleError(String(e))
+    } finally {
+      setTogglingAutoBackup(false)
+    }
+  }
+
   async function addSkillFolders() {
     const selection = await open({ directory: true, multiple: true })
     if (!selection) return
@@ -254,18 +271,32 @@ export function SettingsScreen() {
         <CardHeader>
           <CardTitle>Automatic Backups</CardTitle>
         </CardHeader>
-        <CardContent className="flex flex-col gap-2">
+        <CardContent className="flex flex-col gap-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex flex-col">
+              <span className="text-sm text-foreground">Auto backup</span>
+              <span className="text-xs text-muted-foreground">
+                Periodically back up running sandboxes' .claude and .git folders.
+              </span>
+            </div>
+            <Switch
+              checked={autoBackupEnabled}
+              disabled={togglingAutoBackup}
+              onCheckedChange={handleToggleAutoBackup}
+            />
+          </div>
+          {autoBackupToggleError && <p className="text-sm text-destructive">{autoBackupToggleError}</p>}
+
           <Input
             type="number"
             min={1}
             value={backupInterval}
+            disabled={!autoBackupEnabled}
             onChange={(e) => setBackupInterval(Number(e.target.value))}
           />
-          <p className="text-xs text-muted-foreground">
-            How often (in minutes) running sandboxes' .claude and .git folders are backed up.
-          </p>
+          <p className="text-xs text-muted-foreground">How often (in minutes) auto backup runs.</p>
           {backupIntervalError && <p className="text-sm text-destructive">{backupIntervalError}</p>}
-          <Button onClick={handleSaveBackupInterval} disabled={savingBackupInterval}>
+          <Button onClick={handleSaveBackupInterval} disabled={savingBackupInterval || !autoBackupEnabled}>
             {savingBackupInterval ? 'Saving…' : 'Save'}
           </Button>
         </CardContent>
