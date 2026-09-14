@@ -8,3 +8,8 @@ export const TERMINAL_HOST_LABELS: Record<TerminalHost, string> = {
   cmd: 'Command Prompt',
   powershell: 'PowerShell',
 }
+
+export const TERMINAL_HOST_OPEN_LABELS: Record<TerminalHost, string> = {
+  cmd: 'CMD',
+  powershell: 'Powershell',
+}

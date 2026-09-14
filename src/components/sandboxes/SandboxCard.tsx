@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { Check, Code, DatabaseBackup, ExternalLink, GitBranch, Loader2, Play, Square, TerminalSquare, Trash2 } from 'lucide-react'
+import { Check, ChevronDown, Code, DatabaseBackup, ExternalLink, GitBranch, Loader2, Play, Square, TerminalSquare, Trash2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -17,7 +17,7 @@ import {
 } from '@/lib/networkPolicy'
 import { notify } from '@/lib/notify'
 import { formatRelativeTime, permissionBadgeVariant, statusBadgeVariant } from '@/lib/sandboxDisplay'
-import { TERMINAL_HOSTS, TERMINAL_HOST_LABELS } from '@/lib/terminalHost'
+import { TERMINAL_HOSTS, TERMINAL_HOST_LABELS, TERMINAL_HOST_OPEN_LABELS, type TerminalHost } from '@/lib/terminalHost'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
 import type { BranchSyncOutcome, Sandbox } from './types'
@@ -61,6 +61,7 @@ export function SandboxCard({
     (s) => s.projects.find((p) => p.id === sandbox.project_id)?.repo_path
   )
   const defaultTerminalHost = useAppStore((s) => s.defaultTerminalHost)
+  const saveDefaultTerminalHost = useAppStore((s) => s.saveDefaultTerminalHost)
   const platform = useAppStore((s) => s.platform)
   const networkPolicyPreset = useAppStore((s) => s.networkPolicyPreset)
   const isBackingUp = useAppStore((s) => s.activeBackups.some((b) => b.sandbox_id === sandbox.id))
@@ -400,39 +401,61 @@ export function SandboxCard({
                 ) : (
                   <Code className="size-3.5" />
                 )}
-                Open in VS Code
+                VS Code
               </Button>
               {platform === "windows" ? (
-                <Popover open={terminalMenuOpen} onOpenChange={setTerminalMenuOpen}>
-                  <PopoverTrigger asChild>
-                    <Button size="sm" variant="outline" disabled={busyAction != null}>
-                      {busyAction === "terminal" ? (
-                        <Loader2 className="size-3.5 animate-spin" />
-                      ) : (
-                        <TerminalSquare className="size-3.5" />
-                      )}
-                      Terminal
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent align="start" className="flex flex-col gap-0.5">
-                    {TERMINAL_HOSTS.map((host) => (
-                      <button
-                        key={host}
-                        type="button"
-                        onClick={() => {
-                          setTerminalMenuOpen(false)
-                          run("terminal", () =>
-                            invoke("open_sandbox_terminal", { id: sandbox.id, terminalHost: host }),
-                          )
-                        }}
-                        className="flex w-full items-center justify-between gap-4 rounded-md px-2 py-1.5 text-left text-sm outline-none hover:bg-accent hover:text-accent-foreground"
+                <div className="inline-flex">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busyAction != null}
+                    className="rounded-r-none border-r-0"
+                    onClick={() =>
+                      run("terminal", () =>
+                        invoke("open_sandbox_terminal", {
+                          id: sandbox.id,
+                          terminalHost: defaultTerminalHost,
+                        }),
+                      )
+                    }
+                  >
+                    {busyAction === "terminal" ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <TerminalSquare className="size-3.5" />
+                    )}
+                    {TERMINAL_HOST_OPEN_LABELS[defaultTerminalHost as TerminalHost] ?? "Open terminal"}
+                  </Button>
+                  <Popover open={terminalMenuOpen} onOpenChange={setTerminalMenuOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={busyAction != null}
+                        className="rounded-l-none px-1"
+                        aria-label="Choose terminal app"
                       >
-                        {TERMINAL_HOST_LABELS[host]}
-                        {host === defaultTerminalHost && <Check className="size-3.5" />}
-                      </button>
-                    ))}
-                  </PopoverContent>
-                </Popover>
+                        <ChevronDown className="size-3.5" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent align="end" className="flex flex-col gap-0.5">
+                      {TERMINAL_HOSTS.map((host) => (
+                        <button
+                          key={host}
+                          type="button"
+                          onClick={() => {
+                            setTerminalMenuOpen(false)
+                            saveDefaultTerminalHost(host)
+                          }}
+                          className="flex w-full items-center justify-between gap-4 rounded-md px-2 py-1.5 text-left text-sm outline-none hover:bg-accent hover:text-accent-foreground"
+                        >
+                          {TERMINAL_HOST_LABELS[host]}
+                          {host === defaultTerminalHost && <Check className="size-3.5" />}
+                        </button>
+                      ))}
+                    </PopoverContent>
+                  </Popover>
+                </div>
               ) : (
                 <Button
                   size="sm"
