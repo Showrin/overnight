@@ -922,14 +922,23 @@ pub async fn list_all<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<SbxListRow>>
 ///
 /// Requires seeing a real header line first (first non-empty line whose
 /// first token is literally "SANDBOX", case-insensitive) before treating
-/// anything as a data row. With zero sandboxes, `sbx ls` prints a decorated
-/// empty-state message instead of a table — without this guard, lines of
-/// that message (e.g. box-drawing borders, "No Sandboxes found.") satisfy
-/// the `>=3` tokens heuristic and get misread as fake sandbox rows. If no
+/// anything as a data row. This alone isn't enough, though: `sbx ls` prints
+/// that header *unconditionally*, even with zero sandboxes, and swaps only
+/// the table *body* for a decorated empty-state box (confirmed by a
+/// corrupted DB row this misparse produced in the wild — a fabricated
+/// sandbox with status "Sandboxes" and sbx_name "│", read straight off the
+/// box's "No Sandboxes found." line). So every line is also rejected if it
+/// contains a box-drawing character (U+2500-U+257F) — never legal in a
+/// sandbox name, status, or workspace path — which catches the box's
+/// borders and content regardless of whether a header preceded it. If no
 /// header is ever found, this isn't a table at all, so this degrades to an
 /// empty Vec rather than misparsing.
 fn parse_sandbox_rows(output: &str) -> Vec<SbxListRow> {
-  let mut lines = output.lines().filter(|line| !line.trim().is_empty());
+  fn is_box_drawing(line: &str) -> bool {
+    line.chars().any(|c| ('\u{2500}'..='\u{257f}').contains(&c))
+  }
+
+  let mut lines = output.lines().filter(|line| !line.trim().is_empty() && !is_box_drawing(line));
 
   let saw_header = lines
     .by_ref()
@@ -1548,6 +1557,23 @@ mod tests {
     // this box (>=3 whitespace tokens, first token != "SANDBOX") was
     // misread as a data row, fabricating 2-3 orphan sandboxes per poll.
     let output = "\
+      \u{2502}  No Sandboxes found.        \u{2502}\n\
+      \u{2502}  Launch one: sbx run claude \u{2502}";
+    assert_eq!(parse_sandbox_rows(output), Vec::new());
+  }
+
+  #[test]
+  fn parse_sandbox_rows_ignores_the_empty_state_box_even_when_header_is_still_printed() {
+    // Real `sbx ls` prints the "SANDBOX ..." header unconditionally, even
+    // with zero sandboxes, and only swaps the *body* for the decorated
+    // empty-state box below it. The header-presence guard added to fix the
+    // no-header case doesn't help here: `saw_header` becomes true, and the
+    // box's content line then satisfies the old ">=3 tokens" heuristic,
+    // fabricating a fake row (sbx_name="│", status="Sandboxes") — matching
+    // a real corrupted DB row: id=..., project_id=unassigned, mode=clone,
+    // status=Sandboxes, sbx_name=│.
+    let output = "\
+      SANDBOX         AGENT   STATUS   PORTS                    WORKSPACE\n\
       \u{2502}  No Sandboxes found.        \u{2502}\n\
       \u{2502}  Launch one: sbx run claude \u{2502}";
     assert_eq!(parse_sandbox_rows(output), Vec::new());
