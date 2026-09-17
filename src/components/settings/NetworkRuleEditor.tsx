@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -21,10 +21,13 @@ export function NetworkRuleEditor({
   rules,
   onAdd,
   onRemove,
+  filterSlot,
 }: {
   rules: PolicyRule[]
   onAdd: (decision: NetworkRuleDecision, host: string) => Promise<void>
   onRemove: (host: string) => Promise<void>
+  /** Rendered between the add-rule form and the allow/deny lists — e.g. a host search box. */
+  filterSlot?: ReactNode
 }) {
   const [decision, setDecision] = useState<NetworkRuleDecision>('allow')
   const [host, setHost] = useState('')
@@ -98,8 +101,6 @@ export function NetworkRuleEditor({
 
   return (
     <div className="flex flex-col gap-3">
-      {renderChips(allowRules, 'Allow')}
-      {renderChips(denyRules, 'Deny')}
       <div className="flex gap-2">
         <Select value={decision} onValueChange={(value) => setDecision(value as NetworkRuleDecision)}>
           <SelectTrigger className="h-8 w-24">
@@ -121,6 +122,9 @@ export function NetworkRuleEditor({
         </Button>
       </div>
       {error && <p className="text-xs text-destructive">{error}</p>}
+      {filterSlot}
+      {renderChips(allowRules, 'Allow')}
+      {renderChips(denyRules, 'Deny')}
     </div>
   )
 }

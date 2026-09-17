@@ -40,7 +40,7 @@ export function Sidebar({
 
   return (
     <nav className="flex w-52 shrink-0 flex-col border-r border-sidebar-border bg-sidebar">
-      <div className="flex flex-1 flex-col gap-4 overflow-auto p-2">
+      <div className="flex flex-1 flex-col gap-8 overflow-auto p-2">
         {groups.map((group) => (
           <div key={group.label} className="flex flex-col gap-1">
             <span className="px-2.5 text-xs font-normal text-muted-foreground">{group.label}</span>

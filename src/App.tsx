@@ -73,10 +73,13 @@ function App() {
                 navigate={navigate}
               />
             </div>
-          ) : route.screen === 'dev-telemetry' || route.screen === 'dev-commands' ? (
+          ) : route.screen === 'dev-telemetry' || route.screen === 'dev-commands' || route.screen === 'settings' ? (
             <div className="@container flex h-full w-full max-w-5xl flex-col p-6">
               {route.screen === 'dev-telemetry' && <TelemetryTab />}
               {route.screen === 'dev-commands' && <CommandLogTab />}
+              {route.screen === 'settings' && (
+                <SettingsScreen settingsTab={route.settingsTab ?? 'general'} navigate={navigate} />
+              )}
             </div>
           ) : (
             <div className="@container w-full max-w-5xl h-fit p-6">
@@ -92,7 +95,6 @@ function App() {
               )}
               {route.screen === 'performance-monitor' && <PerformanceMonitorTab />}
               {route.screen === 'backups' && <BackupsScreen />}
-              {route.screen === 'settings' && <SettingsScreen />}
             </div>
           )}
         </main>
