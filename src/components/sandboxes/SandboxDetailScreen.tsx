@@ -10,6 +10,7 @@ import { SandboxActions } from './SandboxActions'
 import { SandboxBackupsTab } from './SandboxBackupsTab'
 import { SandboxBranchTab } from './SandboxBranchTab'
 import { SandboxBreadcrumb } from './SandboxBreadcrumb'
+import { SandboxCredentialsTab } from './SandboxCredentialsTab'
 import { SandboxMetricsTab } from './SandboxMetricsTab'
 import { SandboxPlansTab } from './SandboxPlansTab'
 
@@ -114,6 +115,13 @@ export function SandboxDetailScreen({
         >
           Backups
         </button>
+        <button
+          type="button"
+          onClick={() => setTab('credentials')}
+          className={cn(TAB_LINK_CLASS, tab === 'credentials' && TAB_LINK_ACTIVE_CLASS)}
+        >
+          Credentials
+        </button>
       </div>
 
       {tab === 'overview' && (
@@ -161,6 +169,8 @@ export function SandboxDetailScreen({
       {tab === 'plans' && <SandboxPlansTab sandbox={sandbox} />}
 
       {tab === 'backups' && <SandboxBackupsTab sandbox={sandbox} />}
+
+      {tab === 'credentials' && <SandboxCredentialsTab sandbox={sandbox} navigate={navigate} />}
     </div>
   )
 }

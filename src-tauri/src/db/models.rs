@@ -1,5 +1,11 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EnvVar {
+  pub key: String,
+  pub value: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
   pub id: String,
@@ -144,6 +150,7 @@ pub struct Sandbox {
   /// snapshot. Drives the Branch tab's "live" vs "as of <relative time>"
   /// freshness label.
   pub branch_snapshot_at: Option<i64>,
+  pub env_vars: Vec<EnvVar>,
 }
 
 /// One periodic (or pre-stop/pre-delete) backup of a sandbox's `~/.claude`
@@ -198,6 +205,7 @@ pub struct Project {
   pub plans_path: Option<String>,
   pub dev_server_port: Option<i64>,
   pub extra_clone_paths: Vec<String>,
+  pub env_vars: Vec<EnvVar>,
   pub created_at: i64,
   pub updated_at: i64,
 }

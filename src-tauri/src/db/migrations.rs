@@ -328,6 +328,16 @@ pub fn migrations() -> Migrations<'static> {
     );
     CREATE INDEX ix_command_log_occurred_at ON command_log(occurred_at);
     ",
+  ), M::up(
+    "
+    -- Env vars applied when a sandbox is created: project-scoped
+    -- (env_vars on projects) and sandbox-scoped (env_vars on sandboxes),
+    -- both JSON arrays of {key, value} mirroring Project.extra_clone_paths'
+    -- storage convention. The global scope has no column of its own — it
+    -- lives in the generic `settings` table under key 'global_env_vars'.
+    ALTER TABLE projects ADD COLUMN env_vars TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE sandboxes ADD COLUMN env_vars TEXT NOT NULL DEFAULT '[]';
+    ",
   )])
 }
 

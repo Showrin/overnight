@@ -2,12 +2,15 @@ import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import type { EnvVar } from '@/lib/envVars'
 import type { NetworkPolicySettings, NetworkRuleDecision } from '@/lib/networkPolicy'
 import type { Route, SettingsTab } from '@/lib/router'
 import { useAppStore } from '@/store/useAppStore'
 import type { JiraConfig } from './JiraConfigForm'
+import { EnvVarsSavedDialog } from './EnvVarsSavedDialog'
 import { SettingsActions, type TabActions, UnsavedChangesNotice } from './SettingsLayout'
 import { BackupsTab } from './tabs/BackupsTab'
+import { CredentialsTab } from './tabs/CredentialsTab'
 import { GeneralTab } from './tabs/GeneralTab'
 import { IntegrationsTab } from './tabs/IntegrationsTab'
 import { NetworkTab } from './tabs/NetworkTab'
@@ -25,6 +28,7 @@ interface SettingsScreenProps {
 
 export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
   const settings = useAppStore((s) => s.settings)
+  const projects = useAppStore((s) => s.projects)
   const saveSettings = useAppStore((s) => s.saveSettings)
   const saveSkillFolders = useAppStore((s) => s.saveSkillFolders)
   const defaultTerminalHost = useAppStore((s) => s.defaultTerminalHost)
@@ -58,6 +62,20 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
 
   const [jiraConfig, setJiraConfig] = useState<JiraConfig | null>(null)
   const [editingJira, setEditingJira] = useState(false)
+
+  const [globalEnvVars, setGlobalEnvVars] = useState<EnvVar[]>([])
+  const [savedGlobalEnvVars, setSavedGlobalEnvVars] = useState<EnvVar[]>([])
+  const [savingGlobalEnv, setSavingGlobalEnv] = useState(false)
+  const [globalEnvError, setGlobalEnvError] = useState<string | null>(null)
+
+  const [selectedEnvProjectId, setSelectedEnvProjectId] = useState<string | null>(null)
+  const [projectEnvVars, setProjectEnvVars] = useState<EnvVar[]>([])
+  const [savedProjectEnvVars, setSavedProjectEnvVars] = useState<EnvVar[]>([])
+  const [loadingProjectEnvVars, setLoadingProjectEnvVars] = useState(false)
+  const [savingProjectEnv, setSavingProjectEnv] = useState(false)
+  const [projectEnvError, setProjectEnvError] = useState<string | null>(null)
+
+  const [credentialsSavedDialogOpen, setCredentialsSavedDialogOpen] = useState(false)
 
   useEffect(() => {
     if (settings) {
@@ -109,6 +127,28 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
   useEffect(() => {
     loadNetworkPolicy()
   }, [])
+
+  async function loadGlobalEnvVars() {
+    const vars = await invoke<EnvVar[]>('get_global_env_vars')
+    setGlobalEnvVars(vars)
+    setSavedGlobalEnvVars(vars)
+  }
+
+  useEffect(() => {
+    loadGlobalEnvVars()
+  }, [])
+
+  useEffect(() => {
+    if (!selectedEnvProjectId) return
+    setLoadingProjectEnvVars(true)
+    invoke<EnvVar[]>('get_project_env_vars', { projectId: selectedEnvProjectId })
+      .then((vars) => {
+        setProjectEnvVars(vars)
+        setSavedProjectEnvVars(vars)
+      })
+      .catch((e) => setProjectEnvError(String(e)))
+      .finally(() => setLoadingProjectEnvVars(false))
+  }, [selectedEnvProjectId])
 
   async function addSkillFolders() {
     const selection = await open({ directory: true, multiple: true })
@@ -215,6 +255,55 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
     await loadNetworkPolicy()
   }
 
+  function sameEnvVars(a: EnvVar[], b: EnvVar[]): boolean {
+    return a.length === b.length && a.every((v, i) => v.key === b[i].key && v.value === b[i].value)
+  }
+
+  const globalEnvDirty = !sameEnvVars(globalEnvVars, savedGlobalEnvVars)
+
+  async function saveGlobalEnv(): Promise<boolean> {
+    setSavingGlobalEnv(true)
+    setGlobalEnvError(null)
+    try {
+      await invoke('save_global_env_vars', { vars: globalEnvVars })
+      setSavedGlobalEnvVars(globalEnvVars)
+      return true
+    } catch (e) {
+      setGlobalEnvError(String(e))
+      return false
+    } finally {
+      setSavingGlobalEnv(false)
+    }
+  }
+
+  function resetGlobalEnv() {
+    setGlobalEnvVars(savedGlobalEnvVars)
+    setGlobalEnvError(null)
+  }
+
+  const projectEnvDirty = selectedEnvProjectId !== null && !sameEnvVars(projectEnvVars, savedProjectEnvVars)
+
+  async function saveProjectEnv(): Promise<boolean> {
+    if (!selectedEnvProjectId) return true
+    setSavingProjectEnv(true)
+    setProjectEnvError(null)
+    try {
+      await invoke('save_project_env_vars', { projectId: selectedEnvProjectId, vars: projectEnvVars })
+      setSavedProjectEnvVars(projectEnvVars)
+      return true
+    } catch (e) {
+      setProjectEnvError(String(e))
+      return false
+    } finally {
+      setSavingProjectEnv(false)
+    }
+  }
+
+  function resetProjectEnv() {
+    setProjectEnvVars(savedProjectEnvVars)
+    setProjectEnvError(null)
+  }
+
   const noop = () => {}
   const tabActions: Record<SettingsTab, TabActions> = {
     general: {
@@ -241,6 +330,22 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
       onSave: saveNetwork,
       onCancel: resetNetwork,
     },
+    credentials: {
+      dirty: globalEnvDirty || projectEnvDirty,
+      canSave: globalEnvDirty || projectEnvDirty,
+      saving: savingGlobalEnv || savingProjectEnv,
+      error: globalEnvError ?? projectEnvError,
+      onSave: async () => {
+        let ok = true
+        if (globalEnvDirty) ok = (await saveGlobalEnv()) && ok
+        if (projectEnvDirty) ok = (await saveProjectEnv()) && ok
+        if (ok) setCredentialsSavedDialogOpen(true)
+      },
+      onCancel: () => {
+        resetGlobalEnv()
+        resetProjectEnv()
+      },
+    },
     integrations: { dirty: false, canSave: false, saving: false, error: null, onSave: noop, onCancel: noop },
   }
 
@@ -262,6 +367,7 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="backups">Backups</TabsTrigger>
           <TabsTrigger value="network">Network</TabsTrigger>
+          <TabsTrigger value="credentials">Credentials</TabsTrigger>
           {SHOW_JIRA_SETTINGS && <TabsTrigger value="integrations">Integrations</TabsTrigger>}
         </TabsList>
 
@@ -307,6 +413,19 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
           />
         </TabsContent>
 
+        <TabsContent value="credentials">
+          <CredentialsTab
+            globalVars={globalEnvVars}
+            setGlobalVars={setGlobalEnvVars}
+            projects={projects}
+            selectedProjectId={selectedEnvProjectId}
+            setSelectedProjectId={setSelectedEnvProjectId}
+            projectVars={projectEnvVars}
+            setProjectVars={setProjectEnvVars}
+            loadingProjectVars={loadingProjectEnvVars}
+          />
+        </TabsContent>
+
         {SHOW_JIRA_SETTINGS && (
           <TabsContent value="integrations">
             <IntegrationsTab
@@ -318,6 +437,8 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
           </TabsContent>
         )}
       </div>
+
+      <EnvVarsSavedDialog open={credentialsSavedDialogOpen} onOpenChange={setCredentialsSavedDialogOpen} />
     </Tabs>
   )
 }

@@ -1,10 +1,11 @@
 use rusqlite::{params, Connection};
 
 use crate::db::error::{Error, Result};
-use crate::db::models::{new_id, now_millis, Project};
+use crate::db::models::{new_id, now_millis, EnvVar, Project};
 
 fn row_to_project(row: &rusqlite::Row) -> rusqlite::Result<Project> {
   let extra_clone_paths_raw: String = row.get("extra_clone_paths")?;
+  let env_vars_raw: String = row.get("env_vars")?;
   Ok(Project {
     id: row.get("id")?,
     name: row.get("name")?,
@@ -12,6 +13,7 @@ fn row_to_project(row: &rusqlite::Row) -> rusqlite::Result<Project> {
     plans_path: row.get("plans_path")?,
     dev_server_port: row.get("dev_server_port")?,
     extra_clone_paths: serde_json::from_str(&extra_clone_paths_raw).unwrap_or_default(),
+    env_vars: serde_json::from_str(&env_vars_raw).unwrap_or_default(),
     created_at: row.get("created_at")?,
     updated_at: row.get("updated_at")?,
   })
@@ -50,6 +52,23 @@ pub fn update(conn: &Connection, id: &str, name: &str, repo_path: &str, plans_pa
      SET name = ?1, repo_path = ?2, plans_path = ?3, dev_server_port = ?4, updated_at = ?5
      WHERE id = ?6",
     params![name, repo_path, plans_path, dev_server_port, now, id],
+  )?;
+  if changed == 0 {
+    return Err(Error::NotFound);
+  }
+  get(conn, id)
+}
+
+/// Persists this project's env vars, applied to every sandbox created for
+/// it from then on (merged with global and sandbox-scoped vars at sandbox
+/// creation time — see commands.rs::merged_env_vars). Bumps updated_at,
+/// same as `update`.
+pub fn set_env_vars(conn: &Connection, id: &str, vars: &[EnvVar]) -> Result<Project> {
+  let json = serde_json::to_string(vars).unwrap_or_else(|_| "[]".to_string());
+  let now = now_millis();
+  let changed = conn.execute(
+    "UPDATE projects SET env_vars = ?1, updated_at = ?2 WHERE id = ?3",
+    params![json, now, id],
   )?;
   if changed == 0 {
     return Err(Error::NotFound);
@@ -148,6 +167,28 @@ mod tests {
 
     let all = list(&conn).unwrap();
     assert_eq!(all.len(), 1);
+  }
+
+  #[test]
+  fn set_env_vars_roundtrips_and_updates_timestamp() {
+    let conn = test_conn();
+    let project = create(&conn, "Overnight", "/repo/overnight", None, None).unwrap();
+    assert_eq!(project.env_vars, Vec::<EnvVar>::new());
+
+    let vars = vec![
+      EnvVar { key: "API_URL".to_string(), value: "https://example.com".to_string() },
+      EnvVar { key: "DEBUG".to_string(), value: "1".to_string() },
+    ];
+    let updated = set_env_vars(&conn, &project.id, &vars).unwrap();
+    assert_eq!(updated.env_vars, vars);
+    assert!(updated.updated_at >= project.updated_at);
+    assert_eq!(get(&conn, &project.id).unwrap().env_vars, vars);
+  }
+
+  #[test]
+  fn set_env_vars_missing_id_returns_not_found() {
+    let conn = test_conn();
+    assert!(matches!(set_env_vars(&conn, "missing", &[]), Err(Error::NotFound)));
   }
 
   #[test]

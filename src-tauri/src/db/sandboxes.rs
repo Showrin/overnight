@@ -1,11 +1,12 @@
 use rusqlite::{params, Connection};
 
 use crate::db::error::{Error, Result};
-use crate::db::models::{new_id, now_millis, Sandbox, WorktreeInfo};
+use crate::db::models::{new_id, now_millis, EnvVar, Sandbox, WorktreeInfo};
 
 fn row_to_sandbox(row: &rusqlite::Row) -> rusqlite::Result<Sandbox> {
   let branches_raw: String = row.get("branches")?;
   let worktrees_raw: String = row.get("worktrees")?;
+  let env_vars_raw: String = row.get("env_vars")?;
   Ok(Sandbox {
     id: row.get("id")?,
     project_id: row.get("project_id")?,
@@ -26,6 +27,7 @@ fn row_to_sandbox(row: &rusqlite::Row) -> rusqlite::Result<Sandbox> {
     branches: serde_json::from_str(&branches_raw).unwrap_or_default(),
     worktrees: serde_json::from_str(&worktrees_raw).unwrap_or_default(),
     branch_snapshot_at: row.get("branch_snapshot_at")?,
+    env_vars: serde_json::from_str(&env_vars_raw).unwrap_or_default(),
   })
 }
 
@@ -143,6 +145,19 @@ pub fn set_network_preset_override(conn: &Connection, id: &str, preset: Option<&
     "UPDATE sandboxes SET network_preset_override = ?1 WHERE id = ?2",
     params![preset, id],
   )?;
+  if changed == 0 {
+    return Err(Error::NotFound);
+  }
+  get(conn, id)
+}
+
+/// Persists this sandbox's own env vars (highest-priority scope — see
+/// commands.rs::merged_env_vars). Callers are responsible for pushing the
+/// merged result into the running sandbox afterwards; this only records
+/// the choice, same split as `set_network_preset_override`.
+pub fn set_env_vars(conn: &Connection, id: &str, vars: &[EnvVar]) -> Result<Sandbox> {
+  let json = serde_json::to_string(vars).unwrap_or_else(|_| "[]".to_string());
+  let changed = conn.execute("UPDATE sandboxes SET env_vars = ?1 WHERE id = ?2", params![json, id])?;
   if changed == 0 {
     return Err(Error::NotFound);
   }
@@ -333,6 +348,25 @@ mod tests {
     // sandboxes running at once for the same project.
     update_status(&conn, &first.id, "running", Some("sbx-1"), None).unwrap();
     create(&conn, &project_id, "clone", None, None, "default", None).unwrap();
+  }
+
+  #[test]
+  fn sets_env_vars() {
+    let conn = test_conn();
+    let project_id = make_project(&conn);
+    let sandbox = create(&conn, &project_id, "mount", None, None, "default", None).unwrap();
+    assert_eq!(sandbox.env_vars, Vec::<EnvVar>::new());
+
+    let vars = vec![EnvVar { key: "FOO".to_string(), value: "bar".to_string() }];
+    let updated = set_env_vars(&conn, &sandbox.id, &vars).unwrap();
+    assert_eq!(updated.env_vars, vars);
+    assert_eq!(get(&conn, &sandbox.id).unwrap().env_vars, vars);
+  }
+
+  #[test]
+  fn set_env_vars_missing_id_returns_not_found() {
+    let conn = test_conn();
+    assert!(matches!(set_env_vars(&conn, "missing", &[]), Err(Error::NotFound)));
   }
 
   #[test]

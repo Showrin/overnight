@@ -18,13 +18,13 @@ export type Screen =
 // Sandbox detail page tabs. Not persisted into the hash — a same-session
 // navigation hint only (e.g. jumping straight to Backups from an
 // in-progress indicator), so a page refresh lands back on Overview.
-export type DetailTab = 'overview' | 'metrics' | 'plans' | 'backups'
+export type DetailTab = 'overview' | 'metrics' | 'plans' | 'backups' | 'credentials'
 
 // Settings page tabs. Persisted into the hash (`#/settings/<tab>`), unlike
 // DetailTab — Settings tabs are primary navigation, not a same-session hint.
-export type SettingsTab = 'general' | 'backups' | 'network' | 'integrations'
+export type SettingsTab = 'general' | 'backups' | 'network' | 'credentials' | 'integrations'
 
-const SETTINGS_TABS: readonly SettingsTab[] = ['general', 'backups', 'network', 'integrations']
+const SETTINGS_TABS: readonly SettingsTab[] = ['general', 'backups', 'network', 'credentials', 'integrations']
 
 function isSettingsTab(value: string): value is SettingsTab {
   return (SETTINGS_TABS as readonly string[]).includes(value)

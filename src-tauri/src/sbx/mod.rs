@@ -13,7 +13,7 @@ use std::time::Instant;
 use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_shell::ShellExt;
 
-use crate::db::models::WorktreeInfo;
+use crate::db::models::{EnvVar, WorktreeInfo};
 use crate::db::{command_log, DbPool};
 use crate::process::SpawnedProcess;
 
@@ -38,16 +38,39 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 async fn run<R: Runtime>(app: &AppHandle<R>, operation: &str, args: &[&str]) -> Result<String> {
+  run_with_logged_args(app, operation, args, args).await
+}
+
+/// Like `run`, but persists `logged_args` to the command log instead of
+/// the real `args` actually executed — used when the real args carry
+/// sensitive values (e.g. env var values written into a sandbox's
+/// persistent shell file) that shouldn't be readable later from the
+/// Developer > Command Log page. `logged_args` also replaces `args` in
+/// the error message on a non-zero exit, so a failure surfaced to the UI
+/// doesn't leak the values either.
+async fn run_with_logged_args<R: Runtime>(
+  app: &AppHandle<R>,
+  operation: &str,
+  args: &[&str],
+  logged_args: &[&str],
+) -> Result<String> {
   let output = app.shell().command("sbx").args(args).output().await?;
   let success = output.status.success();
   let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-  record(app, operation, args, success, output.status.code().map(i64::from), (!stderr.is_empty()).then_some(stderr.as_str()));
+  record(
+    app,
+    operation,
+    logged_args,
+    success,
+    output.status.code().map(i64::from),
+    (!stderr.is_empty()).then_some(stderr.as_str()),
+  );
   if !success {
     if let Some(err) = classify_command_failure(&stderr) {
       return Err(err);
     }
     return Err(Error::CommandFailed(format!(
-      "sbx {args:?} exited with {:?}: {stderr}",
+      "sbx {logged_args:?} exited with {:?}: {stderr}",
       output.status.code(),
     )));
   }
@@ -448,6 +471,83 @@ pub async fn set_git_config<R: Runtime>(app: &AppHandle<R>, name: &str, key: &st
 
 fn git_config_exec_args(name: &str, key: &str, value: &str) -> Vec<String> {
   ["exec", "-d", name, "git", "config", "--global", key, value].map(String::from).to_vec()
+}
+
+const ENV_BLOCK_START: &str = "# overnight-env-start";
+const ENV_BLOCK_END: &str = "# overnight-env-end";
+
+/// Builds the `bash -c` script that rewrites the app-managed env-var block
+/// inside `file_path` (always `/etc/sandbox-persistent.sh` in production —
+/// parameterized only so tests can point it at a temp file). Pure and
+/// side-effect-free.
+///
+/// Rewrites via `awk` into a shell variable, then a single truncating `>`
+/// write — not `sed -i`. `sed -i` creates its own temp file in the
+/// *directory* containing the target and renames it into place, which
+/// needs write permission on that directory. Confirmed against a real
+/// `sbx` sandbox: `/etc` isn't writable by the sandbox user even though
+/// `/etc/sandbox-persistent.sh` itself is, so `sed -i` failed with
+/// "couldn't open temporary file /etc/sedXXXXXX: Permission denied". A
+/// truncating `>` only needs write permission on the existing file,
+/// matching the `>>` append `set_claude_default_permission_mode` already
+/// relies on.
+///
+/// Every line is written via `printf '%s\n' <quoted>` instead of a heredoc.
+/// The line that actually lands in the file (`export KEY='value'`) is
+/// built with `shell_quote` so the *value* survives that file being
+/// `source`d later unharmed; the whole line is then `shell_quote`d a
+/// second time so it survives being passed as one argument to `printf` in
+/// *this* script. Nesting `shell_quote` twice is the standard way to carry
+/// a value through two levels of shell parsing safely, regardless of what
+/// characters it contains.
+fn build_env_persist_script(vars: &[EnvVar], file_path: &str) -> String {
+  let quoted_path = shell_quote(file_path);
+
+  let mut script = format!(
+    "old=$(awk '/^{start}$/{{skip=1}} skip{{if(/^{end}$/){{skip=0}}; next}} {{print}}' {path} 2>/dev/null)\n",
+    start = ENV_BLOCK_START,
+    end = ENV_BLOCK_END,
+    path = quoted_path,
+  );
+  script.push_str("{\n");
+  script.push_str("  [ -n \"$old\" ] && printf '%s\\n' \"$old\"\n");
+  script.push_str(&format!("  printf '%s\\n' {}\n", shell_quote(ENV_BLOCK_START)));
+  for var in vars {
+    let line = format!("export {}={}", var.key, shell_quote(&var.value));
+    script.push_str(&format!("  printf '%s\\n' {}\n", shell_quote(&line)));
+  }
+  script.push_str(&format!("  printf '%s\\n' {}\n", shell_quote(ENV_BLOCK_END)));
+  script.push_str(&format!("}} > {}", quoted_path));
+  script
+}
+
+/// Replaces every value with a placeholder, keeping keys intact — used to
+/// build the version of the persist script that's safe to write to the
+/// command log (see `set_env_vars`). Keys stay visible: useful for "was
+/// FOO ever set on this sandbox?" without exposing what it was set to.
+fn redact_env_vars(vars: &[EnvVar]) -> Vec<EnvVar> {
+  vars.iter().map(|v| EnvVar { key: v.key.clone(), value: "********".to_string() }).collect()
+}
+
+/// Rewrites the sandbox's persisted environment variables. `vars` is
+/// expected to already be the merged result of global + project +
+/// sandbox-scoped vars (see commands.rs::merged_env_vars) — this function
+/// doesn't know about scopes, it just writes what it's given. Idempotent:
+/// safe to call again after edits or removals, unlike
+/// `set_claude_default_permission_mode`'s one-time append.
+pub async fn set_env_vars<R: Runtime>(app: &AppHandle<R>, name: &str, vars: &[EnvVar]) -> Result<()> {
+  let script = build_env_persist_script(vars, "/etc/sandbox-persistent.sh");
+  // The command log must never carry real values — build the same script
+  // with every value redacted, purely for logging (never executed).
+  let redacted_script = build_env_persist_script(&redact_env_vars(vars), "/etc/sandbox-persistent.sh");
+  run_with_logged_args(
+    app,
+    "Set sandbox environment variables",
+    &["exec", "-d", name, "bash", "-c", &script],
+    &["exec", "-d", name, "bash", "-c", &redacted_script],
+  )
+  .await?;
+  Ok(())
 }
 
 /// One persisted "branch snapshot" — the sandbox's currently checked-out
@@ -1866,6 +1966,109 @@ local    all          -        local-policy   -      default-fs-write-allow-all 
     let usage = compute_delta_usage(Some(&prev), current, t0);
     assert_eq!(usage.network_rx_kb_per_sec, 0.0);
     assert_eq!(usage.network_tx_kb_per_sec, 0.0);
+  }
+}
+
+#[cfg(test)]
+mod env_persist_tests {
+  use super::*;
+  use std::process::Command;
+
+  fn temp_persistent_file() -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("overnight-env-test-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("persistent.sh");
+    std::fs::write(&path, "").unwrap();
+    path
+  }
+
+  fn apply(vars: &[EnvVar], path: &std::path::Path) -> String {
+    let script = build_env_persist_script(vars, path.to_str().unwrap());
+    let status = Command::new("bash").arg("-c").arg(&script).status().unwrap();
+    assert!(status.success());
+    std::fs::read_to_string(path).unwrap()
+  }
+
+  fn sourced_value(contents: &str, key: &str) -> String {
+    let script = format!("{contents}\nprintf '%s' \"${key}\"");
+    let output = Command::new("bash").arg("-c").arg(&script).output().unwrap();
+    String::from_utf8(output.stdout).unwrap()
+  }
+
+  #[test]
+  fn writes_and_sources_a_value_with_quotes_and_spaces() {
+    let path = temp_persistent_file();
+    let vars = vec![EnvVar { key: "TOKEN".to_string(), value: "can't \"stop\" me".to_string() }];
+    let contents = apply(&vars, &path);
+    assert_eq!(sourced_value(&contents, "TOKEN"), "can't \"stop\" me");
+  }
+
+  #[test]
+  fn re_running_replaces_rather_than_duplicates() {
+    let path = temp_persistent_file();
+    apply(&[EnvVar { key: "A".to_string(), value: "1".to_string() }], &path);
+    let contents = apply(&[EnvVar { key: "A".to_string(), value: "2".to_string() }], &path);
+    assert_eq!(contents.matches("export A=").count(), 1);
+    assert_eq!(sourced_value(&contents, "A"), "2");
+  }
+
+  #[test]
+  fn removing_a_var_clears_it_on_next_apply() {
+    let path = temp_persistent_file();
+    apply(&[EnvVar { key: "A".to_string(), value: "1".to_string() }], &path);
+    let contents = apply(&[], &path);
+    assert!(!contents.contains("export A="));
+  }
+
+  #[test]
+  fn preserves_existing_file_content_outside_the_managed_block() {
+    let path = temp_persistent_file();
+    std::fs::write(&path, "export EXISTING=kept\n").unwrap();
+    let contents = apply(&[EnvVar { key: "NEW".to_string(), value: "1".to_string() }], &path);
+    assert!(contents.contains("export EXISTING=kept"));
+    assert!(contents.contains("export NEW='1'"));
+  }
+
+  // Reproduces a real failure seen against an actual sbx sandbox: the
+  // previous sed -i based implementation needs write access to the
+  // *containing directory* (to create its own temp file before renaming),
+  // which /etc isn't, even though /etc/sandbox-persistent.sh itself is.
+  #[cfg(unix)]
+  #[test]
+  fn works_when_the_containing_directory_is_not_writable() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = std::env::temp_dir().join(format!("overnight-env-test-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("persistent.sh");
+    std::fs::write(&path, "export EXISTING=kept\n").unwrap();
+
+    let mut perms = std::fs::metadata(&dir).unwrap().permissions();
+    perms.set_mode(0o555);
+    std::fs::set_permissions(&dir, perms).unwrap();
+
+    let contents = apply(&[EnvVar { key: "NEW".to_string(), value: "1".to_string() }], &path);
+
+    // Restore write permission so the temp dir can be cleaned up normally.
+    let mut restored = std::fs::metadata(&dir).unwrap().permissions();
+    restored.set_mode(0o755);
+    std::fs::set_permissions(&dir, restored).unwrap();
+
+    assert!(contents.contains("export EXISTING=kept"));
+    assert!(contents.contains("export NEW='1'"));
+  }
+
+  #[test]
+  fn redact_env_vars_keeps_keys_but_masks_values() {
+    let vars = vec![EnvVar { key: "TOKEN".to_string(), value: "super-secret".to_string() }];
+    let redacted = redact_env_vars(&vars);
+    assert_eq!(redacted[0].key, "TOKEN");
+    assert_eq!(redacted[0].value, "********");
+
+    let script = build_env_persist_script(&redacted, "/etc/sandbox-persistent.sh");
+    assert!(!script.contains("super-secret"));
+    assert!(script.contains("TOKEN"));
+    assert!(script.contains("********"));
   }
 }
 

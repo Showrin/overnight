@@ -6,7 +6,7 @@ use tauri::{AppHandle, Manager, State};
 use crate::daemon_log;
 use crate::db::error::{Error, Result};
 use crate::db::models::{
-  CommandLogEntry, ContainerMetric, HostMetric, JiraIssue, Project, Sandbox, SandboxBackup, Session, Task,
+  CommandLogEntry, ContainerMetric, EnvVar, HostMetric, JiraIssue, Project, Sandbox, SandboxBackup, Session, Task,
 };
 use crate::db::{
   backups, command_log, container_metrics, host_metrics, jira_issues, metrics, projects, sandboxes, sessions,
@@ -171,6 +171,152 @@ const CLAUDE_PERMISSION_MODE_KEY: &str = "default_claude_permission_mode";
 const DEFAULT_CLAUDE_PERMISSION_MODE: &str = "default";
 const VALID_PERMISSION_MODES: [&str; 4] = ["plan", "default", "acceptEdits", "bypassPermissions"];
 const SKILL_FOLDERS_KEY: &str = "skill_folders";
+const GLOBAL_ENV_VARS_KEY: &str = "global_env_vars";
+
+/// Env var names must be valid POSIX identifiers, and no two entries in
+/// one list may share a key — the UI enforces this too, but the backend
+/// is the source of truth since these values get written into a shell
+/// file (see sbx::set_env_vars).
+fn validate_env_vars(vars: &[EnvVar]) -> std::result::Result<(), String> {
+  let mut seen = std::collections::HashSet::new();
+  for var in vars {
+    let mut chars = var.key.chars();
+    let first_ok = matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_');
+    let rest_ok = chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if var.key.is_empty() || !first_ok || !rest_ok {
+      return Err(format!(
+        "invalid environment variable name: \"{}\" (must start with a letter or underscore and contain only letters, digits, and underscores)",
+        var.key
+      ));
+    }
+    if !seen.insert(var.key.clone()) {
+      return Err(format!("duplicate environment variable: {}", var.key));
+    }
+  }
+  Ok(())
+}
+
+#[tauri::command]
+pub fn get_global_env_vars(pool: State<DbPool>) -> std::result::Result<Vec<EnvVar>, String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  Ok(settings::get_json(&conn, GLOBAL_ENV_VARS_KEY).map_err(|e| e.to_string())?.unwrap_or_default())
+}
+
+#[tauri::command]
+pub async fn save_global_env_vars(app: AppHandle, pool: State<'_, DbPool>, vars: Vec<EnvVar>) -> std::result::Result<(), String> {
+  validate_env_vars(&vars)?;
+  let pool = pool.inner().clone();
+  {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    settings::set_json(&conn, GLOBAL_ENV_VARS_KEY, &vars).map_err(|e| e.to_string())?;
+  }
+  let all_sandboxes = {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    sandboxes::list(&conn).map_err(|e| e.to_string())?
+  };
+  push_env_vars_to_running_sandboxes(&app, &pool, &all_sandboxes).await;
+  Ok(())
+}
+
+#[tauri::command]
+pub fn get_project_env_vars(pool: State<DbPool>, project_id: String) -> std::result::Result<Vec<EnvVar>, String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  Ok(projects::get(&conn, &project_id).map_err(|e| e.to_string())?.env_vars)
+}
+
+#[tauri::command]
+pub async fn save_project_env_vars(
+  app: AppHandle,
+  pool: State<'_, DbPool>,
+  project_id: String,
+  vars: Vec<EnvVar>,
+) -> std::result::Result<Project, String> {
+  validate_env_vars(&vars)?;
+  let pool = pool.inner().clone();
+  let project = {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    projects::set_env_vars(&conn, &project_id, &vars).map_err(|e| e.to_string())?
+  };
+  let project_sandboxes = {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    sandboxes::list_for_project(&conn, &project_id).map_err(|e| e.to_string())?
+  };
+  push_env_vars_to_running_sandboxes(&app, &pool, &project_sandboxes).await;
+  Ok(project)
+}
+
+#[tauri::command]
+pub fn get_sandbox_env_vars(pool: State<DbPool>, id: String) -> std::result::Result<Vec<EnvVar>, String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  Ok(sandboxes::get(&conn, &id).map_err(|e| e.to_string())?.env_vars)
+}
+
+#[tauri::command]
+pub async fn save_sandbox_env_vars(
+  app: AppHandle,
+  pool: State<'_, DbPool>,
+  id: String,
+  vars: Vec<EnvVar>,
+) -> std::result::Result<Sandbox, String> {
+  validate_env_vars(&vars)?;
+  let pool = pool.inner().clone();
+  let sandbox = {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    sandboxes::set_env_vars(&conn, &id, &vars).map_err(|e| e.to_string())?
+  };
+  // A still-"starting" sandbox has no sbx_name yet — provision_sandbox
+  // will push the merged list once it's ready, so there's nothing to push
+  // right now.
+  if let Some(name) = &sandbox.sbx_name {
+    let merged = merged_env_vars(&pool, &sandbox.project_id, &sandbox.env_vars)?;
+    crate::sbx::set_env_vars(&app, name, &merged).await.map_err(|e| e.to_string())?;
+  }
+  Ok(sandbox)
+}
+
+/// Best-effort live push of merged env vars into every currently running
+/// sandbox in `sandboxes` — called after a global or project-scoped env
+/// var list changes, so already-running sandboxes pick up the change
+/// immediately instead of only sandboxes created afterward. A sandbox
+/// that isn't running yet (no `sbx_name`, or mid-stop) is skipped rather
+/// than failed — it'll get the current merged list from
+/// `provision_sandbox` (on create) or the next live edit anyway. One
+/// sandbox's push failing doesn't stop the others, mirroring
+/// `sync_git_identity`'s best-effort philosophy.
+async fn push_env_vars_to_running_sandboxes(app: &AppHandle, pool: &DbPool, targets: &[Sandbox]) {
+  for sandbox in targets {
+    if sandbox.status != "running" {
+      continue;
+    }
+    let Some(name) = &sandbox.sbx_name else { continue };
+    let merged = match merged_env_vars(pool, &sandbox.project_id, &sandbox.env_vars) {
+      Ok(merged) => merged,
+      Err(e) => {
+        log::warn!("push_env_vars_to_running_sandboxes: failed to compute merged vars for {}: {e}", sandbox.id);
+        continue;
+      }
+    };
+    if let Err(e) = crate::sbx::set_env_vars(app, name, &merged).await {
+      log::warn!("push_env_vars_to_running_sandboxes: failed to push env vars to {name}: {e}");
+    }
+  }
+}
+
+/// Merges global, project, and sandbox-scoped env vars into the single
+/// list actually pushed into a sandbox — sandbox-scoped wins over
+/// project-scoped, which wins over global, on a key collision.
+fn merged_env_vars(pool: &DbPool, project_id: &str, sandbox_vars: &[EnvVar]) -> std::result::Result<Vec<EnvVar>, String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  let global: Vec<EnvVar> = settings::get_json(&conn, GLOBAL_ENV_VARS_KEY).map_err(|e| e.to_string())?.unwrap_or_default();
+  let project = projects::get(&conn, project_id).map_err(|e| e.to_string())?.env_vars;
+  let mut merged: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+  for var in global.into_iter().chain(project).chain(sandbox_vars.iter().cloned()) {
+    merged.insert(var.key, var.value);
+  }
+  let mut result: Vec<EnvVar> = merged.into_iter().map(|(key, value)| EnvVar { key, value }).collect();
+  result.sort_by(|a, b| a.key.cmp(&b.key));
+  Ok(result)
+}
 
 #[derive(Serialize)]
 pub struct AppSettings {
@@ -935,17 +1081,22 @@ async fn provision_sandbox(
     .map_err(|e| e.to_string())?;
 
   // Independent once the sandbox is ready: git identity, the
-  // permission-mode alias, and port publishing/lookup. Run concurrently.
-  let (permission_result, host_port_result, ()) = tokio::join!(
+  // permission-mode alias, env vars, and port publishing/lookup. Run concurrently.
+  let (permission_result, host_port_result, env_result, ()) = tokio::join!(
     crate::sbx::set_claude_default_permission_mode(app, &name, &sandbox.permission_mode),
     async {
       crate::sbx::publish_port(app, &name, SANDBOX_PORT).await?;
       crate::sbx::host_port(app, &name, SANDBOX_PORT).await
     },
+    async {
+      let merged = merged_env_vars(pool, &project.id, &sandbox.env_vars)?;
+      crate::sbx::set_env_vars(app, &name, &merged).await.map_err(|e| e.to_string())
+    },
     sync_git_identity(app, &name),
   );
   permission_result.map_err(|e| e.to_string())?;
   let host_port = host_port_result.map_err(|e| e.to_string())?;
+  env_result?;
 
   let conn = pool.get().map_err(|e| e.to_string())?;
   sandboxes::update_status(&conn, &sandbox.id, "running", Some(&name), host_port.map(i64::from))
@@ -1110,6 +1261,58 @@ mod stop_sandbox_tests {
   }
 }
 
+#[cfg(test)]
+mod env_var_tests {
+  use super::*;
+  use r2d2_sqlite::SqliteConnectionManager;
+
+  fn test_pool() -> (DbPool, std::path::PathBuf) {
+    let path = std::env::temp_dir().join(format!("overnight-env-var-cmd-{}", uuid::Uuid::new_v4()));
+    let mut conn = rusqlite::Connection::open(&path).unwrap();
+    crate::db::migrations::migrations().to_latest(&mut conn).unwrap();
+    drop(conn);
+    let pool = r2d2::Pool::builder().max_size(2).build(SqliteConnectionManager::file(&path)).unwrap();
+    (pool, path)
+  }
+
+  fn ev(key: &str, value: &str) -> EnvVar {
+    EnvVar { key: key.to_string(), value: value.to_string() }
+  }
+
+  #[test]
+  fn validate_env_vars_rejects_bad_keys() {
+    assert!(validate_env_vars(&[ev("GOOD_KEY", "1")]).is_ok());
+    assert!(validate_env_vars(&[ev("_ok", "1")]).is_ok());
+    assert!(validate_env_vars(&[ev("1BAD", "x")]).is_err());
+    assert!(validate_env_vars(&[ev("bad key", "x")]).is_err());
+    assert!(validate_env_vars(&[ev("", "x")]).is_err());
+  }
+
+  #[test]
+  fn validate_env_vars_rejects_duplicates() {
+    let err = validate_env_vars(&[ev("A", "1"), ev("A", "2")]).unwrap_err();
+    assert!(err.contains("A"));
+  }
+
+  #[test]
+  fn merged_env_vars_lets_higher_scope_win() {
+    let (pool, path) = test_pool();
+    let conn = pool.get().unwrap();
+    let project = projects::create(&conn, "Overnight", "/repo", None, None).unwrap();
+    settings::set_json(&conn, GLOBAL_ENV_VARS_KEY, &vec![ev("SHARED", "global"), ev("ONLY_GLOBAL", "g")]).unwrap();
+    projects::set_env_vars(&conn, &project.id, &[ev("SHARED", "project"), ev("ONLY_PROJECT", "p")]).unwrap();
+    drop(conn);
+
+    let merged = merged_env_vars(&pool, &project.id, &[ev("SHARED", "sandbox")]).unwrap();
+    let get = |k: &str| merged.iter().find(|v| v.key == k).map(|v| v.value.clone());
+    assert_eq!(get("SHARED").as_deref(), Some("sandbox"));
+    assert_eq!(get("ONLY_GLOBAL").as_deref(), Some("g"));
+    assert_eq!(get("ONLY_PROJECT").as_deref(), Some("p"));
+
+    std::fs::remove_file(&path).ok();
+  }
+}
+
 #[tauri::command]
 pub async fn start_sandbox(app: AppHandle, pool: State<'_, DbPool>, id: String) -> std::result::Result<Sandbox, String> {
   let pool = pool.inner().clone();
@@ -1117,10 +1320,25 @@ pub async fn start_sandbox(app: AppHandle, pool: State<'_, DbPool>, id: String) 
     let conn = pool.get().map_err(|e| e.to_string())?;
     sandboxes::get(&conn, &id).map_err(|e| e.to_string())?
   };
-  let name = sandbox.sbx_name.ok_or_else(|| "sandbox has no sbx sandbox to start".to_string())?;
+  let name = sandbox.sbx_name.clone().ok_or_else(|| "sandbox has no sbx sandbox to start".to_string())?;
 
   check_free_memory()?;
   crate::sbx::resume(&app, &name).map_err(|e| e.to_string())?;
+
+  // A stopped sandbox can't be `exec`'d into, so env var edits made while
+  // it was stopped never reached it — push the current merged list now
+  // that it's running again, same as a fresh create does in
+  // provision_sandbox. Best-effort end to end: `sbx resume` above already
+  // succeeded, so neither computing the merge nor pushing it should be
+  // able to block the sandbox from coming back up / the DB status update.
+  match merged_env_vars(&pool, &sandbox.project_id, &sandbox.env_vars) {
+    Ok(merged) => {
+      if let Err(e) = crate::sbx::set_env_vars(&app, &name, &merged).await {
+        log::warn!("start_sandbox: failed to push env vars to {name}: {e}");
+      }
+    }
+    Err(e) => log::warn!("start_sandbox: failed to compute merged env vars for {name}: {e}"),
+  }
 
   let conn = pool.get().map_err(|e| e.to_string())?;
   sandboxes::update_status(&conn, &id, "running", None, None).map_err(|e| e.to_string())
