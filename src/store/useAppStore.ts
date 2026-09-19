@@ -25,6 +25,7 @@ interface AppStore {
   defaultTerminalHost: string
   defaultAgent: string
   networkPolicyPreset: string | null
+  highlightNetworkPreset: boolean
   hostStats: HostMetric | null
   hostStatsHistory: HostMetric[]
   backupIntervalMinutes: number
@@ -43,6 +44,7 @@ interface AppStore {
   loadDefaultAgent: () => Promise<void>
   saveDefaultAgent: (agent: string) => Promise<void>
   loadNetworkPolicyPreset: () => Promise<void>
+  setHighlightNetworkPreset: (value: boolean) => void
   loadHostStatsHistory: () => Promise<void>
   loadHostStats: () => Promise<void>
   loadBackupIntervalMinutes: () => Promise<void>
@@ -61,6 +63,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   defaultTerminalHost: 'cmd',
   defaultAgent: 'claude',
   networkPolicyPreset: null,
+  highlightNetworkPreset: false,
   hostStats: null,
   hostStatsHistory: [],
   backupIntervalMinutes: 15,
@@ -135,6 +138,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
   async loadNetworkPolicyPreset() {
     const policy = await invoke<NetworkPolicySettings>('get_network_policy_settings')
     set({ networkPolicyPreset: policy.preset })
+  },
+
+  setHighlightNetworkPreset(value) {
+    set({ highlightNetworkPreset: value })
   },
 
   async loadHostStatsHistory() {

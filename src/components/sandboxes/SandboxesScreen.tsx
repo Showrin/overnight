@@ -9,6 +9,7 @@ import { BranchDiffPage } from './BranchDiffPage'
 import { BranchesPage } from './BranchesPage'
 import { CreateSandboxDialog } from './CreateSandboxDialog'
 import { HostStatsPanel } from './HostStatsPanel'
+import { NetworkPolicyRequiredDialog } from './NetworkPolicyRequiredDialog'
 import { SandboxCard } from './SandboxCard'
 import { SandboxDetailScreen } from './SandboxDetailScreen'
 import type { Sandbox } from './types'
@@ -85,9 +86,20 @@ export function SandboxesScreen({
   const sandboxes = useAppStore((s) => s.sandboxes)
   const projects = useAppStore((s) => s.projects)
   const loadSandboxes = useAppStore((s) => s.loadSandboxes)
+  const networkPolicyPreset = useAppStore((s) => s.networkPolicyPreset)
+  const setHighlightNetworkPreset = useAppStore((s) => s.setHighlightNetworkPreset)
   const [sbxError, setSbxError] = useState<string | null>(null)
   const [checkingSbx, setCheckingSbx] = useState(true)
   const [creatingForProjectId, setCreatingForProjectId] = useState<string | null>(null)
+  const [networkPolicyGateOpen, setNetworkPolicyGateOpen] = useState(false)
+
+  function handleAddNew(projectId: string) {
+    if (networkPolicyPreset === null) {
+      setNetworkPolicyGateOpen(true)
+      return
+    }
+    setCreatingForProjectId(projectId)
+  }
 
   async function checkSbx() {
     setCheckingSbx(true)
@@ -174,6 +186,19 @@ export function SandboxesScreen({
           </DialogContent>
         </Dialog>
 
+        <Dialog open={networkPolicyGateOpen} onOpenChange={setNetworkPolicyGateOpen}>
+          <DialogContent title="Network policy required">
+            <NetworkPolicyRequiredDialog
+              onCancel={() => setNetworkPolicyGateOpen(false)}
+              onGoToSettings={() => {
+                setNetworkPolicyGateOpen(false);
+                setHighlightNetworkPreset(true);
+                navigate({ screen: 'settings', settingsTab: 'network' });
+              }}
+            />
+          </DialogContent>
+        </Dialog>
+
         {projects.length === 0 && (
           <p className="text-sm text-muted-foreground">
             Create a project first, then start a sandbox for it.
@@ -201,7 +226,7 @@ export function SandboxesScreen({
               title={project.name}
               projectName={project.name}
               sandboxes={projectSandboxes}
-              onAddNew={() => setCreatingForProjectId(project.id)}
+              onAddNew={() => handleAddNew(project.id)}
               addNewDisabledReason={addNewDisabledReason}
               onChanged={loadSandboxes}
               onSelect={onSelect}

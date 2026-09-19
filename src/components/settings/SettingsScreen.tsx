@@ -38,6 +38,9 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
   const saveBackupIntervalMinutes = useAppStore((s) => s.saveBackupIntervalMinutes)
   const autoBackupEnabled = useAppStore((s) => s.autoBackupEnabled)
   const saveAutoBackupEnabled = useAppStore((s) => s.saveAutoBackupEnabled)
+  const loadNetworkPolicyPreset = useAppStore((s) => s.loadNetworkPolicyPreset)
+  const highlightNetworkPreset = useAppStore((s) => s.highlightNetworkPreset)
+  const setHighlightNetworkPreset = useAppStore((s) => s.setHighlightNetworkPreset)
 
   const savedPermissionMode = settings?.default_claude_permission_mode ?? 'default'
   const savedSkillFolders = settings?.skill_folders ?? []
@@ -251,6 +254,7 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
     try {
       await invoke('save_default_network_policy_preset', { preset: networkPreset })
       setSavedNetworkPreset(networkPreset)
+      await loadNetworkPolicyPreset()
     } catch (e) {
       setNetworkError(String(e))
     } finally {
@@ -498,6 +502,8 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
             confirmingPresetChange={confirmingPresetChange}
             setConfirmingPresetChange={setConfirmingPresetChange}
             onConfirmNetworkPresetChange={confirmNetworkPresetChange}
+            highlightPreset={highlightNetworkPreset}
+            onHighlightPresetShown={() => setHighlightNetworkPreset(false)}
           />
         </TabsContent>
 

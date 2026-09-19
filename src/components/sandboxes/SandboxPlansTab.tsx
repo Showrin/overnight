@@ -13,14 +13,14 @@ import type { PlanFile, Sandbox } from './types'
 // the only place in the app that renders arbitrary markdown, so adding one
 // just for this wasn't worth it.
 const MARKDOWN_CLASS =
-  'flex flex-col gap-4 text-sm text-foreground/55 *:leading-[1.75] ' +
+  'flex flex-col gap-4 text-sm text-foreground/55 break-words *:leading-[1.75] ' +
   '[&_h1]:mt-6 [&_h1]:border-b [&_h1]:border-border [&_h1]:pb-2 [&_h1]:text-xl [&_h1]:font-semibold [&_h1]:text-foreground/75 [&_h1:first-child]:mt-0 ' +
   '[&_h2]:mt-5 [&_h2]:text-base [&_h2]:font-semibold [&_h2]:text-foreground/75 ' +
   '[&_h3]:mt-4 [&_h3]:text-sm [&_h3]:font-medium [&_h3]:text-foreground/75 ' +
   '[&_strong]:text-foreground/75 [&_b]:text-foreground/75 ' +
   '[&_ul]:list-disc [&_ul]:space-y-1 [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:space-y-1 [&_ol]:pl-5 ' +
   '[&_code]:rounded [&_code]:border [&_code]:border-[#d1977f21] [&_code]:bg-[color-mix(in_oklab,#d1977f5e_20%,transparent)] [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-xs [&_code]:text-[#d1977f] ' +
-  '[&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:border [&_pre]:border-border [&_pre]:border-l-2 [&_pre]:border-l-primary [&_pre]:bg-muted/30 [&_pre]:p-3 ' +
+  '[&_pre]:whitespace-pre-wrap [&_pre]:break-words [&_pre]:rounded-md [&_pre]:border [&_pre]:border-border [&_pre]:border-l-2 [&_pre]:border-l-primary [&_pre]:bg-muted/30 [&_pre]:p-3 ' +
   '[&_pre>code]:border-0 [&_pre>code]:bg-transparent [&_pre>code]:p-0 [&_pre>code]:text-foreground/80 ' +
   '[&_blockquote]:border-l-2 [&_blockquote]:border-primary [&_blockquote]:rounded-r-md [&_blockquote]:bg-primary/5 [&_blockquote]:py-1 [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground ' +
   '[&_table]:block [&_table]:w-full [&_table]:overflow-x-auto [&_table]:border-collapse [&_table]:text-left ' +

@@ -56,6 +56,7 @@ export function CreateSandboxDialog({
 }) {
   const projects = useAppStore((s) => s.projects)
   const sandboxes = useAppStore((s) => s.sandboxes)
+  const loadNetworkPolicyPreset = useAppStore((s) => s.loadNetworkPolicyPreset)
   const [projectId, setProjectId] = useState(defaultProjectId ?? projects[0]?.id ?? '')
   const [name, setName] = useState('')
   const [permissionMode, setPermissionMode] = useState('')
@@ -69,14 +70,17 @@ export function CreateSandboxDialog({
   const [pendingRuleDecision, setPendingRuleDecision] = useState<NetworkRuleDecision>('allow')
   const [pendingRuleHost, setPendingRuleHost] = useState('')
 
-  // Sourced from the polled store, not local state, so this survives a
-  // reload mid-creation instead of relying on `creating` alone.
+  // Sourced from the polled store, not local state. Gated on `!creating` so
+  // this dialog's own in-flight create — whose "starting" row the poll can
+  // pick up before our own invoke() resolves — isn't mistaken for a conflict.
   const hasActiveMount =
+    !creating &&
     mode === 'mount' &&
     sandboxes.some(
       (sb) => sb.project_id === projectId && sb.mode === 'mount' && (sb.status === 'starting' || sb.status === 'running')
     )
-  const hasStartingSandbox = sandboxes.some((sb) => sb.project_id === projectId && sb.status === 'starting')
+  const hasStartingSandbox =
+    !creating && sandboxes.some((sb) => sb.project_id === projectId && sb.status === 'starting')
 
   function addPendingNetworkRule() {
     const host = pendingRuleHost.trim()
@@ -126,6 +130,8 @@ export function CreateSandboxDialog({
       setError(message)
       if (message.includes("network policy hasn't been initialized")) {
         setNeedsPolicyInit(true)
+      } else {
+        notify('Sandbox failed to start', message)
       }
     } finally {
       setCreating(false)
@@ -138,6 +144,7 @@ export function CreateSandboxDialog({
     try {
       await invoke('init_sbx_policy', { preset })
       setNeedsPolicyInit(false)
+      await loadNetworkPolicyPreset()
       await handleCreate()
     } catch (e) {
       setError(String(e))

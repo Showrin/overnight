@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -24,6 +24,9 @@ interface NetworkTabProps {
   confirmingPresetChange: boolean
   setConfirmingPresetChange: (confirming: boolean) => void
   onConfirmNetworkPresetChange: () => void
+
+  highlightPreset: boolean
+  onHighlightPresetShown: () => void
 }
 
 export function NetworkTab({
@@ -38,8 +41,18 @@ export function NetworkTab({
   confirmingPresetChange,
   setConfirmingPresetChange,
   onConfirmNetworkPresetChange,
+  highlightPreset,
+  onHighlightPresetShown,
 }: NetworkTabProps) {
   const [ruleSearch, setRuleSearch] = useState('')
+
+  // Highlight is a one-shot cue from the "network policy required" dialog —
+  // clears itself so it doesn't linger if the user stays on this tab.
+  useEffect(() => {
+    if (!highlightPreset) return
+    const timer = setTimeout(onHighlightPresetShown, 2500)
+    return () => clearTimeout(timer)
+  }, [highlightPreset, onHighlightPresetShown])
 
   const query = ruleSearch.trim().toLowerCase()
   const visibleRules = query ? networkRules.filter((rule) => rule.host.toLowerCase().includes(query)) : networkRules
@@ -53,6 +66,7 @@ export function NetworkTab({
             ? 'Changing this may interrupt currently running sandboxes — sbx applies network policy presets machine-wide.'
             : 'sbx has no network policy configured on this machine yet. Choose a preset to enable creating sandboxes.'
         }
+        className={highlightPreset ? 'rounded-lg ring-2 ring-primary' : undefined}
       >
         <Select value={networkPreset} onValueChange={setNetworkPreset}>
           <SelectTrigger className="max-w-sm">

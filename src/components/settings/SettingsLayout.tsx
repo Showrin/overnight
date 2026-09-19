@@ -15,15 +15,17 @@ export function SettingsRow({
   label,
   description,
   divider = true,
+  className,
   children,
 }: {
   label: string
   description?: ReactNode
   divider?: boolean
+  className?: string
   children: ReactNode
 }) {
   return (
-    <div className={cn('flex flex-col gap-3 py-5 @2xl:flex-row @2xl:gap-8', divider && 'border-b border-border')}>
+    <div className={cn('flex flex-col gap-3 py-5 @2xl:flex-row @2xl:gap-8', divider && 'border-b border-border', className)}>
       <div className="flex flex-col gap-1 @2xl:w-64 @2xl:shrink-0">
         <span className="text-sm font-medium text-foreground">{label}</span>
         {description && <span className="text-xs text-muted-foreground">{description}</span>}
