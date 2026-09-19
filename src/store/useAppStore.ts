@@ -23,6 +23,7 @@ interface AppStore {
   settings: AppSettings | null
   platform: string | null
   defaultTerminalHost: string
+  defaultAgent: string
   networkPolicyPreset: string | null
   hostStats: HostMetric | null
   hostStatsHistory: HostMetric[]
@@ -39,6 +40,8 @@ interface AppStore {
   loadPlatform: () => Promise<void>
   loadDefaultTerminalHost: () => Promise<void>
   saveDefaultTerminalHost: (terminalHost: string) => Promise<void>
+  loadDefaultAgent: () => Promise<void>
+  saveDefaultAgent: (agent: string) => Promise<void>
   loadNetworkPolicyPreset: () => Promise<void>
   loadHostStatsHistory: () => Promise<void>
   loadHostStats: () => Promise<void>
@@ -56,6 +59,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   settings: null,
   platform: null,
   defaultTerminalHost: 'cmd',
+  defaultAgent: 'claude',
   networkPolicyPreset: null,
   hostStats: null,
   hostStatsHistory: [],
@@ -112,6 +116,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
   async saveDefaultTerminalHost(terminalHost) {
     await invoke('save_default_terminal_host', { terminalHost })
     set({ defaultTerminalHost: terminalHost })
+  },
+
+  async loadDefaultAgent() {
+    const agent = await invoke<string>('get_default_agent')
+    set({ defaultAgent: agent })
+  },
+
+  async saveDefaultAgent(agent) {
+    await invoke('save_default_agent', { agent })
+    set({ defaultAgent: agent })
   },
 
   // Only the preset is cached here for SandboxCard's "effective preset"
@@ -183,6 +197,7 @@ export function initAppStore() {
   useAppStore.getState().loadSettings()
   useAppStore.getState().loadPlatform()
   useAppStore.getState().loadDefaultTerminalHost()
+  useAppStore.getState().loadDefaultAgent()
   useAppStore.getState().loadNetworkPolicyPreset()
   useAppStore.getState().loadHostStatsHistory()
   useAppStore.getState().loadBackupIntervalMinutes()

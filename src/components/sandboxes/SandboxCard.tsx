@@ -242,7 +242,7 @@ export function SandboxCard({
           <p className="text-xs">Last backup: {formatRelativeTime(sandbox.last_backup_at)}</p>
         )}
 
-        <SandboxActions sandbox={sandbox} projectName={projectName} onChanged={onChanged} />
+        <SandboxActions sandbox={sandbox} projectName={projectName} onChanged={onChanged} context="card" />
       </CardContent>
     </Card>
   );

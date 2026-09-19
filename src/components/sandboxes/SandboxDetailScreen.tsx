@@ -76,7 +76,7 @@ export function SandboxDetailScreen({
         {sandbox.sbx_name && <p className="text-xs text-muted-foreground">{sandbox.sbx_name}</p>}
       </div>
 
-      <SandboxActions sandbox={sandbox} projectName={project?.name ?? 'Sandbox'} onChanged={loadSandboxes} />
+      <SandboxActions sandbox={sandbox} projectName={project?.name ?? 'Sandbox'} onChanged={loadSandboxes} context="detail" />
 
       <div className="flex gap-4 border-b border-border">
         <button

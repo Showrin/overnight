@@ -1,25 +1,23 @@
 import { useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { Check, ChevronsUpDown, Code, Loader2, Play, Square, TerminalSquare } from 'lucide-react'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { ChevronsUpDown, Code, Loader2, Play, Square, TerminalSquare } from 'lucide-react'
 import type { Route } from '@/lib/router'
 import { notify } from '@/lib/notify'
-import { TERMINAL_HOSTS, TERMINAL_HOST_LABELS } from '@/lib/terminalHost'
+import { AGENT_LABELS, type Agent } from '@/lib/agentHost'
 import { useAppStore } from '@/store/useAppStore'
 import type { Sandbox } from './types'
 
 const MAX_VISIBLE = 4
 
-type BusyAction = 'start' | 'stop' | 'vscode' | 'terminal' | null
+type BusyAction = 'start' | 'stop' | 'vscode' | 'agent' | null
 
 export function SidebarSandboxList({ onNavigate }: { onNavigate: (route: Route) => void }) {
   const sandboxes = useAppStore((s) => s.sandboxes)
   const projects = useAppStore((s) => s.projects)
   const loadSandboxes = useAppStore((s) => s.loadSandboxes)
   const platform = useAppStore((s) => s.platform)
-  const defaultTerminalHost = useAppStore((s) => s.defaultTerminalHost)
+  const defaultAgent = useAppStore((s) => s.defaultAgent)
   const [busy, setBusy] = useState<{ id: string; action: BusyAction } | null>(null)
-  const [terminalMenuSandboxId, setTerminalMenuSandboxId] = useState<string | null>(null)
 
   async function run(sandbox: Sandbox, action: Exclude<BusyAction, null>, invoker: () => Promise<unknown>) {
     setBusy({ id: sandbox.id, action })
@@ -82,57 +80,20 @@ export function SidebarSandboxList({ onNavigate }: { onNavigate: (route: Route) 
                     <Code className="size-3" strokeWidth={1.5} />
                   )}
                 </button>
-                {platform === 'windows' ? (
-                  <Popover
-                    open={terminalMenuSandboxId === sandbox.id}
-                    onOpenChange={(open) => setTerminalMenuSandboxId(open ? sandbox.id : null)}
-                  >
-                    <PopoverTrigger asChild>
-                      <button
-                        type="button"
-                        aria-label="Open terminal"
-                        title="Open terminal"
-                        disabled={isBusy}
-                        className="flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
-                      >
-                        {isBusy && busy?.action === 'terminal' ? (
-                          <Loader2 className="size-3 animate-spin" />
-                        ) : (
-                          <TerminalSquare className="size-3" strokeWidth={1.5} />
-                        )}
-                      </button>
-                    </PopoverTrigger>
-                    <PopoverContent align="start" className="flex flex-col gap-0.5">
-                      {TERMINAL_HOSTS.map((host) => (
-                        <button
-                          key={host}
-                          type="button"
-                          onClick={() => {
-                            setTerminalMenuSandboxId(null)
-                            run(sandbox, 'terminal', () =>
-                              invoke('open_sandbox_terminal', { id: sandbox.id, terminalHost: host }),
-                            )
-                          }}
-                          className="flex w-full items-center justify-between gap-4 rounded-md px-2 py-1.5 text-left text-sm outline-none hover:bg-accent hover:text-accent-foreground"
-                        >
-                          {TERMINAL_HOST_LABELS[host]}
-                          {host === defaultTerminalHost && <Check className="size-3.5" />}
-                        </button>
-                      ))}
-                    </PopoverContent>
-                  </Popover>
-                ) : (
+                {platform === 'windows' && (
                   <button
                     type="button"
-                    aria-label="Open terminal"
-                    title="Open terminal"
+                    aria-label={`Run ${AGENT_LABELS[defaultAgent as Agent] ?? defaultAgent}`}
+                    title={`Run ${AGENT_LABELS[defaultAgent as Agent] ?? defaultAgent}`}
                     disabled={isBusy}
                     onClick={() =>
-                      run(sandbox, 'terminal', () => invoke('open_sandbox_terminal', { id: sandbox.id }))
+                      run(sandbox, 'agent', () =>
+                        invoke('open_sandbox_agent', { id: sandbox.id, agent: defaultAgent }),
+                      )
                     }
                     className="flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
                   >
-                    {isBusy && busy?.action === 'terminal' ? (
+                    {isBusy && busy?.action === 'agent' ? (
                       <Loader2 className="size-3 animate-spin" />
                     ) : (
                       <TerminalSquare className="size-3" strokeWidth={1.5} />

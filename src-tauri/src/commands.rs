@@ -765,6 +765,51 @@ pub fn save_default_terminal_host(pool: State<DbPool>, terminal_host: String) ->
   settings::set(&conn, SANDBOX_TERMINAL_HOST_KEY, &terminal_host).map_err(|e| e.to_string())
 }
 
+const SANDBOX_AGENT_KEY: &str = "default_agent";
+const DEFAULT_AGENT: &str = "claude";
+
+/// Agent id -> the token `sbx run --name <name> <token>` expects. Add an
+/// entry here (and to the frontend's AGENTS list) to support a new agent.
+const AGENTS: [(&str, &str); 1] = [("claude", "claude")];
+
+fn agent_cli_token(agent: &str) -> Option<&'static str> {
+  AGENTS.iter().find(|(id, _)| *id == agent).map(|(_, token)| *token)
+}
+
+#[tauri::command]
+pub fn get_default_agent(pool: State<DbPool>) -> std::result::Result<String, String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  Ok(
+    settings::get(&conn, SANDBOX_AGENT_KEY)
+      .map_err(|e| e.to_string())?
+      .unwrap_or_else(|| DEFAULT_AGENT.to_string()),
+  )
+}
+
+#[tauri::command]
+pub fn save_default_agent(pool: State<DbPool>, agent: String) -> std::result::Result<(), String> {
+  if agent_cli_token(&agent).is_none() {
+    return Err(format!("invalid agent: {agent}"));
+  }
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  settings::set(&conn, SANDBOX_AGENT_KEY, &agent).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod agent_cli_token_tests {
+  use super::*;
+
+  #[test]
+  fn known_agent_returns_its_token() {
+    assert_eq!(agent_cli_token("claude"), Some("claude"));
+  }
+
+  #[test]
+  fn unknown_agent_returns_none() {
+    assert_eq!(agent_cli_token("codex"), None);
+  }
+}
+
 const DAEMON_LOG_PATH_KEY: &str = "daemon_log_path";
 
 /// Developer > Telemetry page. Falls back to `daemon_log::default_path()`
@@ -2612,6 +2657,54 @@ pub fn open_sandbox_terminal(
     let result = std::process::Command::new("x-terminal-emulator").arg("-e").arg(&script).spawn();
     log_spawn_result(&pool, "Open sandbox terminal", "x-terminal-emulator", &["-e".to_string(), script], &result);
     result.map_err(|e| e.to_string())?;
+  }
+
+  Ok(())
+}
+
+#[tauri::command]
+pub fn open_sandbox_agent(
+  pool: State<DbPool>,
+  id: String,
+  agent: String,
+) -> std::result::Result<(), String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  let sandbox = sandboxes::get(&conn, &id).map_err(|e| e.to_string())?;
+  let name = sandbox.sbx_name.ok_or_else(|| "sandbox isn't running".to_string())?;
+  if agent_cli_token(&agent).is_none() {
+    return Err(format!("invalid agent: {agent}"));
+  }
+
+  #[cfg(target_os = "windows")]
+  {
+    // Always PowerShell, unlike open_sandbox_terminal — this button has no
+    // cmd/powershell preference of its own. No agent name on the command —
+    // a sandbox is bound to the one agent it was created with, so `sbx run`
+    // already knows which one to attach to.
+    let wt_args: Vec<String> = ["-w", "0", "new-tab", "-p", "PowerShell", "--", "sbx", "run", "--name", name.as_str()]
+      .map(String::from)
+      .to_vec();
+    let wt_result = std::process::Command::new("wt.exe").args(&wt_args).spawn();
+    let wt_spawned = wt_result.is_ok();
+    log_spawn_result(&pool, "Open sandbox agent", "wt.exe", &wt_args, &wt_result);
+
+    if !wt_spawned {
+      let fallback_args: Vec<String> = vec![
+        "/C".to_string(),
+        "start".to_string(),
+        "powershell".to_string(),
+        "-NoExit".to_string(),
+        "-Command".to_string(),
+        format!("sbx run --name {name}"),
+      ];
+      let fallback_result = std::process::Command::new("cmd").args(&fallback_args).spawn();
+      log_spawn_result(&pool, "Open sandbox agent", "cmd", &fallback_args, &fallback_result);
+      fallback_result.map_err(|e| e.to_string())?;
+    }
+  }
+  #[cfg(not(target_os = "windows"))]
+  {
+    let _ = &name;
   }
 
   Ok(())
