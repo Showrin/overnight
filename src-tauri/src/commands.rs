@@ -6,7 +6,8 @@ use tauri::{AppHandle, Manager, State};
 use crate::daemon_log;
 use crate::db::error::{Error, Result};
 use crate::db::models::{
-  CommandLogEntry, ContainerMetric, EnvVar, HostMetric, JiraIssue, Project, Sandbox, SandboxBackup, Session, Task,
+  CommandLogEntry, ContainerMetric, EnvVar, HostMetric, JiraIssue, Project, Sandbox, SandboxBackup, Secret, SecretSource,
+  SecretTarget, Session, Task,
 };
 use crate::db::{
   backups, command_log, container_metrics, host_metrics, jira_issues, metrics, projects, sandboxes, sessions,
@@ -172,6 +173,15 @@ const DEFAULT_CLAUDE_PERMISSION_MODE: &str = "default";
 const VALID_PERMISSION_MODES: [&str; 4] = ["plan", "default", "acceptEdits", "bypassPermissions"];
 const SKILL_FOLDERS_KEY: &str = "skill_folders";
 const GLOBAL_ENV_VARS_KEY: &str = "global_env_vars";
+const GLOBAL_SECRETS_KEY: &str = "global_secrets";
+
+/// Every service identifier `sbx secret set` recognizes (from the `sbx
+/// secret set` CLI reference's "Available services" line). A service
+/// secret's `target.service` must be one of these — `sbx` interprets
+/// anything else as invalid.
+const KNOWN_SECRET_SERVICES: &[&str] = &[
+  "anthropic", "copilot", "cursor", "devin", "droid", "github", "google", "groq", "mistral", "nebius", "openai", "openrouter", "xai",
+];
 
 /// Env var names must be valid POSIX identifiers, and no two entries in
 /// one list may share a key — the UI enforces this too, but the backend
@@ -180,10 +190,7 @@ const GLOBAL_ENV_VARS_KEY: &str = "global_env_vars";
 fn validate_env_vars(vars: &[EnvVar]) -> std::result::Result<(), String> {
   let mut seen = std::collections::HashSet::new();
   for var in vars {
-    let mut chars = var.key.chars();
-    let first_ok = matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_');
-    let rest_ok = chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
-    if var.key.is_empty() || !first_ok || !rest_ok {
+    if !is_valid_identifier(&var.key) {
       return Err(format!(
         "invalid environment variable name: \"{}\" (must start with a letter or underscore and contain only letters, digits, and underscores)",
         var.key
@@ -191,6 +198,62 @@ fn validate_env_vars(vars: &[EnvVar]) -> std::result::Result<(), String> {
     }
     if !seen.insert(var.key.clone()) {
       return Err(format!("duplicate environment variable: {}", var.key));
+    }
+  }
+  Ok(())
+}
+
+fn is_valid_identifier(s: &str) -> bool {
+  let mut chars = s.chars();
+  let first_ok = matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_');
+  first_ok && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Validates one secret's shape, independent of scope. A custom
+/// secret's `env` becomes a real env var name inside the sandbox (see
+/// `secrets_as_env_vars`), so it follows the same identifier rule as
+/// `validate_env_vars`; its `hosts` must be non-empty, with no entry
+/// containing whitespace. A service secret's name must be one `sbx`
+/// actually recognizes. A custom secret's `source` must carry a
+/// non-empty value/reference/command — a service secret's literal value
+/// may be empty (see `register_secrets`'s doc comment on why that skips
+/// `sbx` instead of sending an empty value), but a reference or command
+/// still can't be, for either target, since there's nothing to resolve.
+/// No two entries in one list may share a `key()`.
+fn validate_secrets(secrets: &[Secret]) -> std::result::Result<(), String> {
+  let mut seen = std::collections::HashSet::new();
+  for secret in secrets {
+    match &secret.target {
+      SecretTarget::Service { service } => {
+        if !KNOWN_SECRET_SERVICES.contains(&service.as_str()) {
+          return Err(format!("unknown secret service: \"{service}\" (must be one of {KNOWN_SECRET_SERVICES:?})"));
+        }
+      }
+      SecretTarget::Custom { env, hosts, .. } => {
+        if !is_valid_identifier(env) {
+          return Err(format!(
+            "invalid secret env var name: \"{env}\" (must start with a letter or underscore and contain only letters, digits, and underscores)"
+          ));
+        }
+        if hosts.is_empty() || hosts.iter().any(|h| h.is_empty() || h.chars().any(|c| c.is_whitespace())) {
+          return Err(format!("secret \"{env}\" needs at least one host, with no whitespace"));
+        }
+      }
+    }
+    match (&secret.target, &secret.source) {
+      (SecretTarget::Custom { .. }, SecretSource::Value { value }) if value.is_empty() => {
+        return Err(format!("secret \"{}\": value can't be empty", secret.key()))
+      }
+      (_, SecretSource::Reference { reference, .. }) if reference.is_empty() => {
+        return Err(format!("secret \"{}\": reference can't be empty", secret.key()))
+      }
+      (_, SecretSource::Command { command, .. }) if command.is_empty() => {
+        return Err(format!("secret \"{}\": command can't be empty", secret.key()))
+      }
+      _ => {}
+    }
+    if !seen.insert(secret.key().to_string()) {
+      return Err(format!("duplicate secret: {}", secret.key()));
     }
   }
   Ok(())
@@ -268,31 +331,33 @@ pub async fn save_sandbox_env_vars(
   // will push the merged list once it's ready, so there's nothing to push
   // right now.
   if let Some(name) = &sandbox.sbx_name {
-    let merged = merged_env_vars(&pool, &sandbox.project_id, &sandbox.env_vars)?;
+    let merged = full_env_vars_for_sandbox(&pool, &sandbox.project_id, &sandbox)?;
     crate::sbx::set_env_vars(&app, name, &merged).await.map_err(|e| e.to_string())?;
   }
   Ok(sandbox)
 }
 
-/// Best-effort live push of merged env vars into every currently running
-/// sandbox in `sandboxes` — called after a global or project-scoped env
-/// var list changes, so already-running sandboxes pick up the change
-/// immediately instead of only sandboxes created afterward. A sandbox
-/// that isn't running yet (no `sbx_name`, or mid-stop) is skipped rather
-/// than failed — it'll get the current merged list from
-/// `provision_sandbox` (on create) or the next live edit anyway. One
-/// sandbox's push failing doesn't stop the others, mirroring
-/// `sync_git_identity`'s best-effort philosophy.
+/// Best-effort live push of every env var that belongs in a sandbox
+/// right now — its own plain env vars plus every custom secret's
+/// placeholder (see `full_env_vars_for_sandbox`) — into every currently
+/// running sandbox in `targets`. Called after a global or project-scoped
+/// env var *or secret* list changes, so already-running sandboxes pick
+/// up the change immediately instead of only sandboxes created
+/// afterward. A sandbox that isn't running yet is skipped rather than
+/// failed — it'll get the current list from `provision_sandbox` (on
+/// create) or the next live edit anyway. One sandbox's push failing
+/// doesn't stop the others, mirroring `sync_git_identity`'s best-effort
+/// philosophy.
 async fn push_env_vars_to_running_sandboxes(app: &AppHandle, pool: &DbPool, targets: &[Sandbox]) {
   for sandbox in targets {
     if sandbox.status != "running" {
       continue;
     }
     let Some(name) = &sandbox.sbx_name else { continue };
-    let merged = match merged_env_vars(pool, &sandbox.project_id, &sandbox.env_vars) {
+    let merged = match full_env_vars_for_sandbox(pool, &sandbox.project_id, sandbox) {
       Ok(merged) => merged,
       Err(e) => {
-        log::warn!("push_env_vars_to_running_sandboxes: failed to compute merged vars for {}: {e}", sandbox.id);
+        log::warn!("push_env_vars_to_running_sandboxes: failed to compute env vars for {}: {e}", sandbox.id);
         continue;
       }
     };
@@ -316,6 +381,311 @@ fn merged_env_vars(pool: &DbPool, project_id: &str, sandbox_vars: &[EnvVar]) -> 
   let mut result: Vec<EnvVar> = merged.into_iter().map(|(key, value)| EnvVar { key, value }).collect();
   result.sort_by(|a, b| a.key.cmp(&b.key));
   Ok(result)
+}
+
+#[tauri::command]
+pub fn get_global_secrets(pool: State<DbPool>) -> std::result::Result<Vec<Secret>, String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  // Tolerates a value stored in an older shape (e.g. from before `Secret`
+  // gained `target`/`source`) as if nothing were stored at all, rather
+  // than failing outright — the same resilience `row_to_project`/
+  // `row_to_sandbox` already give `env_vars`/`secrets` read off a row.
+  Ok(settings::get_json(&conn, GLOBAL_SECRETS_KEY).ok().flatten().unwrap_or_default())
+}
+
+#[tauri::command]
+pub async fn save_global_secrets(app: AppHandle, pool: State<'_, DbPool>, secrets: Vec<Secret>) -> std::result::Result<(), String> {
+  validate_secrets(&secrets)?;
+  let pool = pool.inner().clone();
+  let previous: Vec<Secret> = {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    // See get_global_secrets's doc comment on why a parse failure here
+    // degrades to empty instead of failing the save outright.
+    settings::get_json(&conn, GLOBAL_SECRETS_KEY).ok().flatten().unwrap_or_default()
+  };
+  // Drop what this save removed before re-setting what it kept: a secret
+  // this list no longer carries has to leave sbx's store too, not just
+  // ours.
+  let resolved = resolve_secret_placeholders(&previous, &secrets);
+  let removed = removed_secrets(&previous, &resolved);
+  remove_secrets_from_sbx(&app, &removed, None).await;
+  // The native global form (`sbx secret set-custom`, no --sandbox) is the
+  // primary effect of this save, so unlike the "also push live to other
+  // already-running sandboxes" step below, a failure here must reach the
+  // caller rather than being logged and swallowed.
+  register_secrets(&app, &resolved, None).await?;
+  {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    settings::set_json(&conn, GLOBAL_SECRETS_KEY, &resolved).map_err(|e| e.to_string())?;
+  }
+  // Proxy awareness is automatic for a global secret, but exporting a
+  // custom secret's placeholder as an actual env var inside a sandbox is
+  // not — push the combined env var list to every running sandbox so an
+  // edit here takes effect immediately, same UX as env vars.
+  let all_sandboxes = {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    sandboxes::list(&conn).map_err(|e| e.to_string())?
+  };
+  push_env_vars_to_running_sandboxes(&app, &pool, &all_sandboxes).await;
+  Ok(())
+}
+
+#[tauri::command]
+pub fn get_project_secrets(pool: State<DbPool>, project_id: String) -> std::result::Result<Vec<Secret>, String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  Ok(projects::get(&conn, &project_id).map_err(|e| e.to_string())?.secrets)
+}
+
+#[tauri::command]
+pub async fn save_project_secrets(
+  app: AppHandle,
+  pool: State<'_, DbPool>,
+  project_id: String,
+  secrets: Vec<Secret>,
+) -> std::result::Result<Project, String> {
+  validate_secrets(&secrets)?;
+  let pool = pool.inner().clone();
+  let previous = {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    projects::get(&conn, &project_id).map_err(|e| e.to_string())?.secrets
+  };
+  // Resolved once at the project level — every sandbox in the project
+  // registers against this same list, so they all export the same
+  // placeholder for the same project secret (see
+  // resolve_secret_placeholders's doc comment).
+  let resolved = resolve_secret_placeholders(&previous, &secrets);
+  let project = {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    projects::set_secrets(&conn, &project_id, &resolved).map_err(|e| e.to_string())?
+  };
+  let removed = removed_secrets(&previous, &resolved);
+  let project_sandboxes = {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    sandboxes::list_for_project(&conn, &project_id).map_err(|e| e.to_string())?
+  };
+  // Project scope has no native registration in sbx — a project secret
+  // only ever reaches sbx via a --sandbox-scoped call to each sandbox in
+  // the project. Register/remove against each currently-running one
+  // (a sandbox not yet running gets the current list from
+  // provision_sandbox on create, or the next live edit) before pushing
+  // the combined env var list below.
+  for sandbox in project_sandboxes.iter().filter(|s| s.status == "running" && s.sbx_name.is_some()) {
+    let name = sandbox.sbx_name.as_deref().unwrap();
+    remove_secrets_from_sbx(&app, &removed, Some(name)).await;
+    register_secrets(&app, &resolved, Some(name)).await?;
+  }
+  push_env_vars_to_running_sandboxes(&app, &pool, &project_sandboxes).await;
+  Ok(project)
+}
+
+#[tauri::command]
+pub fn get_sandbox_secrets(pool: State<DbPool>, id: String) -> std::result::Result<Vec<Secret>, String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  Ok(sandboxes::get(&conn, &id).map_err(|e| e.to_string())?.secrets)
+}
+
+#[tauri::command]
+pub async fn save_sandbox_secrets(
+  app: AppHandle,
+  pool: State<'_, DbPool>,
+  id: String,
+  secrets: Vec<Secret>,
+) -> std::result::Result<Sandbox, String> {
+  validate_secrets(&secrets)?;
+  let pool = pool.inner().clone();
+  let previous = {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    sandboxes::get(&conn, &id).map_err(|e| e.to_string())?.secrets
+  };
+  let resolved = resolve_secret_placeholders(&previous, &secrets);
+  let sandbox = {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    sandboxes::set_secrets(&conn, &id, &resolved).map_err(|e| e.to_string())?
+  };
+  // Same "nothing to push yet" case as save_sandbox_env_vars: a
+  // still-"starting" sandbox has no sbx_name, provision_sandbox registers
+  // and pushes once it's ready.
+  if let Some(name) = &sandbox.sbx_name {
+    remove_secrets_from_sbx(&app, &removed_secrets(&previous, &sandbox.secrets), Some(name)).await;
+    // Direct target of this save — a registration failure must reach
+    // the caller, same reasoning as save_sandbox_env_vars's
+    // crate::sbx::set_env_vars(...).map_err(...)? below it.
+    register_secrets(&app, &sandbox.secrets, Some(name)).await?;
+    let merged = full_env_vars_for_sandbox(&pool, &sandbox.project_id, &sandbox)?;
+    crate::sbx::set_env_vars(&app, name, &merged).await.map_err(|e| e.to_string())?;
+  }
+  Ok(sandbox)
+}
+
+/// The entries of `previous` whose `key()` no longer appears in
+/// `current` — what a save just dropped, and therefore what has to be
+/// removed from sbx's own store rather than merely disappearing from
+/// ours.
+fn removed_secrets(previous: &[Secret], current: &[Secret]) -> Vec<Secret> {
+  let kept: std::collections::HashSet<&str> = current.iter().map(|s| s.key()).collect();
+  previous.iter().filter(|s| !kept.contains(s.key())).cloned().collect()
+}
+
+/// Removes every entry in `removed` from sbx's own store at the given
+/// scope. Best-effort by design, unlike `reconcile_secrets`: the
+/// likeliest failure is "no such secret" — a registration that never
+/// landed, or an entry already removed by hand — which leaves the store
+/// in exactly the state the caller asked for, and shouldn't fail the
+/// save that dropped it.
+async fn remove_secrets_from_sbx(app: &AppHandle, removed: &[Secret], sandbox_name: Option<&str>) {
+  for secret in removed {
+    let result = match &secret.target {
+      SecretTarget::Service { service } => crate::sbx::remove_service_secret(app, service, sandbox_name).await,
+      SecretTarget::Custom { hosts, .. } => {
+        let mut last = Ok(());
+        for host in hosts {
+          last = crate::sbx::remove_custom_secret(app, host, sandbox_name).await;
+        }
+        last
+      }
+    };
+    if let Err(e) = result {
+      log::warn!("remove_secrets_from_sbx: failed to remove secret {}: {e}", secret.key());
+    }
+  }
+}
+
+/// Merges global, project, and sandbox-scoped secrets into the single
+/// list actually registered for a sandbox — sandbox-scoped wins over
+/// project-scoped, which wins over global, on a `key()` collision (the
+/// whole entry is replaced, not merged field by field). Mirrors
+/// `merged_env_vars` exactly, just keyed by `Secret::key()` instead of a
+/// plain string field.
+fn merged_secrets(pool: &DbPool, project_id: &str, sandbox_secrets: &[Secret]) -> std::result::Result<Vec<Secret>, String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  // See get_global_secrets's doc comment on why a parse failure here
+  // degrades to empty instead of failing outright.
+  let global: Vec<Secret> = settings::get_json(&conn, GLOBAL_SECRETS_KEY).ok().flatten().unwrap_or_default();
+  let project = projects::get(&conn, project_id).map_err(|e| e.to_string())?.secrets;
+  let mut merged: std::collections::HashMap<String, Secret> = std::collections::HashMap::new();
+  for secret in global.into_iter().chain(project).chain(sandbox_secrets.iter().cloned()) {
+    merged.insert(secret.key().to_string(), secret);
+  }
+  let mut result: Vec<Secret> = merged.into_values().collect();
+  result.sort_by(|a, b| a.key().cmp(b.key()));
+  Ok(result)
+}
+
+/// The `EnvVar`s a list of secrets contributes to a sandbox's actual
+/// environment — a custom secret's placeholder, exported under its own
+/// `env` name, so a process inside the sandbox that reads that variable
+/// sends the placeholder and the proxy swaps in the real value on the
+/// way out. A service secret contributes nothing here: it's consumed by
+/// the sandbox's own agent/kit bootstrap, not by an env var this app
+/// manages. A custom secret with no placeholder yet is skipped — that
+/// only happens for an entry `reconcile_secrets` hasn't processed yet.
+fn secrets_as_env_vars(secrets: &[Secret]) -> Vec<EnvVar> {
+  secrets
+    .iter()
+    .filter_map(|s| match &s.target {
+      SecretTarget::Custom { env, placeholder: Some(p), .. } => Some(EnvVar { key: env.clone(), value: p.clone() }),
+      _ => None,
+    })
+    .collect()
+}
+
+/// The full list of env vars that belong in one sandbox right now: its
+/// plain env vars (see `merged_env_vars`) plus the placeholder for every
+/// custom secret that applies to it. Every "push env vars to a sandbox"
+/// call site uses this instead of `merged_env_vars` alone — `set_env_vars`
+/// rewrites its whole managed block on each call, so pushing env vars and
+/// secret placeholders through two separate calls would have each
+/// overwrite the other's contribution.
+fn full_env_vars_for_sandbox(pool: &DbPool, project_id: &str, sandbox: &Sandbox) -> std::result::Result<Vec<EnvVar>, String> {
+  let mut vars = merged_env_vars(pool, project_id, &sandbox.env_vars)?;
+  vars.extend(secrets_as_env_vars(&merged_secrets(pool, project_id, &sandbox.secrets)?));
+  Ok(vars)
+}
+
+/// Generates a fresh, stable placeholder for a brand-new custom secret.
+/// Never reused across secrets, never regenerated for an existing one —
+/// see `resolve_secret_placeholders`.
+fn generate_placeholder() -> String {
+  format!("sbx-cs-{}", uuid::Uuid::new_v4().simple())
+}
+
+/// Resolves the placeholder for every entry in `incoming`, given what
+/// was previously saved at this scope. A custom secret's placeholder is
+/// tied to its identity (the env var name), not its content: if
+/// `previous` has any entry with the same `key()`, its placeholder is
+/// reused even if the value or hosts changed — a sandbox that already
+/// has the old placeholder exported keeps working without needing to be
+/// re-synced. Only a `key()` with no match in `previous` at all gets a
+/// freshly generated placeholder. A service secret is returned
+/// unchanged — it carries no placeholder.
+///
+/// Pure and side-effect-free: this only decides *what* to register, not
+/// *where* — see `register_secrets` for the sbx calls, which run once
+/// per target (once for a global/sandbox-scoped save, once per affected
+/// sandbox for a project-scoped one) against this same resolved list.
+fn resolve_secret_placeholders(previous: &[Secret], incoming: &[Secret]) -> Vec<Secret> {
+  incoming
+    .iter()
+    .map(|secret| match &secret.target {
+      SecretTarget::Service { .. } => secret.clone(),
+      SecretTarget::Custom { env, hosts, placeholder } => {
+        let resolved = placeholder
+          .clone()
+          .or_else(|| {
+            previous.iter().find(|p| p.key() == secret.key()).and_then(|p| match &p.target {
+              SecretTarget::Custom { placeholder, .. } => placeholder.clone(),
+              SecretTarget::Service { .. } => None,
+            })
+          })
+          .unwrap_or_else(generate_placeholder);
+        Secret {
+          target: SecretTarget::Custom { env: env.clone(), hosts: hosts.clone(), placeholder: Some(resolved) },
+          source: secret.source.clone(),
+        }
+      }
+    })
+    .collect()
+}
+
+/// Registers every secret in `secrets` (already placeholder-resolved by
+/// `resolve_secret_placeholders`) at the given scope — the direct effect
+/// of a save action: global, one sandbox, or one of a project's
+/// sandboxes. Always (re-)registers the whole list rather than only
+/// what changed since a prior save: every call is idempotent (the
+/// placeholder is fixed ahead of time, never regenerated here), and a
+/// secrets save is an infrequent user action, not a hot path, so this
+/// trades a handful of redundant CLI calls for not having to track "did
+/// this specific entry change at this specific target" across scopes
+/// that don't share one registration. A failure is propagated, not
+/// swallowed — this is the direct, single-target effect of the caller's
+/// save action.
+async fn register_secrets(app: &AppHandle, secrets: &[Secret], sandbox_name: Option<&str>) -> std::result::Result<(), String> {
+  for secret in secrets {
+    match &secret.target {
+      SecretTarget::Service { service } => {
+        // An empty literal value means the service's credential is
+        // managed some other way (already set directly via `sbx`,
+        // OAuth, etc.) and this entry exists only so the app can track
+        // and remove it — skip sbx entirely rather than sending an
+        // empty value, which would make `sbx secret set` fall back to
+        // an interactive prompt this app can't answer (see
+        // SBX_SECRET_COMMAND_TIMEOUT's doc comment for what that leads
+        // to). A reference or command source is never empty here —
+        // validate_secrets rejects that regardless of target.
+        if matches!(&secret.source, SecretSource::Value { value } if value.is_empty()) {
+          continue;
+        }
+        crate::sbx::set_service_secret(app, service, &secret.source, sandbox_name).await.map_err(|e| e.to_string())?;
+      }
+      SecretTarget::Custom { env, hosts, placeholder } => {
+        let placeholder = placeholder.as_deref().ok_or_else(|| format!("secret {env} has no placeholder to register"))?;
+        crate::sbx::set_custom_secret(app, env, hosts, placeholder, &secret.source, sandbox_name)
+          .await
+          .map_err(|e| e.to_string())?;
+      }
+    }
+  }
+  Ok(())
 }
 
 #[derive(Serialize)]
@@ -1081,22 +1451,32 @@ async fn provision_sandbox(
     .map_err(|e| e.to_string())?;
 
   // Independent once the sandbox is ready: git identity, the
-  // permission-mode alias, env vars, and port publishing/lookup. Run concurrently.
-  let (permission_result, host_port_result, env_result, ()) = tokio::join!(
+  // permission-mode alias, env vars, secrets, and port publishing/lookup.
+  // Run concurrently.
+  let (permission_result, host_port_result, env_result, secret_result, ()) = tokio::join!(
     crate::sbx::set_claude_default_permission_mode(app, &name, &sandbox.permission_mode),
     async {
       crate::sbx::publish_port(app, &name, SANDBOX_PORT).await?;
       crate::sbx::host_port(app, &name, SANDBOX_PORT).await
     },
     async {
-      let merged = merged_env_vars(pool, &project.id, &sandbox.env_vars)?;
+      let merged = full_env_vars_for_sandbox(pool, &project.id, sandbox)?;
       crate::sbx::set_env_vars(app, &name, &merged).await.map_err(|e| e.to_string())
+    },
+    async {
+      // Already fully placeholder-resolved: a brand-new sandbox's own
+      // secrets are always empty, so this is just the already-persisted
+      // global/project lists — only registering them against this new
+      // sandbox is needed, not resolving anything new.
+      let merged = merged_secrets(pool, &project.id, &sandbox.secrets)?;
+      register_secrets(app, &merged, Some(&name)).await
     },
     sync_git_identity(app, &name),
   );
   permission_result.map_err(|e| e.to_string())?;
   let host_port = host_port_result.map_err(|e| e.to_string())?;
   env_result?;
+  secret_result?;
 
   let conn = pool.get().map_err(|e| e.to_string())?;
   sandboxes::update_status(&conn, &sandbox.id, "running", Some(&name), host_port.map(i64::from))
@@ -1313,6 +1693,138 @@ mod env_var_tests {
   }
 }
 
+#[cfg(test)]
+mod secret_tests {
+  use super::*;
+  use r2d2_sqlite::SqliteConnectionManager;
+
+  fn test_pool() -> (DbPool, std::path::PathBuf) {
+    let path = std::env::temp_dir().join(format!("overnight-secret-cmd-{}", uuid::Uuid::new_v4()));
+    let mut conn = rusqlite::Connection::open(&path).unwrap();
+    crate::db::migrations::migrations().to_latest(&mut conn).unwrap();
+    drop(conn);
+    let pool = r2d2::Pool::builder().max_size(2).build(SqliteConnectionManager::file(&path)).unwrap();
+    (pool, path)
+  }
+
+  fn value_secret(env: &str, host: &str, value: &str) -> Secret {
+    Secret {
+      target: SecretTarget::Custom { env: env.to_string(), hosts: vec![host.to_string()], placeholder: None },
+      source: SecretSource::Value { value: value.to_string() },
+    }
+  }
+
+  fn service_secret(service: &str, value: &str) -> Secret {
+    Secret {
+      target: SecretTarget::Service { service: service.to_string() },
+      source: SecretSource::Value { value: value.to_string() },
+    }
+  }
+
+  #[test]
+  fn validate_secrets_accepts_a_known_service() {
+    assert!(validate_secrets(&[service_secret("anthropic", "sk-abc")]).is_ok());
+  }
+
+  #[test]
+  fn validate_secrets_rejects_an_unknown_service() {
+    let err = validate_secrets(&[service_secret("not-a-real-service", "x")]).unwrap_err();
+    assert!(err.contains("not-a-real-service"));
+  }
+
+  #[test]
+  fn validate_secrets_allows_an_empty_value_for_a_service_but_not_a_custom_secret() {
+    assert!(validate_secrets(&[service_secret("anthropic", "")]).is_ok());
+    assert!(validate_secrets(&[value_secret("API_KEY", "api.example.com", "")]).is_err());
+  }
+
+  #[test]
+  fn validate_secrets_rejects_bad_custom_env_names() {
+    assert!(validate_secrets(&[value_secret("API_KEY", "api.example.com", "1")]).is_ok());
+    assert!(validate_secrets(&[value_secret("", "api.example.com", "x")]).is_err());
+    assert!(validate_secrets(&[value_secret("1BAD", "api.example.com", "x")]).is_err());
+  }
+
+  #[test]
+  fn validate_secrets_rejects_a_custom_secret_with_no_hosts() {
+    let secret = Secret {
+      target: SecretTarget::Custom { env: "API_KEY".to_string(), hosts: vec![], placeholder: None },
+      source: SecretSource::Value { value: "x".to_string() },
+    };
+    assert!(validate_secrets(&[secret]).is_err());
+  }
+
+  #[test]
+  fn validate_secrets_rejects_an_empty_reference_or_command() {
+    let bad_ref = Secret {
+      target: SecretTarget::Service { service: "anthropic".to_string() },
+      source: SecretSource::Reference { reference: "".to_string(), refresh: None },
+    };
+    assert!(validate_secrets(&[bad_ref]).is_err());
+    let bad_cmd = Secret {
+      target: SecretTarget::Service { service: "anthropic".to_string() },
+      source: SecretSource::Command { command: "".to_string(), refresh: None },
+    };
+    assert!(validate_secrets(&[bad_cmd]).is_err());
+  }
+
+  #[test]
+  fn validate_secrets_rejects_duplicate_keys() {
+    let err = validate_secrets(&[service_secret("anthropic", "1"), service_secret("anthropic", "2")]).unwrap_err();
+    assert!(err.contains("anthropic"));
+  }
+
+  #[test]
+  fn secrets_as_env_vars_exports_only_custom_secrets_with_a_placeholder() {
+    let with_placeholder = Secret {
+      target: SecretTarget::Custom { env: "API_KEY".to_string(), hosts: vec!["a.com".to_string()], placeholder: Some("sbx-cs-x".to_string()) },
+      source: SecretSource::Value { value: "real".to_string() },
+    };
+    let without_placeholder = Secret {
+      target: SecretTarget::Custom { env: "OTHER".to_string(), hosts: vec!["b.com".to_string()], placeholder: None },
+      source: SecretSource::Value { value: "real2".to_string() },
+    };
+    let service = service_secret("github", "tok");
+
+    let env_vars = secrets_as_env_vars(&[with_placeholder, without_placeholder, service]);
+    assert_eq!(env_vars, vec![EnvVar { key: "API_KEY".to_string(), value: "sbx-cs-x".to_string() }]);
+  }
+
+  #[test]
+  fn removed_secrets_finds_dropped_keys_only() {
+    let previous = [value_secret("KEPT", "a.com", "1"), service_secret("github", "2")];
+    let current = [value_secret("KEPT", "a.com", "1")];
+    let removed = removed_secrets(&previous, &current);
+    assert_eq!(removed.len(), 1);
+    assert_eq!(removed[0].key(), "github");
+  }
+
+  #[test]
+  fn merged_secrets_lets_higher_scope_win_by_key() {
+    let (pool, path) = test_pool();
+    let conn = pool.get().unwrap();
+    let project = projects::create(&conn, "Overnight", "/repo", None, None).unwrap();
+    settings::set_json(
+      &conn,
+      GLOBAL_SECRETS_KEY,
+      &vec![value_secret("SHARED", "g.com", "global"), service_secret("github", "g")],
+    )
+    .unwrap();
+    projects::set_secrets(&conn, &project.id, &[value_secret("SHARED", "p.com", "project")]).unwrap();
+    drop(conn);
+
+    let merged = merged_secrets(&pool, &project.id, &[value_secret("SHARED", "s.com", "sandbox")]).unwrap();
+    let shared = merged.iter().find(|s| s.key() == "SHARED").unwrap();
+    match &shared.source {
+      SecretSource::Value { value } => assert_eq!(value, "sandbox"),
+      _ => panic!("expected a Value source"),
+    }
+    assert!(merged.iter().any(|s| s.key() == "github"));
+
+    std::fs::remove_file(&path).ok();
+  }
+}
+
 #[tauri::command]
 pub async fn start_sandbox(app: AppHandle, pool: State<'_, DbPool>, id: String) -> std::result::Result<Sandbox, String> {
   let pool = pool.inner().clone();
@@ -1331,7 +1843,16 @@ pub async fn start_sandbox(app: AppHandle, pool: State<'_, DbPool>, id: String) 
   // provision_sandbox. Best-effort end to end: `sbx resume` above already
   // succeeded, so neither computing the merge nor pushing it should be
   // able to block the sandbox from coming back up / the DB status update.
-  match merged_env_vars(&pool, &sandbox.project_id, &sandbox.env_vars) {
+  match merged_secrets(&pool, &sandbox.project_id, &sandbox.secrets) {
+    Ok(merged) => {
+      if let Err(e) = register_secrets(&app, &merged, Some(&name)).await {
+        log::warn!("start_sandbox: failed to re-register secrets for {name}: {e}");
+      }
+    }
+    Err(e) => log::warn!("start_sandbox: failed to compute merged secrets for {name}: {e}"),
+  }
+
+  match full_env_vars_for_sandbox(&pool, &sandbox.project_id, &sandbox) {
     Ok(merged) => {
       if let Err(e) = crate::sbx::set_env_vars(&app, &name, &merged).await {
         log::warn!("start_sandbox: failed to push env vars to {name}: {e}");

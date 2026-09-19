@@ -4,6 +4,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { EnvVar } from '@/lib/envVars'
 import type { NetworkPolicySettings, NetworkRuleDecision } from '@/lib/networkPolicy'
+import type { Secret } from '@/lib/secrets'
 import type { Route, SettingsTab } from '@/lib/router'
 import { useAppStore } from '@/store/useAppStore'
 import type { JiraConfig } from './JiraConfigForm'
@@ -74,6 +75,18 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
   const [loadingProjectEnvVars, setLoadingProjectEnvVars] = useState(false)
   const [savingProjectEnv, setSavingProjectEnv] = useState(false)
   const [projectEnvError, setProjectEnvError] = useState<string | null>(null)
+
+  const [globalSecrets, setGlobalSecrets] = useState<Secret[]>([])
+  const [savedGlobalSecrets, setSavedGlobalSecrets] = useState<Secret[]>([])
+  const [savingGlobalSecrets, setSavingGlobalSecrets] = useState(false)
+  const [globalSecretsError, setGlobalSecretsError] = useState<string | null>(null)
+
+  const [selectedSecretProjectId, setSelectedSecretProjectId] = useState<string | null>(null)
+  const [projectSecrets, setProjectSecrets] = useState<Secret[]>([])
+  const [savedProjectSecrets, setSavedProjectSecrets] = useState<Secret[]>([])
+  const [loadingProjectSecrets, setLoadingProjectSecrets] = useState(false)
+  const [savingProjectSecrets, setSavingProjectSecrets] = useState(false)
+  const [projectSecretsError, setProjectSecretsError] = useState<string | null>(null)
 
   const [credentialsSavedDialogOpen, setCredentialsSavedDialogOpen] = useState(false)
 
@@ -149,6 +162,28 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
       .catch((e) => setProjectEnvError(String(e)))
       .finally(() => setLoadingProjectEnvVars(false))
   }, [selectedEnvProjectId])
+
+  async function loadGlobalSecrets() {
+    const secrets = await invoke<Secret[]>('get_global_secrets')
+    setGlobalSecrets(secrets)
+    setSavedGlobalSecrets(secrets)
+  }
+
+  useEffect(() => {
+    loadGlobalSecrets()
+  }, [])
+
+  useEffect(() => {
+    if (!selectedSecretProjectId) return
+    setLoadingProjectSecrets(true)
+    invoke<Secret[]>('get_project_secrets', { projectId: selectedSecretProjectId })
+      .then((secrets) => {
+        setProjectSecrets(secrets)
+        setSavedProjectSecrets(secrets)
+      })
+      .catch((e) => setProjectSecretsError(String(e)))
+      .finally(() => setLoadingProjectSecrets(false))
+  }, [selectedSecretProjectId])
 
   async function addSkillFolders() {
     const selection = await open({ directory: true, multiple: true })
@@ -304,6 +339,55 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
     setProjectEnvError(null)
   }
 
+  function sameSecrets(a: Secret[], b: Secret[]): boolean {
+    return a.length === b.length && a.every((v, i) => JSON.stringify(v) === JSON.stringify(b[i]))
+  }
+
+  const globalSecretsDirty = !sameSecrets(globalSecrets, savedGlobalSecrets)
+
+  async function saveGlobalSecrets(): Promise<boolean> {
+    setSavingGlobalSecrets(true)
+    setGlobalSecretsError(null)
+    try {
+      await invoke('save_global_secrets', { secrets: globalSecrets })
+      setSavedGlobalSecrets(globalSecrets)
+      return true
+    } catch (e) {
+      setGlobalSecretsError(String(e))
+      return false
+    } finally {
+      setSavingGlobalSecrets(false)
+    }
+  }
+
+  function resetGlobalSecrets() {
+    setGlobalSecrets(savedGlobalSecrets)
+    setGlobalSecretsError(null)
+  }
+
+  const projectSecretsDirty = selectedSecretProjectId !== null && !sameSecrets(projectSecrets, savedProjectSecrets)
+
+  async function saveProjectSecrets(): Promise<boolean> {
+    if (!selectedSecretProjectId) return true
+    setSavingProjectSecrets(true)
+    setProjectSecretsError(null)
+    try {
+      await invoke('save_project_secrets', { projectId: selectedSecretProjectId, secrets: projectSecrets })
+      setSavedProjectSecrets(projectSecrets)
+      return true
+    } catch (e) {
+      setProjectSecretsError(String(e))
+      return false
+    } finally {
+      setSavingProjectSecrets(false)
+    }
+  }
+
+  function resetProjectSecrets() {
+    setProjectSecrets(savedProjectSecrets)
+    setProjectSecretsError(null)
+  }
+
   const noop = () => {}
   const tabActions: Record<SettingsTab, TabActions> = {
     general: {
@@ -331,19 +415,23 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
       onCancel: resetNetwork,
     },
     credentials: {
-      dirty: globalEnvDirty || projectEnvDirty,
-      canSave: globalEnvDirty || projectEnvDirty,
-      saving: savingGlobalEnv || savingProjectEnv,
-      error: globalEnvError ?? projectEnvError,
+      dirty: globalEnvDirty || projectEnvDirty || globalSecretsDirty || projectSecretsDirty,
+      canSave: globalEnvDirty || projectEnvDirty || globalSecretsDirty || projectSecretsDirty,
+      saving: savingGlobalEnv || savingProjectEnv || savingGlobalSecrets || savingProjectSecrets,
+      error: globalEnvError ?? projectEnvError ?? globalSecretsError ?? projectSecretsError,
       onSave: async () => {
         let ok = true
         if (globalEnvDirty) ok = (await saveGlobalEnv()) && ok
         if (projectEnvDirty) ok = (await saveProjectEnv()) && ok
+        if (globalSecretsDirty) ok = (await saveGlobalSecrets()) && ok
+        if (projectSecretsDirty) ok = (await saveProjectSecrets()) && ok
         if (ok) setCredentialsSavedDialogOpen(true)
       },
       onCancel: () => {
         resetGlobalEnv()
         resetProjectEnv()
+        resetGlobalSecrets()
+        resetProjectSecrets()
       },
     },
     integrations: { dirty: false, canSave: false, saving: false, error: null, onSave: noop, onCancel: noop },
@@ -418,11 +506,18 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
             globalVars={globalEnvVars}
             setGlobalVars={setGlobalEnvVars}
             projects={projects}
-            selectedProjectId={selectedEnvProjectId}
-            setSelectedProjectId={setSelectedEnvProjectId}
+            selectedEnvProjectId={selectedEnvProjectId}
+            setSelectedEnvProjectId={setSelectedEnvProjectId}
             projectVars={projectEnvVars}
             setProjectVars={setProjectEnvVars}
             loadingProjectVars={loadingProjectEnvVars}
+            globalSecrets={globalSecrets}
+            setGlobalSecrets={setGlobalSecrets}
+            selectedSecretProjectId={selectedSecretProjectId}
+            setSelectedSecretProjectId={setSelectedSecretProjectId}
+            projectSecrets={projectSecrets}
+            setProjectSecrets={setProjectSecrets}
+            loadingProjectSecrets={loadingProjectSecrets}
           />
         </TabsContent>
 

@@ -6,6 +6,54 @@ pub struct EnvVar {
   pub value: String,
 }
 
+/// Where a secret's value comes from — shared by service and custom
+/// secrets alike (`-t`/`--value`, `--ref`, `--command` on `sbx secret
+/// set` / `set-custom`). `refresh` is `sbx`'s cache duration for a
+/// resolved reference/command ("30m" etc.); `None` means `sbx`'s own
+/// default (on-demand for a plain reference/command registration).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SecretSource {
+  Value { value: String },
+  Reference { reference: String, refresh: Option<String> },
+  Command { command: String, refresh: Option<String> },
+}
+
+/// What's being secured and how `sbx` identifies it. A service secret
+/// (`sbx secret set <service>`) is consumed automatically by the
+/// sandbox's own agent/kit bootstrap — this app never touches it beyond
+/// registering the value. A custom secret (`sbx secret set-custom`) is
+/// this app's responsibility end to end: `placeholder` is generated once
+/// by this app (see commands.rs::reconcile_secrets) and exported as the
+/// literal value of the `env` environment variable inside every sandbox
+/// the secret applies to (see commands.rs::secrets_as_env_vars).
+/// `placeholder` is `None` only until the first successful registration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SecretTarget {
+  Service { service: String },
+  Custom { env: String, hosts: Vec<String>, placeholder: Option<String> },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Secret {
+  pub target: SecretTarget,
+  pub source: SecretSource,
+}
+
+impl Secret {
+  /// The identifier a list of secrets is deduplicated, merged, and
+  /// diffed by — the service name for a service secret, the target env
+  /// var name for a custom one. Two entries sharing a key can't coexist
+  /// in one scope (see commands.rs::validate_secrets).
+  pub fn key(&self) -> &str {
+    match &self.target {
+      SecretTarget::Service { service } => service,
+      SecretTarget::Custom { env, .. } => env,
+    }
+  }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
   pub id: String,
@@ -151,6 +199,7 @@ pub struct Sandbox {
   /// freshness label.
   pub branch_snapshot_at: Option<i64>,
   pub env_vars: Vec<EnvVar>,
+  pub secrets: Vec<Secret>,
 }
 
 /// One periodic (or pre-stop/pre-delete) backup of a sandbox's `~/.claude`
@@ -206,6 +255,7 @@ pub struct Project {
   pub dev_server_port: Option<i64>,
   pub extra_clone_paths: Vec<String>,
   pub env_vars: Vec<EnvVar>,
+  pub secrets: Vec<Secret>,
   pub created_at: i64,
   pub updated_at: i64,
 }

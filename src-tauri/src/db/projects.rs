@@ -1,11 +1,12 @@
 use rusqlite::{params, Connection};
 
 use crate::db::error::{Error, Result};
-use crate::db::models::{new_id, now_millis, EnvVar, Project};
+use crate::db::models::{new_id, now_millis, EnvVar, Project, Secret};
 
 fn row_to_project(row: &rusqlite::Row) -> rusqlite::Result<Project> {
   let extra_clone_paths_raw: String = row.get("extra_clone_paths")?;
   let env_vars_raw: String = row.get("env_vars")?;
+  let secrets_raw: String = row.get("secrets")?;
   Ok(Project {
     id: row.get("id")?,
     name: row.get("name")?,
@@ -14,6 +15,7 @@ fn row_to_project(row: &rusqlite::Row) -> rusqlite::Result<Project> {
     dev_server_port: row.get("dev_server_port")?,
     extra_clone_paths: serde_json::from_str(&extra_clone_paths_raw).unwrap_or_default(),
     env_vars: serde_json::from_str(&env_vars_raw).unwrap_or_default(),
+    secrets: serde_json::from_str(&secrets_raw).unwrap_or_default(),
     created_at: row.get("created_at")?,
     updated_at: row.get("updated_at")?,
   })
@@ -76,6 +78,23 @@ pub fn set_env_vars(conn: &Connection, id: &str, vars: &[EnvVar]) -> Result<Proj
   get(conn, id)
 }
 
+/// Persists this project's secrets, applied to every sandbox created for
+/// it from then on (merged with global and sandbox-scoped secrets at
+/// sandbox creation time — see commands.rs::merged_secrets). Bumps
+/// updated_at, same as `set_env_vars`.
+pub fn set_secrets(conn: &Connection, id: &str, secrets: &[Secret]) -> Result<Project> {
+  let json = serde_json::to_string(secrets).unwrap_or_else(|_| "[]".to_string());
+  let now = now_millis();
+  let changed = conn.execute(
+    "UPDATE projects SET secrets = ?1, updated_at = ?2 WHERE id = ?3",
+    params![json, now, id],
+  )?;
+  if changed == 0 {
+    return Err(Error::NotFound);
+  }
+  get(conn, id)
+}
+
 pub fn delete(conn: &Connection, id: &str) -> Result<()> {
   let changed = conn.execute("DELETE FROM projects WHERE id = ?1", params![id])?;
   if changed == 0 {
@@ -120,6 +139,7 @@ pub fn get_or_create_unassigned(conn: &Connection) -> Result<Project> {
 mod tests {
   use super::*;
   use crate::db::migrations::test_conn;
+  use crate::db::models::{SecretSource, SecretTarget};
 
   #[test]
   fn create_get_list_update_delete() {
@@ -189,6 +209,34 @@ mod tests {
   fn set_env_vars_missing_id_returns_not_found() {
     let conn = test_conn();
     assert!(matches!(set_env_vars(&conn, "missing", &[]), Err(Error::NotFound)));
+  }
+
+  #[test]
+  fn set_secrets_roundtrips_and_updates_timestamp() {
+    let conn = test_conn();
+    let project = create(&conn, "Overnight", "/repo/overnight", None, None).unwrap();
+    assert_eq!(project.secrets, Vec::<Secret>::new());
+
+    let secrets = vec![
+      Secret {
+        target: SecretTarget::Custom { env: "GITHUB_TOKEN".to_string(), hosts: vec!["api.github.com".to_string()], placeholder: None },
+        source: SecretSource::Value { value: "ghp_abc".to_string() },
+      },
+      Secret {
+        target: SecretTarget::Custom { env: "NPM_TOKEN".to_string(), hosts: vec!["registry.npmjs.org".to_string()], placeholder: None },
+        source: SecretSource::Value { value: "npm_xyz".to_string() },
+      },
+    ];
+    let updated = set_secrets(&conn, &project.id, &secrets).unwrap();
+    assert_eq!(updated.secrets, secrets);
+    assert!(updated.updated_at >= project.updated_at);
+    assert_eq!(get(&conn, &project.id).unwrap().secrets, secrets);
+  }
+
+  #[test]
+  fn set_secrets_missing_id_returns_not_found() {
+    let conn = test_conn();
+    assert!(matches!(set_secrets(&conn, "missing", &[]), Err(Error::NotFound)));
   }
 
   #[test]

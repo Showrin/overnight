@@ -1,12 +1,13 @@
 use rusqlite::{params, Connection};
 
 use crate::db::error::{Error, Result};
-use crate::db::models::{new_id, now_millis, EnvVar, Sandbox, WorktreeInfo};
+use crate::db::models::{new_id, now_millis, EnvVar, Sandbox, Secret, WorktreeInfo};
 
 fn row_to_sandbox(row: &rusqlite::Row) -> rusqlite::Result<Sandbox> {
   let branches_raw: String = row.get("branches")?;
   let worktrees_raw: String = row.get("worktrees")?;
   let env_vars_raw: String = row.get("env_vars")?;
+  let secrets_raw: String = row.get("secrets")?;
   Ok(Sandbox {
     id: row.get("id")?,
     project_id: row.get("project_id")?,
@@ -28,6 +29,7 @@ fn row_to_sandbox(row: &rusqlite::Row) -> rusqlite::Result<Sandbox> {
     worktrees: serde_json::from_str(&worktrees_raw).unwrap_or_default(),
     branch_snapshot_at: row.get("branch_snapshot_at")?,
     env_vars: serde_json::from_str(&env_vars_raw).unwrap_or_default(),
+    secrets: serde_json::from_str(&secrets_raw).unwrap_or_default(),
   })
 }
 
@@ -164,6 +166,19 @@ pub fn set_env_vars(conn: &Connection, id: &str, vars: &[EnvVar]) -> Result<Sand
   get(conn, id)
 }
 
+/// Persists this sandbox's own secrets (highest-priority scope — see
+/// commands.rs::merged_secrets). Callers are responsible for pushing the
+/// merged result into the running sandbox afterwards, same split as
+/// `set_env_vars`.
+pub fn set_secrets(conn: &Connection, id: &str, secrets: &[Secret]) -> Result<Sandbox> {
+  let json = serde_json::to_string(secrets).unwrap_or_else(|_| "[]".to_string());
+  let changed = conn.execute("UPDATE sandboxes SET secrets = ?1 WHERE id = ?2", params![json, id])?;
+  if changed == 0 {
+    return Err(Error::NotFound);
+  }
+  get(conn, id)
+}
+
 /// Records a successful `sbx cp` backup of this sandbox's `~/.claude`
 /// directory — called once the copy itself has already succeeded, mirroring
 /// `set_network_preset_override`'s "apply the sbx-side effect elsewhere,
@@ -218,6 +233,7 @@ pub fn delete(conn: &Connection, id: &str) -> Result<()> {
 mod tests {
   use super::*;
   use crate::db::migrations::test_conn;
+  use crate::db::models::{SecretSource, SecretTarget};
 
   fn make_project(conn: &Connection) -> String {
     crate::db::projects::create(conn, "Overnight", "/repo/overnight", None, None).unwrap().id
@@ -367,6 +383,28 @@ mod tests {
   fn set_env_vars_missing_id_returns_not_found() {
     let conn = test_conn();
     assert!(matches!(set_env_vars(&conn, "missing", &[]), Err(Error::NotFound)));
+  }
+
+  #[test]
+  fn sets_secrets() {
+    let conn = test_conn();
+    let project_id = make_project(&conn);
+    let sandbox = create(&conn, &project_id, "mount", None, None, "default", None).unwrap();
+    assert_eq!(sandbox.secrets, Vec::<Secret>::new());
+
+    let secrets = vec![Secret {
+      target: SecretTarget::Custom { env: "GITHUB_TOKEN".to_string(), hosts: vec!["api.github.com".to_string()], placeholder: None },
+      source: SecretSource::Value { value: "ghp_abc".to_string() },
+    }];
+    let updated = set_secrets(&conn, &sandbox.id, &secrets).unwrap();
+    assert_eq!(updated.secrets, secrets);
+    assert_eq!(get(&conn, &sandbox.id).unwrap().secrets, secrets);
+  }
+
+  #[test]
+  fn set_secrets_missing_id_returns_not_found() {
+    let conn = test_conn();
+    assert!(matches!(set_secrets(&conn, "missing", &[]), Err(Error::NotFound)));
   }
 
   #[test]

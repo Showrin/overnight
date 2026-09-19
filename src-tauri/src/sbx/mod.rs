@@ -13,7 +13,7 @@ use std::time::Instant;
 use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_shell::ShellExt;
 
-use crate::db::models::{EnvVar, WorktreeInfo};
+use crate::db::models::{EnvVar, SecretSource, WorktreeInfo};
 use crate::db::{command_log, DbPool};
 use crate::process::SpawnedProcess;
 
@@ -33,6 +33,8 @@ pub enum Error {
   ContainerStartFailed(String),
   #[error("sandbox not found — it may have already been removed outside the app")]
   NotFound,
+  #[error("sbx {0:?} didn't finish within {1:?} — it may be waiting on an interactive prompt this app can't answer")]
+  TimedOut(Vec<String>, std::time::Duration),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -75,6 +77,40 @@ async fn run_with_logged_args<R: Runtime>(
     )));
   }
   Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// How long the two custom-secret calls below (`set_custom_secret`,
+/// `remove_custom_secret`) are allowed to run before this app gives up on
+/// them. `tauri_plugin_shell`'s `Command::output()` gives the child a
+/// piped stdin whose write end it holds open for the whole call without
+/// ever writing to or closing it — so if `sbx secret set-custom`/`rm
+/// --host` (an experimental, undocumented surface — see the doc comments
+/// below) ever falls back to an interactive confirmation prompt neither
+/// flag we pass is confirmed to suppress, the child blocks reading stdin
+/// forever and `output()` never returns to let us record or report it.
+/// Every other call in this module keeps running with no bound, as it
+/// always has — this is scoped to just these two because they're the
+/// only ones exercising unverified command surface.
+const SBX_SECRET_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Wraps `run_with_logged_args` with `SBX_SECRET_COMMAND_TIMEOUT`. On
+/// timeout, records a failed command-log entry itself (the wrapped call
+/// never got the chance to, since `output()` is still pending when the
+/// timeout fires) so the Developer > Command Log page still shows that
+/// something was attempted.
+async fn run_with_logged_args_timed<R: Runtime>(
+  app: &AppHandle<R>,
+  operation: &str,
+  args: &[&str],
+  logged_args: &[&str],
+) -> Result<String> {
+  match tokio::time::timeout(SBX_SECRET_COMMAND_TIMEOUT, run_with_logged_args(app, operation, args, logged_args)).await {
+    Ok(result) => result,
+    Err(_) => {
+      record(app, operation, logged_args, false, None, Some("timed out waiting for sbx"));
+      Err(Error::TimedOut(logged_args.iter().map(|s| s.to_string()).collect(), SBX_SECRET_COMMAND_TIMEOUT))
+    }
+  }
 }
 
 /// Persists one row to the Developer > Command Log page. Best-effort: a
@@ -388,6 +424,183 @@ fn parse_policy_rules(output: &str) -> Vec<PolicyRule> {
 /// `/login` inside each sandbox.
 pub async fn set_anthropic_secret<R: Runtime>(app: &AppHandle<R>, token: &str) -> Result<()> {
   run(app, "Set Anthropic API key", &["secret", "set", "anthropic", "-t", token]).await?;
+  Ok(())
+}
+
+/// Appends the flags for `source` common to both `sbx secret set` and
+/// `set-custom` — split out so both argument builders share one place
+/// that knows the three source shapes. `--show-error` is only valid
+/// alongside `--ref`/`--command` (`sbx` rejects it otherwise: "ERROR:
+/// --show-error requires --ref or --command") so it's added here, next
+/// to the two source kinds that resolve on the host and can fail to —
+/// never for a literal `--value`, which has nothing to resolve.
+/// `--no-verify` is never passed, so a bad source fails the registration
+/// immediately instead of being stored unresolved.
+fn push_source_args(args: &mut Vec<String>, source: &SecretSource) {
+  match source {
+    SecretSource::Value { value } => {
+      args.push("--value".to_string());
+      args.push(value.clone());
+    }
+    SecretSource::Reference { reference, refresh } => {
+      args.push("--show-error".to_string());
+      args.push("--ref".to_string());
+      args.push(reference.clone());
+      if let Some(r) = refresh {
+        args.push("--refresh".to_string());
+        args.push(r.clone());
+      }
+    }
+    SecretSource::Command { command, refresh } => {
+      args.push("--show-error".to_string());
+      args.push("--command".to_string());
+      args.push(command.clone());
+      if let Some(r) = refresh {
+        args.push("--refresh".to_string());
+        args.push(r.clone());
+      }
+    }
+  }
+}
+
+/// Replaces the value following `--value` with a redaction placeholder,
+/// leaving everything else (including a `--ref`/`--command` source,
+/// which is a pointer to a secret rather than the secret itself) intact.
+fn redact_value_arg(args: &[String]) -> Vec<String> {
+  let mut out = args.to_vec();
+  if let Some(i) = out.iter().position(|a| a == "--value") {
+    if let Some(v) = out.get_mut(i + 1) {
+      *v = "********".to_string();
+    }
+  }
+  out
+}
+
+/// Pure argument builder for `sbx secret set <service> [--sandbox
+/// <name>] <source-flags>` — see `push_source_args` for the
+/// `--show-error`/`--no-verify` handling.
+fn service_secret_set_args(service: &str, source: &SecretSource, sandbox_name: Option<&str>) -> Vec<String> {
+  let mut args = vec!["secret".to_string(), "set".to_string(), service.to_string()];
+  if let Some(sbx) = sandbox_name {
+    args.push("--sandbox".to_string());
+    args.push(sbx.to_string());
+  }
+  push_source_args(&mut args, source);
+  args
+}
+
+/// Stores one service secret (`anthropic`, `github`, ...). See
+/// commands.rs::merged_secrets for scoping; a service secret contributes
+/// nothing to a sandbox's own environment (see
+/// commands.rs::secrets_as_env_vars) — it's consumed by the sandbox's
+/// own agent/kit bootstrap.
+pub async fn set_service_secret<R: Runtime>(
+  app: &AppHandle<R>,
+  service: &str,
+  source: &SecretSource,
+  sandbox_name: Option<&str>,
+) -> Result<()> {
+  let args = service_secret_set_args(service, source, sandbox_name);
+  let logged = redact_value_arg(&args);
+  let args: Vec<&str> = args.iter().map(String::as_str).collect();
+  let logged: Vec<&str> = logged.iter().map(String::as_str).collect();
+  run_with_logged_args_timed(app, "Set service secret", &args, &logged).await?;
+  Ok(())
+}
+
+/// Pure argument builder for `sbx secret set-custom [--sandbox <name>]
+/// --host <h> [--host <h>...] --env <VAR> --placeholder <p>
+/// <source-flags>` — see `push_source_args` for the
+/// `--show-error`/`--no-verify` handling. `placeholder` is always
+/// supplied explicitly by this app (see
+/// commands.rs::resolve_secret_placeholders) — never omitted to let
+/// `sbx` generate its own `{rand}` default — so re-registering the same
+/// secret never changes the placeholder already exported into a
+/// sandbox's environment.
+fn custom_secret_set_args(env: &str, hosts: &[String], placeholder: &str, source: &SecretSource, sandbox_name: Option<&str>) -> Vec<String> {
+  let mut args = vec!["secret".to_string(), "set-custom".to_string()];
+  if let Some(sbx) = sandbox_name {
+    args.push("--sandbox".to_string());
+    args.push(sbx.to_string());
+  }
+  for host in hosts {
+    args.push("--host".to_string());
+    args.push(host.clone());
+  }
+  args.push("--env".to_string());
+  args.push(env.to_string());
+  args.push("--placeholder".to_string());
+  args.push(placeholder.to_string());
+  push_source_args(&mut args, source);
+  args
+}
+
+/// Stores one custom secret. See commands.rs::merged_secrets for
+/// scoping and commands.rs::secrets_as_env_vars for how `placeholder`
+/// ends up as a real environment variable inside a sandbox.
+pub async fn set_custom_secret<R: Runtime>(
+  app: &AppHandle<R>,
+  env: &str,
+  hosts: &[String],
+  placeholder: &str,
+  source: &SecretSource,
+  sandbox_name: Option<&str>,
+) -> Result<()> {
+  let args = custom_secret_set_args(env, hosts, placeholder, source, sandbox_name);
+  let logged = redact_value_arg(&args);
+  let args: Vec<&str> = args.iter().map(String::as_str).collect();
+  let logged: Vec<&str> = logged.iter().map(String::as_str).collect();
+  run_with_logged_args_timed(app, "Set custom secret", &args, &logged).await?;
+  Ok(())
+}
+
+/// Pure argument builder for `sbx secret rm <service> [--sandbox <name>]
+/// -f`, the documented, canonical removal form (see the `sbx secret rm`
+/// CLI reference).
+fn service_secret_rm_args(service: &str, sandbox_name: Option<&str>) -> Vec<String> {
+  let mut args = vec!["secret".to_string(), "rm".to_string(), service.to_string()];
+  if let Some(sbx) = sandbox_name {
+    args.push("--sandbox".to_string());
+    args.push(sbx.to_string());
+  }
+  args.push("-f".to_string());
+  args
+}
+
+pub async fn remove_service_secret<R: Runtime>(app: &AppHandle<R>, service: &str, sandbox_name: Option<&str>) -> Result<()> {
+  let args = service_secret_rm_args(service, sandbox_name);
+  let args: Vec<&str> = args.iter().map(String::as_str).collect();
+  run_with_logged_args_timed(app, "Remove service secret", &args, &args).await?;
+  Ok(())
+}
+
+/// Pure argument builder for `sbx secret rm [--sandbox <name>] --host
+/// <host> -f` — removal for a custom secret.
+///
+/// **UNVERIFIED against a real `sbx` install.** The canonical `sbx
+/// secret rm` reference documents `rm [SERVICE] [flags]` with no
+/// `--host` flag at all; a separate Docker guide
+/// (`customize/build-an-agent.md`) demonstrates exactly this form to
+/// remove a `set-custom` entry, explicitly noting `--host` "doesn't
+/// appear in `sbx secret rm --help`" — i.e. real but hidden. If a real
+/// `sbx secret rm --help` proves this wrong, this is the only function
+/// that needs to change; every caller goes through it.
+fn custom_secret_rm_args(host: &str, sandbox_name: Option<&str>) -> Vec<String> {
+  let mut args = vec!["secret".to_string(), "rm".to_string()];
+  if let Some(sbx) = sandbox_name {
+    args.push("--sandbox".to_string());
+    args.push(sbx.to_string());
+  }
+  args.push("--host".to_string());
+  args.push(host.to_string());
+  args.push("-f".to_string());
+  args
+}
+
+pub async fn remove_custom_secret<R: Runtime>(app: &AppHandle<R>, host: &str, sandbox_name: Option<&str>) -> Result<()> {
+  let args = custom_secret_rm_args(host, sandbox_name);
+  let args: Vec<&str> = args.iter().map(String::as_str).collect();
+  run_with_logged_args_timed(app, "Remove custom secret", &args, &args).await?;
   Ok(())
 }
 
@@ -2069,6 +2282,129 @@ mod env_persist_tests {
     assert!(!script.contains("super-secret"));
     assert!(script.contains("TOKEN"));
     assert!(script.contains("********"));
+  }
+
+  #[test]
+  fn service_secret_set_args_value_source() {
+    let source = SecretSource::Value { value: "sk-abc".to_string() };
+    assert_eq!(service_secret_set_args("anthropic", &source, None), vec!["secret", "set", "anthropic", "--value", "sk-abc"]);
+  }
+
+  #[test]
+  fn service_secret_set_args_sandbox_scoped_reference_source_with_refresh() {
+    let source = SecretSource::Reference {
+      reference: "op://Work/Anthropic/credential".to_string(),
+      refresh: Some("30m".to_string()),
+    };
+    assert_eq!(
+      service_secret_set_args("anthropic", &source, Some("my-sbx")),
+      vec![
+        "secret", "set", "anthropic", "--sandbox", "my-sbx", "--show-error", "--ref", "op://Work/Anthropic/credential", "--refresh",
+        "30m"
+      ]
+    );
+  }
+
+  #[test]
+  fn service_secret_set_args_command_source_no_refresh() {
+    let source = SecretSource::Command { command: "gh auth token".to_string(), refresh: None };
+    assert_eq!(
+      service_secret_set_args("github", &source, None),
+      vec!["secret", "set", "github", "--show-error", "--command", "gh auth token"]
+    );
+  }
+
+  #[test]
+  fn service_secret_rm_args() {
+    assert_eq!(super::service_secret_rm_args("github", None), vec!["secret", "rm", "github", "-f"]);
+    assert_eq!(
+      super::service_secret_rm_args("github", Some("my-sbx")),
+      vec!["secret", "rm", "github", "--sandbox", "my-sbx", "-f"]
+    );
+  }
+
+  #[test]
+  fn custom_secret_set_args_value_source_multiple_hosts() {
+    let source = SecretSource::Value { value: "tok".to_string() };
+    assert_eq!(
+      custom_secret_set_args(
+        "API_KEY",
+        &["api.example.com".to_string(), "uploads.example.com".to_string()],
+        "sbx-cs-fixed123",
+        &source,
+        None
+      ),
+      vec![
+        "secret",
+        "set-custom",
+        "--host",
+        "api.example.com",
+        "--host",
+        "uploads.example.com",
+        "--env",
+        "API_KEY",
+        "--placeholder",
+        "sbx-cs-fixed123",
+        "--value",
+        "tok"
+      ]
+    );
+  }
+
+  #[test]
+  fn custom_secret_set_args_never_adds_show_error_for_a_literal_value() {
+    // Regression: `sbx` rejects --show-error unless --ref or --command is
+    // also present ("ERROR: --show-error requires --ref or --command").
+    let source = SecretSource::Value { value: "tok".to_string() };
+    let args = custom_secret_set_args("API_KEY", &["a.com".to_string()], "sbx-cs-x", &source, None);
+    assert!(!args.contains(&"--show-error".to_string()));
+  }
+
+  #[test]
+  fn custom_secret_set_args_sandbox_scoped_command_source_with_refresh() {
+    let source = SecretSource::Command { command: "print-secret".to_string(), refresh: Some("on-demand".to_string()) };
+    assert_eq!(
+      custom_secret_set_args("API_KEY", &["api.example.com".to_string()], "sbx-cs-fixed123", &source, Some("my-sbx")),
+      vec![
+        "secret",
+        "set-custom",
+        "--sandbox",
+        "my-sbx",
+        "--host",
+        "api.example.com",
+        "--env",
+        "API_KEY",
+        "--placeholder",
+        "sbx-cs-fixed123",
+        "--show-error",
+        "--command",
+        "print-secret",
+        "--refresh",
+        "on-demand"
+      ]
+    );
+  }
+
+  #[test]
+  fn custom_secret_rm_args() {
+    assert_eq!(super::custom_secret_rm_args("api.example.com", None), vec!["secret", "rm", "--host", "api.example.com", "-f"]);
+    assert_eq!(
+      super::custom_secret_rm_args("api.example.com", Some("my-sbx")),
+      vec!["secret", "rm", "--sandbox", "my-sbx", "--host", "api.example.com", "-f"]
+    );
+  }
+
+  #[test]
+  fn redact_value_arg_masks_the_value_but_not_other_flags() {
+    let args = vec!["secret".to_string(), "set".to_string(), "anthropic".to_string(), "--value".to_string(), "sk-abc".to_string()];
+    let redacted = redact_value_arg(&args);
+    assert_eq!(redacted, vec!["secret", "set", "anthropic", "--value", "********"]);
+  }
+
+  #[test]
+  fn redact_value_arg_leaves_a_reference_or_command_source_untouched() {
+    let args = vec!["secret".to_string(), "set".to_string(), "anthropic".to_string(), "--ref".to_string(), "op://Work/x".to_string()];
+    assert_eq!(redact_value_arg(&args), args);
   }
 }
 

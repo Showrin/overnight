@@ -338,6 +338,15 @@ pub fn migrations() -> Migrations<'static> {
     ALTER TABLE projects ADD COLUMN env_vars TEXT NOT NULL DEFAULT '[]';
     ALTER TABLE sandboxes ADD COLUMN env_vars TEXT NOT NULL DEFAULT '[]';
     ",
+  ), M::up(
+    "
+    -- Secrets: same shape and scoping as env_vars (project-scoped,
+    -- sandbox-scoped, global under settings key 'global_secrets') but
+    -- pushed via `sbx secret set` (OS keychain) instead of a shell file —
+    -- see sbx::set_secret.
+    ALTER TABLE projects ADD COLUMN secrets TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE sandboxes ADD COLUMN secrets TEXT NOT NULL DEFAULT '[]';
+    ",
   )])
 }
 
