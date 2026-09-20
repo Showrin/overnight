@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { parseDiffStat } from '@/lib/sandboxDisplay'
 import type { Route } from '@/lib/router'
 import { useAppStore } from '@/store/useAppStore'
-import { SandboxBreadcrumb } from './SandboxBreadcrumb'
+import { SandboxHeader } from './SandboxHeader'
 import type { BranchStat, SandboxDiffStats } from './types'
 
 const BASE_BRANCH_UNKNOWN_COPY = 'Base branch unknown — this sandbox predates branch tracking.'
@@ -59,16 +59,14 @@ export function BranchesPage({ sandboxId, navigate }: { sandboxId: string; navig
     return <p className="text-sm text-muted-foreground">This sandbox couldn't be found — it may have been deleted.</p>
   }
 
-  const title = sandbox.name ?? project?.name ?? 'Sandbox'
-
   return (
     <div className="flex flex-col gap-6">
-      <SandboxBreadcrumb
-        segments={[
-          { label: 'Sandboxes', onClick: () => navigate({ screen: 'sandboxes' }) },
-          { label: title, onClick: () => navigate({ screen: 'sandboxes', sandboxId }) },
-          { label: 'Branches' },
-        ]}
+      <SandboxHeader
+        sandbox={sandbox}
+        project={project}
+        navigate={navigate}
+        activeTab="branches"
+        breadcrumbExtra={[{ label: 'Branches' }]}
       />
 
       <div className="flex items-center justify-between">

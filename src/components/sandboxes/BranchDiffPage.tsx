@@ -9,7 +9,7 @@ import { useAppStore } from '@/store/useAppStore'
 import { BranchCommitsDialog } from './BranchCommitsDialog'
 import { DiffViewer, splitPatchByFile } from './DiffViewer'
 import { FileTreePanel } from './FileTreePanel'
-import { SandboxBreadcrumb } from './SandboxBreadcrumb'
+import { SandboxHeader } from './SandboxHeader'
 import type { BranchDiff, CommitInfo } from './types'
 
 export function BranchDiffPage({
@@ -44,16 +44,17 @@ export function BranchDiffPage({
     return <p className="text-sm text-muted-foreground">This sandbox couldn't be found — it may have been deleted.</p>
   }
 
-  const title = sandbox.name ?? project?.name ?? 'Sandbox'
   const stats = diff ? parseDiffStat(diff.stat) : null
   const selectedPatch = files.find((f) => f.filePath === selectedFile)?.patch
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-6">
-      <SandboxBreadcrumb
-        segments={[
-          { label: 'Sandboxes', onClick: () => navigate({ screen: 'sandboxes' }) },
-          { label: title, onClick: () => navigate({ screen: 'sandboxes', sandboxId }) },
+      <SandboxHeader
+        sandbox={sandbox}
+        project={project}
+        navigate={navigate}
+        activeTab="branches"
+        breadcrumbExtra={[
           { label: 'Branches', onClick: () => navigate({ screen: 'sandboxes', sandboxId, branches: true }) },
           { label: branch },
         ]}
