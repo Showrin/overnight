@@ -46,7 +46,7 @@ export function SandboxDetailScreen({
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex h-full min-h-0 flex-col gap-6">
       <SandboxHeader sandbox={sandbox} project={project} navigate={navigate} activeTab={tab} onTabSelect={setTab} />
 
       {tab === 'overview' && (
@@ -91,7 +91,11 @@ export function SandboxDetailScreen({
 
       {tab === 'metrics' && <SandboxMetricsTab sandbox={sandbox} />}
 
-      {tab === 'plans' && <SandboxPlansTab sandbox={sandbox} />}
+      {tab === 'plans' && (
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <SandboxPlansTab sandbox={sandbox} />
+        </div>
+      )}
 
       {tab === 'backups' && <SandboxBackupsTab sandbox={sandbox} />}
 

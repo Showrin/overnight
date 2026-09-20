@@ -1,7 +1,7 @@
 import { isValidElement, useEffect, useMemo, useState, type ComponentPropsWithoutRef, type ReactNode } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import GithubSlugger from 'github-slugger'
-import { Check, Copy, Loader2, RefreshCw } from 'lucide-react'
+import { Check, Copy, Loader2, PanelLeftClose, PanelLeftOpen, RefreshCw } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeSlug from 'rehype-slug'
@@ -93,6 +93,7 @@ export function SandboxPlansTab({ sandbox }: { sandbox: Sandbox }) {
   const [selected, setSelected] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [listCollapsed, setListCollapsed] = useState(false)
   const isRunning = sandbox.status === 'running'
 
   async function load() {
@@ -118,7 +119,7 @@ export function SandboxPlansTab({ sandbox }: { sandbox: Sandbox }) {
   const toc = useMemo(() => extractHeadings(selectedPlan?.content ?? ''), [selectedPlan])
 
   return (
-    <div className="flex flex-col gap-4 text-sm">
+    <div className="flex h-full min-h-0 flex-col gap-4 text-sm">
       <div className="flex items-center justify-between">
         <span className="text-xs text-muted-foreground/70">Plans from /.claude/plans</span>
         <Button size="sm" variant="outline" disabled={loading || !isRunning} onClick={load}>
@@ -135,24 +136,38 @@ export function SandboxPlansTab({ sandbox }: { sandbox: Sandbox }) {
       )}
 
       {plans.length > 0 && (
-        <div className="flex gap-4">
-          <div className="flex w-48 shrink-0 flex-col gap-1">
-            {plans.map((plan) => (
-              <button
-                key={plan.name}
-                type="button"
-                onClick={() => setSelected(plan.name)}
-                title={plan.name}
-                className={`truncate rounded-md px-2 py-1 text-left text-xs ${
-                  plan.name === selected ? 'bg-muted text-foreground/70' : 'text-muted-foreground/70 hover:bg-muted/50'
-                }`}
-              >
-                {plan.name}
-              </button>
-            ))}
-          </div>
+        <div className="flex min-h-0 flex-1 gap-4">
+          {listCollapsed ? (
+            <div className="flex shrink-0 flex-col border-r border-border">
+              <Button size="sm" variant="ghost" onClick={() => setListCollapsed(false)} title="Show plans">
+                <PanelLeftOpen className="size-3.5" />
+              </Button>
+            </div>
+          ) : (
+            <div className="flex w-48 shrink-0 flex-col gap-1 overflow-auto border-r border-border pr-2">
+              <div className="flex items-center justify-between px-1 pb-1">
+                <span className="text-xs text-muted-foreground/70">Plans</span>
+                <Button size="sm" variant="ghost" onClick={() => setListCollapsed(true)} title="Hide plans">
+                  <PanelLeftClose className="size-3.5" />
+                </Button>
+              </div>
+              {plans.map((plan) => (
+                <button
+                  key={plan.name}
+                  type="button"
+                  onClick={() => setSelected(plan.name)}
+                  title={plan.name}
+                  className={`truncate rounded-md px-2 py-1 text-left text-xs ${
+                    plan.name === selected ? 'bg-muted text-foreground/70' : 'text-muted-foreground/70 hover:bg-muted/50'
+                  }`}
+                >
+                  {plan.name}
+                </button>
+              ))}
+            </div>
+          )}
 
-          <div className="min-w-0 flex-1 rounded-md border border-border p-4">
+          <div className="min-h-0 min-w-0 flex-1 overflow-auto rounded-md border border-border p-4">
             {selectedPlan && (
               <>
                 {toc.length > 1 && (

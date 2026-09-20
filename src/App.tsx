@@ -86,6 +86,15 @@ function App() {
                 <SettingsScreen settingsTab={route.settingsTab ?? 'general'} navigate={navigate} />
               )}
             </div>
+          ) : route.screen === 'sandboxes' && route.sandboxId && !route.branches ? (
+            <div className={cn('@container flex h-full w-full flex-col p-6', !layoutExpanded && 'max-w-5xl')}>
+              <SandboxesScreen
+                sandboxId={route.sandboxId}
+                branches={route.branches}
+                detailTab={route.detailTab}
+                navigate={navigate}
+              />
+            </div>
           ) : (
             <div className={cn('@container w-full h-fit p-6', !layoutExpanded && 'max-w-5xl')}>
               {route.screen === 'dashboard' && <JiraIssueList />}
