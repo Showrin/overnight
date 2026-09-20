@@ -10,7 +10,7 @@ import { BranchCommitsDialog } from './BranchCommitsDialog'
 import { DiffViewer, splitPatchByFile } from './DiffViewer'
 import { FileTreePanel } from './FileTreePanel'
 import { SandboxBreadcrumb } from './SandboxBreadcrumb'
-import type { CommitInfo, SandboxDiff } from './types'
+import type { BranchDiff, CommitInfo } from './types'
 
 export function BranchDiffPage({
   sandboxId,
@@ -23,21 +23,20 @@ export function BranchDiffPage({
 }) {
   const sandbox = useAppStore((s) => s.sandboxes.find((sb) => sb.id === sandboxId))
   const project = useAppStore((s) => s.projects.find((p) => p.id === sandbox?.project_id))
-  const [diff, setDiff] = useState<SandboxDiff | null>(null)
+  const [diff, setDiff] = useState<BranchDiff | null>(null)
   const [commits, setCommits] = useState<CommitInfo[] | null>(null)
   const [commitsOpen, setCommitsOpen] = useState(false)
   const [clickedFile, setClickedFile] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    invoke<SandboxDiff>('get_sandbox_diff', { id: sandboxId }).then(setDiff).catch((e) => setError(String(e)))
+    invoke<BranchDiff>('get_branch_diff', { id: sandboxId, branch }).then(setDiff).catch((e) => setError(String(e)))
     invoke<CommitInfo[]>('get_branch_commits', { id: sandboxId, branch })
       .then(setCommits)
       .catch((e) => setError(String(e)))
   }, [sandboxId, branch])
 
-  const branchDiff = diff?.branches.find((b) => b.branch === branch)
-  const files = useMemo(() => (branchDiff ? splitPatchByFile(branchDiff.patch) : []), [branchDiff])
+  const files = useMemo(() => (diff ? splitPatchByFile(diff.patch) : []), [diff])
   const tree = useMemo(() => buildFileTree(files.map((f) => f.filePath)), [files])
   const selectedFile = clickedFile ?? files[0]?.filePath ?? null
 
@@ -46,7 +45,7 @@ export function BranchDiffPage({
   }
 
   const title = sandbox.name ?? project?.name ?? 'Sandbox'
-  const stats = branchDiff ? parseDiffStat(branchDiff.stat) : null
+  const stats = diff ? parseDiffStat(diff.stat) : null
   const selectedPatch = files.find((f) => f.filePath === selectedFile)?.patch
 
   return (
@@ -69,7 +68,7 @@ export function BranchDiffPage({
         </div>
         <div className="flex min-w-0 flex-col gap-0.5">
           <span className="text-xs text-muted-foreground/70">Base Branch</span>
-          <span className="truncate font-mono text-foreground">{diff?.base_branch ?? '—'}</span>
+          <span className="truncate font-mono text-foreground">{sandbox.base_branch ?? '—'}</span>
         </div>
         <div className="flex min-w-0 flex-col gap-0.5">
           <span className="text-xs text-muted-foreground/70">Changes</span>

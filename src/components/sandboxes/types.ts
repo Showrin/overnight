@@ -65,12 +65,16 @@ export interface BranchDiff {
   patch: string
 }
 
-// Result of get_sandbox_diff, backing the Diff tab. base_branch is null when
-// this sandbox predates branch tracking (or its host repo wasn't on a
-// branch at creation time) — branches is always empty in that case.
-export interface SandboxDiff {
+// Stats-only counterpart to BranchDiff — no patch text, for the Branches
+// list view which only ever renders `stat`.
+export interface BranchStat {
+  branch: string
+  stat: string
+}
+
+export interface SandboxDiffStats {
   base_branch: string | null
-  branches: BranchDiff[]
+  branches: BranchStat[]
 }
 
 // One commit `get_branch_commits` found between a branch and its base.

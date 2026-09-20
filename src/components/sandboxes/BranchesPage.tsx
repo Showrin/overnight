@@ -6,11 +6,11 @@ import { parseDiffStat } from '@/lib/sandboxDisplay'
 import type { Route } from '@/lib/router'
 import { useAppStore } from '@/store/useAppStore'
 import { SandboxBreadcrumb } from './SandboxBreadcrumb'
-import type { BranchDiff, SandboxDiff } from './types'
+import type { BranchStat, SandboxDiffStats } from './types'
 
 const BASE_BRANCH_UNKNOWN_COPY = 'Base branch unknown — this sandbox predates branch tracking.'
 
-function BranchCard({ diff, onShowDiffs }: { diff: BranchDiff; onShowDiffs: () => void }) {
+function BranchCard({ diff, onShowDiffs }: { diff: BranchStat; onShowDiffs: () => void }) {
   const stats = parseDiffStat(diff.stat)
 
   return (
@@ -33,7 +33,7 @@ function BranchCard({ diff, onShowDiffs }: { diff: BranchDiff; onShowDiffs: () =
 export function BranchesPage({ sandboxId, navigate }: { sandboxId: string; navigate: (route: Route) => void }) {
   const sandbox = useAppStore((s) => s.sandboxes.find((sb) => sb.id === sandboxId))
   const project = useAppStore((s) => s.projects.find((p) => p.id === sandbox?.project_id))
-  const [diff, setDiff] = useState<SandboxDiff | null>(null)
+  const [diff, setDiff] = useState<SandboxDiffStats | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -41,7 +41,7 @@ export function BranchesPage({ sandboxId, navigate }: { sandboxId: string; navig
     setLoading(true)
     setError(null)
     try {
-      const result = await invoke<SandboxDiff>('get_sandbox_diff', { id: sandboxId })
+      const result = await invoke<SandboxDiffStats>('get_sandbox_diff_stats', { id: sandboxId })
       setDiff(result)
     } catch (e) {
       setError(String(e))

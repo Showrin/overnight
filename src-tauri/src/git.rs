@@ -15,8 +15,24 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// Every `git` child process otherwise gets its own console window on
+/// Windows that pops and instantly closes — Git Sync/Diff can spawn dozens
+/// of these per run. No-op on other platforms.
+#[cfg(target_os = "windows")]
+pub(crate) fn hide_console(cmd: &mut Command) {
+  use std::os::windows::process::CommandExt;
+  const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+  cmd.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn hide_console(_cmd: &mut Command) {}
+
 fn run(repo_path: &str, args: &[&str]) -> Result<String> {
-  let output = Command::new("git").current_dir(repo_path).args(args).output()?;
+  let mut cmd = Command::new("git");
+  cmd.current_dir(repo_path).args(args);
+  hide_console(&mut cmd);
+  let output = cmd.output()?;
   if !output.status.success() {
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     return Err(Error::CommandFailed(format!("git {args:?} exited with {:?}: {stderr}", output.status.code())));
@@ -29,9 +45,10 @@ fn ref_exists(repo_path: &str, r#ref: &str) -> bool {
 }
 
 fn is_ancestor(repo_path: &str, ancestor: &str, descendant: &str) -> Result<bool> {
-  let status =
-    Command::new("git").current_dir(repo_path).args(["merge-base", "--is-ancestor", ancestor, descendant]).status()?;
-  Ok(status.success())
+  let mut cmd = Command::new("git");
+  cmd.current_dir(repo_path).args(["merge-base", "--is-ancestor", ancestor, descendant]);
+  hide_console(&mut cmd);
+  Ok(cmd.status()?.success())
 }
 
 /// The repo's currently checked-out branch, or `None` on detached HEAD (or
@@ -107,13 +124,17 @@ pub fn sync_from_sandbox(repo_path: &str, sbx_name: &str) -> Result<Vec<BranchSy
   let remote = format!("sandbox-{sbx_name}");
   let branches = fetch_and_list_sandbox_branches(repo_path, sbx_name)?;
 
-  branches
-    .into_iter()
-    .map(|branch| {
-      let target_ref = format!("{remote}/{branch}");
-      sync_branch(repo_path, &branch, &target_ref)
-    })
-    .collect()
+  std::thread::scope(|scope| {
+    let handles: Vec<_> = branches
+      .iter()
+      .map(|branch| {
+        let target_ref = format!("{remote}/{branch}");
+        scope.spawn(move || sync_branch(repo_path, branch, &target_ref))
+      })
+      .collect();
+
+    handles.into_iter().map(|h| h.join().unwrap()).collect()
+  })
 }
 
 /// Unified diff of `base_ref` against `target_ref` (three-dot: "what did
@@ -301,6 +322,44 @@ mod tests {
       vec![BranchSyncOutcome { branch: "main".to_string(), status: BranchSyncStatus::FastForwarded }]
     );
     assert_eq!(run(local, &["rev-parse", "main"]).unwrap(), ahead);
+
+    fs::remove_dir_all(upstream_dir).unwrap();
+    fs::remove_dir_all(local_dir).unwrap();
+  }
+
+  #[test]
+  fn sync_from_sandbox_fast_forwards_multiple_branches_concurrently() {
+    let upstream_dir = init_repo();
+    let upstream = upstream_dir.to_str().unwrap();
+    commit(upstream, "a.txt", "1");
+    for name in ["b1", "b2", "b3"] {
+      run(upstream, &["branch", name]).unwrap();
+    }
+
+    let local_dir = std::env::temp_dir().join(format!("overnight-git-sync-{}", uuid::Uuid::new_v4()));
+    let local = local_dir.to_str().unwrap();
+    let tmp = std::env::temp_dir();
+    run(tmp.to_str().unwrap(), &["clone", "-q", "--origin", "sandbox-test", upstream, local]).unwrap();
+    for name in ["b1", "b2", "b3"] {
+      run(local, &["branch", name, &format!("sandbox-test/{name}")]).unwrap();
+    }
+
+    // Advance every branch independently so all four fast-forwards race
+    // against each other on the same local repo.
+    let mut expected = vec![];
+    for name in ["main", "b1", "b2", "b3"] {
+      run(upstream, &["checkout", "-q", name]).unwrap();
+      let sha = commit(upstream, "a.txt", &format!("{name}-2"));
+      expected.push((name.to_string(), sha));
+    }
+
+    let outcomes = sync_from_sandbox(local, "test").unwrap();
+    assert_eq!(outcomes.len(), 4);
+    assert!(outcomes.iter().all(|o| o.status == BranchSyncStatus::FastForwarded), "{outcomes:?}");
+
+    for (branch, sha) in expected {
+      assert_eq!(run(local, &["rev-parse", &branch]).unwrap(), sha);
+    }
 
     fs::remove_dir_all(upstream_dir).unwrap();
     fs::remove_dir_all(local_dir).unwrap();
