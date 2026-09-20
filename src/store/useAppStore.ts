@@ -23,6 +23,7 @@ interface AppStore {
   settings: AppSettings | null
   platform: string | null
   defaultTerminalHost: string
+  layoutExpanded: boolean
   defaultAgent: string
   networkPolicyPreset: string | null
   highlightNetworkPreset: boolean
@@ -41,6 +42,8 @@ interface AppStore {
   loadPlatform: () => Promise<void>
   loadDefaultTerminalHost: () => Promise<void>
   saveDefaultTerminalHost: (terminalHost: string) => Promise<void>
+  loadLayoutExpanded: () => Promise<void>
+  saveLayoutExpanded: (expanded: boolean) => Promise<void>
   loadDefaultAgent: () => Promise<void>
   saveDefaultAgent: (agent: string) => Promise<void>
   loadNetworkPolicyPreset: () => Promise<void>
@@ -61,6 +64,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   settings: null,
   platform: null,
   defaultTerminalHost: 'cmd',
+  layoutExpanded: false,
   defaultAgent: 'claude',
   networkPolicyPreset: null,
   highlightNetworkPreset: false,
@@ -119,6 +123,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
   async saveDefaultTerminalHost(terminalHost) {
     await invoke('save_default_terminal_host', { terminalHost })
     set({ defaultTerminalHost: terminalHost })
+  },
+
+  async loadLayoutExpanded() {
+    const expanded = await invoke<boolean>('get_layout_expanded')
+    set({ layoutExpanded: expanded })
+  },
+
+  async saveLayoutExpanded(expanded) {
+    await invoke('save_layout_expanded', { expanded })
+    set({ layoutExpanded: expanded })
   },
 
   async loadDefaultAgent() {
@@ -204,6 +218,7 @@ export function initAppStore() {
   useAppStore.getState().loadSettings()
   useAppStore.getState().loadPlatform()
   useAppStore.getState().loadDefaultTerminalHost()
+  useAppStore.getState().loadLayoutExpanded()
   useAppStore.getState().loadDefaultAgent()
   useAppStore.getState().loadNetworkPolicyPreset()
   useAppStore.getState().loadHostStatsHistory()

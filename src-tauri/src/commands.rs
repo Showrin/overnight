@@ -765,6 +765,25 @@ pub fn save_default_terminal_host(pool: State<DbPool>, terminal_host: String) ->
   settings::set(&conn, SANDBOX_TERMINAL_HOST_KEY, &terminal_host).map_err(|e| e.to_string())
 }
 
+const LAYOUT_EXPANDED_KEY: &str = "layout_expanded";
+
+#[tauri::command]
+pub fn get_layout_expanded(pool: State<DbPool>) -> std::result::Result<bool, String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  Ok(
+    settings::get(&conn, LAYOUT_EXPANDED_KEY)
+      .map_err(|e| e.to_string())?
+      .map(|v| v == "true")
+      .unwrap_or(false),
+  )
+}
+
+#[tauri::command]
+pub fn save_layout_expanded(pool: State<DbPool>, expanded: bool) -> std::result::Result<(), String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  settings::set(&conn, LAYOUT_EXPANDED_KEY, if expanded { "true" } else { "false" }).map_err(|e| e.to_string())
+}
+
 const SANDBOX_AGENT_KEY: &str = "default_agent";
 const DEFAULT_AGENT: &str = "claude";
 

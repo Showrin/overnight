@@ -1,5 +1,5 @@
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { Minus, PanelLeft, Square, X } from 'lucide-react'
+import { Maximize2, Minimize2, Minus, PanelLeft, Square, X } from 'lucide-react'
 import logoIcon from '@/assets/logo-icon.svg'
 
 const appWindow = getCurrentWindow()
@@ -7,9 +7,13 @@ const appWindow = getCurrentWindow()
 export function Titlebar({
   sidebarCollapsed,
   onToggleSidebar,
+  layoutExpanded,
+  onToggleLayoutExpanded,
 }: {
   sidebarCollapsed: boolean
   onToggleSidebar: () => void
+  layoutExpanded: boolean
+  onToggleLayoutExpanded: () => void
 }) {
   return (
     <header
@@ -26,6 +30,19 @@ export function Titlebar({
           className="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground"
         >
           <PanelLeft className="size-4" strokeWidth={1.5} />
+        </button>
+        <button
+          type="button"
+          aria-label={layoutExpanded ? 'Collapse layout' : 'Expand layout'}
+          aria-pressed={layoutExpanded}
+          onClick={onToggleLayoutExpanded}
+          className="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+        >
+          {layoutExpanded ? (
+            <Minimize2 className="size-4" strokeWidth={1.5} />
+          ) : (
+            <Maximize2 className="size-4" strokeWidth={1.5} />
+          )}
         </button>
       </div>
       <div className="flex h-full items-stretch">

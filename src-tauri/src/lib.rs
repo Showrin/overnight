@@ -57,6 +57,8 @@ pub fn run() {
       commands::get_platform,
       commands::get_default_terminal_host,
       commands::save_default_terminal_host,
+      commands::get_layout_expanded,
+      commands::save_layout_expanded,
       commands::start_plan_session,
       commands::sbx_health_check,
       commands::init_sbx_policy,

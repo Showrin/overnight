@@ -12,11 +12,14 @@ import { SettingsScreen } from '@/components/settings/SettingsScreen'
 import { TelemetryTab } from '@/components/developer/TelemetryTab'
 import { CommandLogTab } from '@/components/developer/CommandLogTab'
 import { parseRoute, pushRoute, type Route } from '@/lib/router'
-import { initAppStore } from '@/store/useAppStore'
+import { initAppStore, useAppStore } from '@/store/useAppStore'
+import { cn } from '@/lib/utils'
 
 function App() {
   const [route, setRoute] = useState<Route>(() => parseRoute(window.location.hash))
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const layoutExpanded = useAppStore((state) => state.layoutExpanded)
+  const saveLayoutExpanded = useAppStore((state) => state.saveLayoutExpanded)
 
   const navigate = useCallback((next: Route) => {
     pushRoute(next)
@@ -60,6 +63,8 @@ function App() {
       <Titlebar
         sidebarCollapsed={sidebarCollapsed}
         onToggleSidebar={() => setSidebarCollapsed((collapsed) => !collapsed)}
+        layoutExpanded={layoutExpanded}
+        onToggleLayoutExpanded={() => saveLayoutExpanded(!layoutExpanded)}
       />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar current={route.screen} onNavigate={navigate} collapsed={sidebarCollapsed} />
@@ -74,7 +79,7 @@ function App() {
               />
             </div>
           ) : route.screen === 'dev-telemetry' || route.screen === 'dev-commands' || route.screen === 'settings' ? (
-            <div className="@container flex h-full w-full max-w-5xl flex-col p-6">
+            <div className={cn('@container flex h-full w-full flex-col p-6', !layoutExpanded && 'max-w-5xl')}>
               {route.screen === 'dev-telemetry' && <TelemetryTab />}
               {route.screen === 'dev-commands' && <CommandLogTab />}
               {route.screen === 'settings' && (
@@ -82,7 +87,7 @@ function App() {
               )}
             </div>
           ) : (
-            <div className="@container w-full max-w-5xl h-fit p-6">
+            <div className={cn('@container w-full h-fit p-6', !layoutExpanded && 'max-w-5xl')}>
               {route.screen === 'dashboard' && <JiraIssueList />}
               {route.screen === 'projects' && <ProjectsScreen />}
               {route.screen === 'sandboxes' && (
