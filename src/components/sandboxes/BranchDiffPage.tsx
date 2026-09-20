@@ -49,7 +49,7 @@ export function BranchDiffPage({
   const selectedPatch = files.find((f) => f.filePath === selectedFile)?.patch
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex h-full min-h-0 flex-col gap-6">
       <SandboxBreadcrumb
         segments={[
           { label: 'Sandboxes', onClick: () => navigate({ screen: 'sandboxes' }) },
@@ -95,9 +95,9 @@ export function BranchDiffPage({
       ) : files.length === 0 ? (
         <p className="text-sm text-muted-foreground">No changes.</p>
       ) : (
-        <div className="flex flex-1 gap-4 overflow-hidden">
+        <div className="flex min-h-0 flex-1 gap-4">
           <FileTreePanel tree={tree} selectedFile={selectedFile} onSelectFile={setClickedFile} />
-          <div className="min-w-0 flex-1 overflow-auto">
+          <div className="min-h-0 min-w-0 flex-1">
             {selectedPatch && selectedFile && <DiffViewer patch={selectedPatch} filePath={selectedFile} />}
           </div>
         </div>

@@ -171,7 +171,7 @@ function DiffViewerHeader({ filePath }: { filePath: string }) {
   }
 
   return (
-    <div className="flex items-center justify-between gap-2 border-b border-border bg-muted/40 px-2 py-1.5 font-mono text-xs">
+    <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-muted/40 px-2 py-1.5 font-mono text-xs">
       <span className="truncate text-foreground">{filePath}</span>
       <Button size="sm" variant="ghost" onClick={copy} type="button" title="Copy file path">
         {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
@@ -190,39 +190,41 @@ export function DiffViewer({ patch, filePath }: { patch: string; filePath: strin
   }
 
   return (
-    <div className="my-4 rounded-md border border-border bg-primary/5">
+    <div className="flex h-full flex-col overflow-hidden rounded-md border border-border bg-primary/5">
       <DiffViewerHeader filePath={filePath} />
-      {hunks.map((hunk, i) => (
-        <div key={i}>
-          <div className="bg-muted/40 px-2 py-1 font-mono text-xs text-muted-foreground">{hunk.header}</div>
-          <table className="w-full table-fixed border-collapse text-xs leading-relaxed [tab-size:2]">
-            <tbody>
-              {hunk.rows.map((row, j) => (
-                <tr key={j}>
-                  <td className={`w-10 select-none px-2 text-right align-top font-mono tabular-nums ${GUTTER_CLASS[row.left.kind]}`}>
-                    {row.left.lineNumber ?? ''}
-                  </td>
-                  <td className={`w-[calc(50%-2.5rem)] px-2 align-top font-mono ${CELL_CLASS[row.left.kind]}`}>
-                    <div className={`whitespace-pre-wrap break-all ${isCommentLine(row.left.text) ? 'opacity-60' : ''}`}>
-                      {row.left.text.length > 0 ? row.left.text : ' '}
-                    </div>
-                  </td>
-                  <td
-                    className={`w-10 select-none border-l border-border px-2 text-right align-top font-mono tabular-nums ${GUTTER_CLASS[row.right.kind]}`}
-                  >
-                    {row.right.lineNumber ?? ''}
-                  </td>
-                  <td className={`w-[calc(50%-2.5rem)] px-2 align-top font-mono ${CELL_CLASS[row.right.kind]}`}>
-                    <div className={`whitespace-pre-wrap break-all ${isCommentLine(row.right.text) ? 'opacity-60' : ''}`}>
-                      {row.right.text.length > 0 ? row.right.text : ' '}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ))}
+      <div className="min-h-0 flex-1 overflow-auto">
+        {hunks.map((hunk, i) => (
+          <div key={i}>
+            <div className="bg-muted/40 px-2 py-1 font-mono text-xs text-muted-foreground">{hunk.header}</div>
+            <table className="w-full table-fixed border-collapse text-xs leading-relaxed [tab-size:2]">
+              <tbody>
+                {hunk.rows.map((row, j) => (
+                  <tr key={j}>
+                    <td className={`w-10 select-none px-2 text-right align-top font-mono tabular-nums ${GUTTER_CLASS[row.left.kind]}`}>
+                      {row.left.lineNumber ?? ''}
+                    </td>
+                    <td className={`w-[calc(50%-2.5rem)] px-2 align-top font-mono ${CELL_CLASS[row.left.kind]}`}>
+                      <div className={`whitespace-pre-wrap break-all ${isCommentLine(row.left.text) ? 'opacity-60' : ''}`}>
+                        {row.left.text.length > 0 ? row.left.text : ' '}
+                      </div>
+                    </td>
+                    <td
+                      className={`w-10 select-none border-l border-border px-2 text-right align-top font-mono tabular-nums ${GUTTER_CLASS[row.right.kind]}`}
+                    >
+                      {row.right.lineNumber ?? ''}
+                    </td>
+                    <td className={`w-[calc(50%-2.5rem)] px-2 align-top font-mono ${CELL_CLASS[row.right.kind]}`}>
+                      <div className={`whitespace-pre-wrap break-all ${isCommentLine(row.right.text) ? 'opacity-60' : ''}`}>
+                        {row.right.text.length > 0 ? row.right.text : ' '}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

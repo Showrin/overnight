@@ -65,7 +65,7 @@ function App() {
         <Sidebar current={route.screen} onNavigate={navigate} collapsed={sidebarCollapsed} />
         <main className="flex flex-1 justify-center overflow-auto">
           {route.screen === 'sandboxes' && route.branch ? (
-            <div className="@container w-full h-fit p-6">
+            <div className="@container flex h-full w-full flex-col overflow-hidden p-6">
               <SandboxesScreen
                 sandboxId={route.sandboxId}
                 branches={route.branches}

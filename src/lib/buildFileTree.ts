@@ -66,3 +66,25 @@ export function collectDirPaths(nodes: FileTreeNode[]): string[] {
   }
   return paths
 }
+
+// Keeps a dir if it or a descendant matches; keeps a file if its path
+// contains the query. Matches on full path, so a folder name filters too.
+export function filterFileTree(nodes: FileTreeNode[], query: string): FileTreeNode[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return nodes
+
+  function walk(list: FileTreeNode[]): FileTreeNode[] {
+    const result: FileTreeNode[] = []
+    for (const node of list) {
+      if (node.type === 'file') {
+        if (node.path.toLowerCase().includes(q)) result.push(node)
+      } else {
+        const children = walk(node.children)
+        if (children.length > 0) result.push({ ...node, children })
+      }
+    }
+    return result
+  }
+
+  return walk(nodes)
+}
