@@ -1,4 +1,4 @@
-import type { SandboxStatus } from '@/components/sandboxes/types'
+import type { BranchSyncStatus, SandboxStatus } from '@/components/sandboxes/types'
 import {
   NETWORK_POLICY_PRESET_LABELS,
   SANDBOX_NETWORK_PRESET_OVERRIDE_LABELS,
@@ -27,6 +27,28 @@ export function permissionBadgeVariant(permissionMode: string): BadgeVariant {
   if (permissionMode === 'bypassPermissions') return 'outline-destructive'
   if (permissionMode === 'acceptEdits') return 'outline-warning'
   return 'outline-muted'
+}
+
+export function branchSyncStatusLabel(status: BranchSyncStatus): string {
+  switch (status) {
+    case 'fast_forwarded':
+      return 'fast-forwarded'
+    case 'needs_manual_merge':
+      return 'diverged — needs manual merge'
+    case 'new_branch':
+      return 'new branch available (fetched, not checked out)'
+  }
+}
+
+export function branchSyncBadgeVariant(status: BranchSyncStatus): BadgeVariant {
+  switch (status) {
+    case 'fast_forwarded':
+      return 'outline-success'
+    case 'needs_manual_merge':
+      return 'outline-warning'
+    case 'new_branch':
+      return 'outline-muted'
+  }
 }
 
 // Formats a past unix-ms timestamp as "3 minutes ago"-style relative text,

@@ -62,7 +62,7 @@ export function BranchDiffPage({
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 
-      <div className="flex flex-wrap items-center gap-x-8 gap-y-2 border-b border-border pb-4 text-sm">
+      <div className="flex flex-wrap items-center gap-x-8 gap-y-2 border-b border-border py-4 text-sm">
         <div className="flex min-w-0 flex-col gap-0.5">
           <span className="text-xs text-muted-foreground/70">Branch</span>
           <span className="truncate font-mono text-foreground">{branch}</span>

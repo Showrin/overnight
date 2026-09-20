@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { GitBranch, Loader2, RefreshCw } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { parseDiffStat } from '@/lib/sandboxDisplay'
+import { branchSyncBadgeVariant, branchSyncStatusLabel, formatRelativeTime, parseDiffStat } from '@/lib/sandboxDisplay'
 import type { Route } from '@/lib/router'
+import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
 import { SandboxHeader } from './SandboxHeader'
 import type { BranchStat, SandboxDiffStats } from './types'
@@ -95,6 +97,39 @@ export function BranchesPage({ sandboxId, navigate }: { sandboxId: string; navig
               onShowDiffs={() => navigate({ screen: 'sandboxes', sandboxId, branches: true, branch: branchDiff.branch })}
             />
           ))}
+        </div>
+      )}
+
+      {sandbox.mode === 'clone' && (
+        <div className="mt-4 flex flex-col gap-3 border-t border-dashed border-border pt-8">
+          <h2 className="text-base font-semibold text-foreground">Git Sync Output</h2>
+          {sandbox.last_git_sync_at == null ? (
+            <p className="text-sm text-muted-foreground">Not synced yet.</p>
+          ) : (
+            <>
+              <p className="text-xs text-muted-foreground">
+                Last synced {formatRelativeTime(sandbox.last_git_sync_at)}
+              </p>
+              {sandbox.last_git_sync_result.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No sandbox branches to sync.</p>
+              ) : (
+                <ul className="flex flex-col gap-1.5">
+                  {sandbox.last_git_sync_result.map((o) => (
+                    <li
+                      key={o.branch}
+                      className={cn(
+                        'flex items-center justify-between gap-4 rounded-md border px-3 py-2 text-sm',
+                        o.status === 'needs_manual_merge' ? 'border-warning/40 bg-warning/10' : 'border-border'
+                      )}
+                    >
+                      <span className="truncate font-mono text-foreground">{o.branch}</span>
+                      <Badge variant={branchSyncBadgeVariant(o.status)}>{branchSyncStatusLabel(o.status)}</Badge>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
         </div>
       )}
     </div>

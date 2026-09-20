@@ -59,7 +59,7 @@ pub fn current_branch(repo_path: &str) -> Option<String> {
   run(repo_path, &["symbolic-ref", "--quiet", "--short", "HEAD"]).ok()
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BranchSyncStatus {
   FastForwarded,
@@ -67,7 +67,7 @@ pub enum BranchSyncStatus {
   NewBranch,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BranchSyncOutcome {
   pub branch: String,
   pub status: BranchSyncStatus,

@@ -200,6 +200,12 @@ pub struct Sandbox {
   pub branch_snapshot_at: Option<i64>,
   pub env_vars: Vec<EnvVar>,
   pub secrets: Vec<Secret>,
+  /// Unix-ms timestamp of the last `git_sync_sandbox` run, or `None` if
+  /// this sandbox has never been synced.
+  pub last_git_sync_at: Option<i64>,
+  /// Per-branch outcome of the last Git Sync run. Empty until the first
+  /// sync. JSON-TEXT-column pattern, same as `branches`/`worktrees`.
+  pub last_git_sync_result: Vec<crate::git::BranchSyncOutcome>,
 }
 
 /// One periodic (or pre-stop/pre-delete) backup of a sandbox's `~/.claude`

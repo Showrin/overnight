@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { invoke } from '@tauri-apps/api/core'
 import type { Project } from '@/components/projects/types'
-import type { HostMetric, Sandbox } from '@/components/sandboxes/types'
+import type { BranchSyncOutcome, HostMetric, Sandbox } from '@/components/sandboxes/types'
 import type { ActiveBackup, ActiveOperation } from '@/components/backups/types'
 import type { NetworkPolicySettings } from '@/lib/networkPolicy'
 
@@ -15,6 +15,14 @@ const HOST_STATS_HISTORY_MAX_POINTS = 150
 export interface AppSettings {
   default_claude_permission_mode: string
   skill_folders: string[]
+}
+
+// State for the bottom-right Git Sync popout — set once per sync run,
+// cleared on dismiss or by GitSyncToast's own 45s auto-dismiss timer.
+export interface GitSyncToastState {
+  sandboxId: string
+  label: string
+  outcomes: BranchSyncOutcome[]
 }
 
 interface AppStore {
@@ -34,6 +42,7 @@ interface AppStore {
   activeBackups: ActiveBackup[]
   activeOperations: ActiveOperation[]
   sidebarWidth: number
+  gitSyncToast: GitSyncToastState | null
 
   loadProjects: () => Promise<void>
   loadSandboxes: () => Promise<void>
@@ -60,6 +69,8 @@ interface AppStore {
   loadSidebarWidth: () => Promise<void>
   setSidebarWidth: (width: number) => void
   saveSidebarWidth: (width: number) => Promise<void>
+  showGitSyncToast: (toast: GitSyncToastState) => void
+  dismissGitSyncToast: () => void
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
@@ -79,6 +90,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   activeBackups: [],
   activeOperations: [],
   sidebarWidth: 208,
+  gitSyncToast: null,
 
   async loadProjects() {
     const projects = await invoke<Project[]>('list_projects')
@@ -217,6 +229,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
   async saveSidebarWidth(width) {
     await invoke('save_sidebar_width', { width })
     set({ sidebarWidth: width })
+  },
+
+  showGitSyncToast(toast) {
+    set({ gitSyncToast: toast })
+  },
+
+  dismissGitSyncToast() {
+    set({ gitSyncToast: null })
   },
 }))
 

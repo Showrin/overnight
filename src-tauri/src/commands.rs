@@ -2541,6 +2541,9 @@ pub fn git_sync_sandbox(pool: State<DbPool>, id: String) -> std::result::Result<
     None,
     stderr.as_deref(),
   );
+  if let Ok(outcomes) = &result {
+    let _ = sandboxes::record_git_sync(&conn, &id, outcomes, crate::db::models::now_millis());
+  }
   result
 }
 

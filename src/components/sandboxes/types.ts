@@ -36,6 +36,12 @@ export interface Sandbox {
   // first one. Drives the Branch tab's "live" vs "as of <relative time>"
   // freshness label.
   branch_snapshot_at: number | null
+  // Unix-ms timestamp of the last Git Sync run, or null if this sandbox
+  // has never been synced.
+  last_git_sync_at: number | null
+  // Per-branch outcome of the last Git Sync run. Empty until the first
+  // sync.
+  last_git_sync_result: BranchSyncOutcome[]
 }
 
 export interface WorktreeInfo {

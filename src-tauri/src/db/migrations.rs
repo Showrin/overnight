@@ -347,6 +347,15 @@ pub fn migrations() -> Migrations<'static> {
     ALTER TABLE projects ADD COLUMN secrets TEXT NOT NULL DEFAULT '[]';
     ALTER TABLE sandboxes ADD COLUMN secrets TEXT NOT NULL DEFAULT '[]';
     ",
+  ), M::up(
+    "
+    -- Last Git Sync run against this sandbox: last_git_sync_at is the
+    -- timestamp of that run (NULL until the first sync); last_git_sync_result
+    -- is the JSON-serialized Vec<BranchSyncOutcome> it produced, following
+    -- the same JSON-TEXT-column pattern as branches/worktrees above.
+    ALTER TABLE sandboxes ADD COLUMN last_git_sync_at INTEGER;
+    ALTER TABLE sandboxes ADD COLUMN last_git_sync_result TEXT NOT NULL DEFAULT '[]';
+    ",
   )])
 }
 

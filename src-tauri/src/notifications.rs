@@ -8,6 +8,17 @@
 use notify_rust::{Notification, NotificationResponse};
 use tauri::{AppHandle, Manager};
 
+/// Emitted as `notification-clicked`'s payload. `branches` hints the
+/// frontend to land on the sandbox's Branches page instead of its overview.
+/// `camelCase` because, unlike `#[tauri::command]` args, a plain `emit`
+/// payload isn't auto-converted — the frontend listener expects `sandboxId`.
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NotificationClick {
+  sandbox_id: String,
+  branches: bool,
+}
+
 /// Shows a desktop notification. If the user clicks it (as opposed to
 /// dismissing it), focuses the main window and emits `notification-clicked`
 /// with `sandbox_id`, if one was given.
@@ -17,13 +28,20 @@ pub fn notify(
   title: String,
   body: Option<String>,
   sandbox_id: Option<String>,
+  branches: Option<bool>,
 ) -> Result<(), String> {
-  notify_plain(&app, &title, body.as_deref(), sandbox_id)
+  notify_plain(&app, &title, body.as_deref(), sandbox_id, branches.unwrap_or(false))
 }
 
 /// Body of `notify`, callable directly from Rust (e.g. the backup
 /// scheduler) without a frontend round trip through the command.
-pub fn notify_plain(app: &AppHandle, title: &str, body: Option<&str>, sandbox_id: Option<String>) -> Result<(), String> {
+pub fn notify_plain(
+  app: &AppHandle,
+  title: &str,
+  body: Option<&str>,
+  sandbox_id: Option<String>,
+  branches: bool,
+) -> Result<(), String> {
   let app = app.clone();
   let mut notification = Notification::new();
   let product_name = app.config().product_name.clone().unwrap_or_else(|| "Overnight".into());
@@ -57,7 +75,7 @@ pub fn notify_plain(app: &AppHandle, title: &str, body: Option<&str>, sandbox_id
       if matches!(response, NotificationResponse::Default | NotificationResponse::Action(_)) {
         focus_main_window(&app);
         if let Some(id) = sandbox_id {
-          crate::process::emit_to_webview(&app, "notification-clicked", id);
+          crate::process::emit_to_webview(&app, "notification-clicked", NotificationClick { sandbox_id: id, branches });
         }
       }
     });

@@ -5,7 +5,7 @@ import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notif
 // the plugin shows the notification through notify-rust but discards the handle,
 // so it can't tell us when the user clicks it. Ours waits on that click and emits
 // `notification-clicked` with sandboxId, so the app can focus itself and jump to it.
-export async function notify(title: string, body?: string, sandboxId?: string) {
+export async function notify(title: string, body?: string, sandboxId?: string, branches?: boolean) {
   try {
     let granted = await isPermissionGranted()
     if (!granted) {
@@ -13,7 +13,7 @@ export async function notify(title: string, body?: string, sandboxId?: string) {
       granted = permission === 'granted'
     }
     if (granted) {
-      await invoke('notify', { title, body, sandboxId })
+      await invoke('notify', { title, body, sandboxId, branches })
     }
   } catch {
     // Notifications are a nice-to-have — a failure here shouldn't surface as an app error.

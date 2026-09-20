@@ -20,17 +20,6 @@ const BACKUP_SCOPES: { value: 'all' | 'claude' | 'git'; label: string }[] = [
 type BusyAction = 'start' | 'stop' | 'delete' | 'vscode' | 'terminal' | 'agent' | 'git-sync' | 'backup' | null
 type ConfirmAction = 'stop' | 'delete' | null
 
-function branchSyncStatusLabel(status: BranchSyncOutcome['status']): string {
-  switch (status) {
-    case 'fast_forwarded':
-      return 'fast-forwarded'
-    case 'needs_manual_merge':
-      return 'diverged — needs manual merge'
-    case 'new_branch':
-      return 'new branch available (fetched, not checked out)'
-  }
-}
-
 export function SandboxActions({
   sandbox,
   projectName,
@@ -47,9 +36,9 @@ export function SandboxActions({
   const defaultAgent = useAppStore((s) => s.defaultAgent)
   const platform = useAppStore((s) => s.platform)
   const isBackingUp = useAppStore((s) => s.activeBackups.some((b) => b.sandbox_id === sandbox.id))
+  const showGitSyncToast = useAppStore((s) => s.showGitSyncToast)
   const [busyAction, setBusyAction] = useState<BusyAction>(null)
   const [error, setError] = useState<string | null>(null)
-  const [gitSyncResult, setGitSyncResult] = useState<BranchSyncOutcome[] | null>(null)
   const [terminalMenuOpen, setTerminalMenuOpen] = useState(false)
   const [backupMenuOpen, setBackupMenuOpen] = useState(false)
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null)
@@ -131,9 +120,14 @@ export function SandboxActions({
     setError(null)
     try {
       const outcomes = await invoke<BranchSyncOutcome[]>('git_sync_sandbox', { id: sandbox.id })
-      setGitSyncResult(outcomes)
       const fastForwarded = outcomes.filter((o) => o.status === 'fast_forwarded').length
-      notify('Git Sync complete', `${fastForwarded} of ${outcomes.length} branch(es) fast-forwarded.`)
+      const needsManualMerge = outcomes.filter((o) => o.status === 'needs_manual_merge').length
+      const summary = needsManualMerge > 0
+        ? `${fastForwarded} of ${outcomes.length} branch(es) fast-forwarded — ${needsManualMerge} need${needsManualMerge === 1 ? '' : 's'} manual merge.`
+        : `${fastForwarded} of ${outcomes.length} branch(es) fast-forwarded.`
+      notify('Git Sync complete', summary, sandbox.id, true)
+      showGitSyncToast({ sandboxId: sandbox.id, label: `Git Sync — ${sandbox.name ?? projectName}`, outcomes })
+      onChanged()
     } catch (e) {
       setError(String(e))
     } finally {
@@ -144,25 +138,6 @@ export function SandboxActions({
   return (
     <div className="flex flex-col gap-6">
       {error && <p className="text-sm text-destructive">{error}</p>}
-
-      {gitSyncResult && (
-        <div className="rounded-md border p-3 text-xs">
-          <p className="font-medium text-foreground">Git Sync result</p>
-          {gitSyncResult.length === 0 ? (
-            <p className="mt-1">No sandbox branches to sync.</p>
-          ) : (
-            <ul className="mt-1 flex flex-col gap-0.5">
-              {gitSyncResult.map((o) => (
-                <li key={o.branch}>
-                  <span className="font-mono text-foreground">{o.branch}</span>
-                  {" — "}
-                  {branchSyncStatusLabel(o.status)}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
 
       <div className="flex flex-wrap gap-2">
         {sandbox.status === "running" && (

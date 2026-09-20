@@ -8,6 +8,7 @@ fn row_to_sandbox(row: &rusqlite::Row) -> rusqlite::Result<Sandbox> {
   let worktrees_raw: String = row.get("worktrees")?;
   let env_vars_raw: String = row.get("env_vars")?;
   let secrets_raw: String = row.get("secrets")?;
+  let last_git_sync_result_raw: String = row.get("last_git_sync_result")?;
   Ok(Sandbox {
     id: row.get("id")?,
     project_id: row.get("project_id")?,
@@ -30,6 +31,8 @@ fn row_to_sandbox(row: &rusqlite::Row) -> rusqlite::Result<Sandbox> {
     branch_snapshot_at: row.get("branch_snapshot_at")?,
     env_vars: serde_json::from_str(&env_vars_raw).unwrap_or_default(),
     secrets: serde_json::from_str(&secrets_raw).unwrap_or_default(),
+    last_git_sync_at: row.get("last_git_sync_at")?,
+    last_git_sync_result: serde_json::from_str(&last_git_sync_result_raw).unwrap_or_default(),
   })
 }
 
@@ -214,6 +217,25 @@ pub fn record_branch_snapshot(
      SET current_branch = ?1, branches = ?2, worktrees = ?3, branch_snapshot_at = ?4
      WHERE id = ?5",
     params![current_branch, branches_json, worktrees_json, at, id],
+  )?;
+  if changed == 0 {
+    return Err(Error::NotFound);
+  }
+  get(conn, id)
+}
+
+/// Persists the outcome of one Git Sync run — mirrors `record_branch_snapshot`'s
+/// "JSON-serialize into the TEXT column" pattern.
+pub fn record_git_sync(
+  conn: &Connection,
+  id: &str,
+  outcomes: &[crate::git::BranchSyncOutcome],
+  at: i64,
+) -> Result<Sandbox> {
+  let json = serde_json::to_string(outcomes).unwrap_or_else(|_| "[]".to_string());
+  let changed = conn.execute(
+    "UPDATE sandboxes SET last_git_sync_at = ?1, last_git_sync_result = ?2 WHERE id = ?3",
+    params![at, json, id],
   )?;
   if changed == 0 {
     return Err(Error::NotFound);
@@ -443,6 +465,32 @@ mod tests {
     let other_project_id = make_project(&conn);
     let no_base_branch = create(&conn, &other_project_id, "clone", None, None, "default", None).unwrap();
     assert_eq!(no_base_branch.base_branch, None);
+  }
+
+  #[test]
+  fn records_git_sync_result() {
+    let conn = test_conn();
+    let project_id = make_project(&conn);
+    let sandbox = create(&conn, &project_id, "clone", None, None, "default", None).unwrap();
+    assert_eq!(sandbox.last_git_sync_at, None);
+    assert_eq!(sandbox.last_git_sync_result, Vec::new());
+
+    let outcomes = vec![
+      crate::git::BranchSyncOutcome { branch: "feature".to_string(), status: crate::git::BranchSyncStatus::FastForwarded },
+      crate::git::BranchSyncOutcome { branch: "other".to_string(), status: crate::git::BranchSyncStatus::NeedsManualMerge },
+    ];
+    let updated = record_git_sync(&conn, &sandbox.id, &outcomes, 1700000000000).unwrap();
+    assert_eq!(updated.last_git_sync_at, Some(1700000000000));
+    assert_eq!(updated.last_git_sync_result, outcomes);
+
+    let fetched = get(&conn, &sandbox.id).unwrap();
+    assert_eq!(fetched.last_git_sync_result, outcomes);
+  }
+
+  #[test]
+  fn record_git_sync_missing_id_returns_not_found() {
+    let conn = test_conn();
+    assert!(matches!(record_git_sync(&conn, "missing", &[], 0), Err(Error::NotFound)));
   }
 
   #[test]

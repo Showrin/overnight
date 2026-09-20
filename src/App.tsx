@@ -6,6 +6,7 @@ import { OperationsIndicator } from '@/components/OperationsIndicator'
 import { BackupsScreen } from '@/components/backups/BackupsScreen'
 import { JiraIssueList } from '@/components/dashboard/JiraIssueList'
 import { ProjectsScreen } from '@/components/projects/ProjectsScreen'
+import { GitSyncToast } from '@/components/sandboxes/GitSyncToast'
 import { PerformanceMonitorTab } from '@/components/sandboxes/PerformanceMonitorTab'
 import { SandboxesScreen } from '@/components/sandboxes/SandboxesScreen'
 import { SettingsScreen } from '@/components/settings/SettingsScreen'
@@ -50,8 +51,8 @@ function App() {
   }, [])
 
   useEffect(() => {
-    const unlisten = listen<string>('notification-clicked', (event) => {
-      navigate({ screen: 'sandboxes', sandboxId: event.payload })
+    const unlisten = listen<{ sandboxId: string; branches: boolean }>('notification-clicked', (event) => {
+      navigate({ screen: 'sandboxes', sandboxId: event.payload.sandboxId, branches: event.payload.branches })
     })
     return () => {
       unlisten.then((fn) => fn())
@@ -114,6 +115,7 @@ function App() {
         </main>
       </div>
       <OperationsIndicator navigate={navigate} />
+      <GitSyncToast />
     </div>
   )
 }

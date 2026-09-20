@@ -319,7 +319,7 @@ pub async fn run_scheduler(app: AppHandle, pool: DbPool) {
       if let Err(e) = backup_sandbox(&app, &pool, &sandbox.id, "scheduled", BackupScope::All).await {
         log::warn!("run_scheduler: backup failed for sandbox {}: {e}", sandbox.id);
         let label = sandbox.name.clone().unwrap_or_else(|| sandbox.id.clone());
-        let _ = crate::notifications::notify_plain(&app, "Backup failed", Some(&format!("{label}: {e}")), Some(sandbox.id));
+        let _ = crate::notifications::notify_plain(&app, "Backup failed", Some(&format!("{label}: {e}")), Some(sandbox.id), false);
       }
     }
   }
