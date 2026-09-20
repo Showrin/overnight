@@ -33,6 +33,7 @@ interface AppStore {
   autoBackupEnabled: boolean
   activeBackups: ActiveBackup[]
   activeOperations: ActiveOperation[]
+  sidebarWidth: number
 
   loadProjects: () => Promise<void>
   loadSandboxes: () => Promise<void>
@@ -56,6 +57,9 @@ interface AppStore {
   saveAutoBackupEnabled: (enabled: boolean) => Promise<void>
   loadActiveBackups: () => Promise<void>
   loadActiveOperations: () => Promise<void>
+  loadSidebarWidth: () => Promise<void>
+  setSidebarWidth: (width: number) => void
+  saveSidebarWidth: (width: number) => Promise<void>
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
@@ -74,6 +78,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   autoBackupEnabled: true,
   activeBackups: [],
   activeOperations: [],
+  sidebarWidth: 208,
 
   async loadProjects() {
     const projects = await invoke<Project[]>('list_projects')
@@ -199,6 +204,20 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const activeOperations = await invoke<ActiveOperation[]>('list_active_operations')
     set({ activeOperations })
   },
+
+  async loadSidebarWidth() {
+    const width = await invoke<number>('get_sidebar_width')
+    set({ sidebarWidth: width })
+  },
+
+  setSidebarWidth(width) {
+    set({ sidebarWidth: width })
+  },
+
+  async saveSidebarWidth(width) {
+    await invoke('save_sidebar_width', { width })
+    set({ sidebarWidth: width })
+  },
 }))
 
 let initialized = false
@@ -226,6 +245,7 @@ export function initAppStore() {
   useAppStore.getState().loadAutoBackupEnabled()
   useAppStore.getState().loadActiveBackups()
   useAppStore.getState().loadActiveOperations()
+  useAppStore.getState().loadSidebarWidth()
   let tick = 0
   setInterval(() => {
     tick += 1

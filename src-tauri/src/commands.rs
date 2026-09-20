@@ -814,6 +814,49 @@ pub fn save_default_agent(pool: State<DbPool>, agent: String) -> std::result::Re
   settings::set(&conn, SANDBOX_AGENT_KEY, &agent).map_err(|e| e.to_string())
 }
 
+const SIDEBAR_WIDTH_KEY: &str = "sidebar_width";
+const DEFAULT_SIDEBAR_WIDTH: i32 = 208;
+const MIN_SIDEBAR_WIDTH: i32 = 208;
+const MAX_SIDEBAR_WIDTH: i32 = 360;
+
+#[tauri::command]
+pub fn get_sidebar_width(pool: State<DbPool>) -> std::result::Result<i32, String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  Ok(
+    settings::get(&conn, SIDEBAR_WIDTH_KEY)
+      .map_err(|e| e.to_string())?
+      .and_then(|s| s.parse::<i32>().ok())
+      .unwrap_or(DEFAULT_SIDEBAR_WIDTH),
+  )
+}
+
+#[tauri::command]
+pub fn save_sidebar_width(pool: State<DbPool>, width: i32) -> std::result::Result<(), String> {
+  let clamped = width.clamp(MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH);
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  settings::set(&conn, SIDEBAR_WIDTH_KEY, &clamped.to_string()).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod sidebar_width_tests {
+  use super::*;
+
+  #[test]
+  fn clamps_below_min() {
+    assert_eq!(150.clamp(MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH), MIN_SIDEBAR_WIDTH);
+  }
+
+  #[test]
+  fn clamps_above_max() {
+    assert_eq!(500.clamp(MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH), MAX_SIDEBAR_WIDTH);
+  }
+
+  #[test]
+  fn keeps_value_in_range() {
+    assert_eq!(300.clamp(MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH), 300);
+  }
+}
+
 #[cfg(test)]
 mod agent_cli_token_tests {
   use super::*;

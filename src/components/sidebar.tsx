@@ -1,6 +1,11 @@
+import { useCallback, useRef } from 'react'
 import { Activity, Archive, Box, FolderGit2, ScrollText, Settings, Terminal } from 'lucide-react'
 import { SidebarSandboxList } from '@/components/sandboxes/SidebarSandboxList'
+import { useAppStore } from '@/store/useAppStore'
 import type { Route, Screen } from '@/lib/router'
+
+const MIN_WIDTH = 208
+const MAX_WIDTH = 360
 
 type NavItem = { screen: Screen; label: string; icon: typeof Settings }
 
@@ -36,11 +41,44 @@ export function Sidebar({
   onNavigate: (route: Route) => void
   collapsed: boolean
 }) {
+  const sidebarWidth = useAppStore((s) => s.sidebarWidth)
+  const setSidebarWidth = useAppStore((s) => s.setSidebarWidth)
+  const saveSidebarWidth = useAppStore((s) => s.saveSidebarWidth)
+  const resizing = useRef(false)
+
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      resizing.current = true
+      const startX = e.clientX
+      const startWidth = sidebarWidth
+      let finalWidth = startWidth
+
+      function onMouseMove(ev: MouseEvent) {
+        if (!resizing.current) return
+        finalWidth = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startWidth + (ev.clientX - startX)))
+        setSidebarWidth(finalWidth)
+      }
+      function onMouseUp() {
+        resizing.current = false
+        window.removeEventListener('mousemove', onMouseMove)
+        window.removeEventListener('mouseup', onMouseUp)
+        saveSidebarWidth(finalWidth)
+      }
+      window.addEventListener('mousemove', onMouseMove)
+      window.addEventListener('mouseup', onMouseUp)
+    },
+    [sidebarWidth, setSidebarWidth, saveSidebarWidth]
+  )
+
   if (collapsed) return null
 
   return (
-    <nav className="flex w-52 shrink-0 flex-col border-r border-sidebar-border bg-sidebar">
-      <div className="flex flex-1 flex-col gap-8 overflow-auto p-2">
+    <nav
+      className="relative flex shrink-0 flex-col border-r border-sidebar-border bg-sidebar"
+      style={{ width: sidebarWidth }}
+    >
+      <div className="flex flex-1 flex-col gap-8 overflow-auto p-2 pt-[20px]">
         {groups.map((group) => (
           <div key={group.label} className="flex flex-col gap-1">
             <span className="px-2.5 text-xs font-normal text-muted-foreground">{group.label}</span>
@@ -72,6 +110,10 @@ export function Sidebar({
       <div className="border-t border-sidebar-border px-3 py-2.5 text-xs text-muted-foreground">
         Overnight v0.0.0
       </div>
+      <div
+        onMouseDown={handleMouseDown}
+        className="absolute right-0 top-0 h-full w-1 cursor-col-resize select-none hover:bg-accent active:bg-accent"
+      />
     </nav>
   )
 }
