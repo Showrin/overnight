@@ -11,11 +11,14 @@ import { TERMINAL_HOSTS, TERMINAL_HOST_LABELS, TERMINAL_HOST_OPEN_LABELS, type T
 import { useAppStore } from '@/store/useAppStore'
 import type { BranchSyncOutcome, Sandbox } from './types'
 
-const BACKUP_SCOPES: { value: 'all' | 'claude' | 'git'; label: string }[] = [
-  { value: 'all', label: 'Backup all' },
-  { value: 'claude', label: 'Backup .claude' },
-  { value: 'git', label: 'Backup .git' },
-]
+function backupScopesFor(agent: string): { value: 'all' | 'claude' | 'codex' | 'git'; label: string }[] {
+  const agentScope = agent === 'codex' ? 'codex' : 'claude'
+  return [
+    { value: 'all', label: 'Backup all' },
+    { value: agentScope, label: `Backup .${agentScope}` },
+    { value: 'git', label: 'Backup .git' },
+  ]
+}
 
 type BusyAction = 'start' | 'stop' | 'delete' | 'vscode' | 'terminal' | 'agent' | 'git-sync' | 'backup' | null
 type ConfirmAction = 'stop' | 'delete' | null
@@ -33,7 +36,6 @@ export function SandboxActions({
 }) {
   const defaultTerminalHost = useAppStore((s) => s.defaultTerminalHost)
   const saveDefaultTerminalHost = useAppStore((s) => s.saveDefaultTerminalHost)
-  const defaultAgent = useAppStore((s) => s.defaultAgent)
   const platform = useAppStore((s) => s.platform)
   const isBackingUp = useAppStore((s) => s.activeBackups.some((b) => b.sandbox_id === sandbox.id))
   const showGitSyncToast = useAppStore((s) => s.showGitSyncToast)
@@ -102,7 +104,7 @@ export function SandboxActions({
     }
   }
 
-  async function handleBackupNow(scope: 'all' | 'claude' | 'git') {
+  async function handleBackupNow(scope: 'all' | 'claude' | 'codex' | 'git') {
     setBusyAction('backup')
     setError(null)
     try {
@@ -134,6 +136,8 @@ export function SandboxActions({
       setBusyAction(null)
     }
   }
+
+  const backupScopes = backupScopesFor(sandbox.agent)
 
   return (
     <div className="flex flex-col gap-6">
@@ -236,9 +240,14 @@ export function SandboxActions({
                 size="sm"
                 variant="outline"
                 disabled={busyAction != null}
+                className={
+                  sandbox.agent === "codex"
+                    ? "border-info/40 text-info hover:bg-info/10 hover:text-info"
+                    : undefined
+                }
                 onClick={() =>
                   run("agent", () =>
-                    invoke("open_sandbox_agent", { id: sandbox.id, agent: defaultAgent }),
+                    invoke("open_sandbox_agent", { id: sandbox.id, agent: sandbox.agent }),
                   )
                 }
               >
@@ -247,7 +256,7 @@ export function SandboxActions({
                 ) : (
                   <TerminalSquare className="size-3.5" />
                 )}
-                {AGENT_LABELS[defaultAgent as Agent] ?? defaultAgent}
+                {AGENT_LABELS[sandbox.agent as Agent] ?? sandbox.agent}
               </Button>
             )}
             {sandbox.host_port != null && (
@@ -283,7 +292,7 @@ export function SandboxActions({
                 </Button>
               </PopoverTrigger>
               <PopoverContent align="start" className="flex flex-col gap-0.5">
-                {BACKUP_SCOPES.map(({ value, label }) => (
+                {backupScopes.map(({ value, label }) => (
                   <button
                     key={value}
                     type="button"
