@@ -168,9 +168,6 @@ pub fn delete_project(pool: State<DbPool>, id: String) -> Result<()> {
   projects::delete(&conn, &id)
 }
 
-const CLAUDE_PERMISSION_MODE_KEY: &str = "default_claude_permission_mode";
-const DEFAULT_CLAUDE_PERMISSION_MODE: &str = "default";
-const VALID_PERMISSION_MODES: [&str; 4] = ["plan", "default", "acceptEdits", "bypassPermissions"];
 const SKILL_FOLDERS_KEY: &str = "skill_folders";
 const GLOBAL_ENV_VARS_KEY: &str = "global_env_vars";
 const GLOBAL_SECRETS_KEY: &str = "global_secrets";
@@ -691,28 +688,46 @@ async fn register_secrets(app: &AppHandle, secrets: &[Secret], sandbox_name: Opt
 #[derive(Serialize)]
 pub struct AppSettings {
   pub default_claude_permission_mode: String,
+  pub default_codex_permission_mode: String,
   pub skill_folders: Vec<String>,
+}
+
+fn default_permission_mode_for(kit: &crate::agents::AgentKit) -> Result<String> {
+  // Read via the global pool inline at each call site instead — kept as a
+  // free function only for the two lookups below to share the fallback.
+  Ok(kit.default_permission_mode.to_string())
 }
 
 #[tauri::command]
 pub fn get_settings(pool: State<DbPool>) -> Result<AppSettings> {
   let conn = pool.get()?;
   Ok(AppSettings {
-    default_claude_permission_mode: settings::get(&conn, CLAUDE_PERMISSION_MODE_KEY)?
-      .unwrap_or_else(|| DEFAULT_CLAUDE_PERMISSION_MODE.to_string()),
+    default_claude_permission_mode: settings::get(&conn, crate::agents::CLAUDE.permission_mode_settings_key)?
+      .unwrap_or_else(|| default_permission_mode_for(&crate::agents::CLAUDE).unwrap()),
+    default_codex_permission_mode: settings::get(&conn, crate::agents::CODEX.permission_mode_settings_key)?
+      .unwrap_or_else(|| default_permission_mode_for(&crate::agents::CODEX).unwrap()),
     skill_folders: settings::get_json(&conn, SKILL_FOLDERS_KEY)?.unwrap_or_default(),
   })
 }
 
-#[tauri::command]
-pub fn save_settings(pool: State<DbPool>, default_claude_permission_mode: String) -> Result<()> {
-  if !VALID_PERMISSION_MODES.contains(&default_claude_permission_mode.as_str()) {
-    return Err(Error::InvalidValue(format!(
-      "invalid permission mode: {default_claude_permission_mode}"
-    )));
+fn validate_permission_mode(kit: &crate::agents::AgentKit, mode: &str) -> Result<()> {
+  if !kit.permission_modes.contains(&mode) {
+    return Err(Error::InvalidValue(format!("invalid {} permission mode: {mode}", kit.label)));
   }
+  Ok(())
+}
+
+#[tauri::command]
+pub fn save_settings(
+  pool: State<DbPool>,
+  default_claude_permission_mode: String,
+  default_codex_permission_mode: String,
+) -> Result<()> {
+  validate_permission_mode(&crate::agents::CLAUDE, &default_claude_permission_mode)?;
+  validate_permission_mode(&crate::agents::CODEX, &default_codex_permission_mode)?;
   let conn = pool.get()?;
-  settings::set(&conn, CLAUDE_PERMISSION_MODE_KEY, &default_claude_permission_mode)
+  settings::set(&conn, crate::agents::CLAUDE.permission_mode_settings_key, &default_claude_permission_mode)?;
+  settings::set(&conn, crate::agents::CODEX.permission_mode_settings_key, &default_codex_permission_mode)
 }
 
 /// Persists the chosen skill folders and copies each into sbx's shared
@@ -787,22 +802,24 @@ pub fn save_layout_expanded(pool: State<DbPool>, expanded: bool) -> std::result:
 const SANDBOX_AGENT_KEY: &str = "default_agent";
 const DEFAULT_AGENT: &str = "claude";
 
-/// Agent id -> the token `sbx run --name <name> <token>` expects. Add an
-/// entry here (and to the frontend's AGENTS list) to support a new agent.
-const AGENTS: [(&str, &str); 1] = [("claude", "claude")];
-
 fn agent_cli_token(agent: &str) -> Option<&'static str> {
-  AGENTS.iter().find(|(id, _)| *id == agent).map(|(_, token)| *token)
+  crate::agents::get(agent).map(|kit| kit.cli_token)
 }
 
-#[tauri::command]
-pub fn get_default_agent(pool: State<DbPool>) -> std::result::Result<String, String> {
+/// The app-wide default agent a new sandbox is created with when the
+/// creation dialog doesn't override it. See `create_sandbox`.
+fn resolve_default_agent(pool: &DbPool) -> std::result::Result<String, String> {
   let conn = pool.get().map_err(|e| e.to_string())?;
   Ok(
     settings::get(&conn, SANDBOX_AGENT_KEY)
       .map_err(|e| e.to_string())?
       .unwrap_or_else(|| DEFAULT_AGENT.to_string()),
   )
+}
+
+#[tauri::command]
+pub fn get_default_agent(pool: State<DbPool>) -> std::result::Result<String, String> {
+  resolve_default_agent(pool.inner())
 }
 
 #[tauri::command]
@@ -862,13 +879,14 @@ mod agent_cli_token_tests {
   use super::*;
 
   #[test]
-  fn known_agent_returns_its_token() {
+  fn known_agents_return_their_tokens() {
     assert_eq!(agent_cli_token("claude"), Some("claude"));
+    assert_eq!(agent_cli_token("codex"), Some("codex"));
   }
 
   #[test]
   fn unknown_agent_returns_none() {
-    assert_eq!(agent_cli_token("codex"), None);
+    assert_eq!(agent_cli_token("gpt4"), None);
   }
 }
 
@@ -1339,7 +1357,7 @@ fn adopt_orphan_sandboxes_from_rows(pool: &DbPool, rows: Vec<crate::sbx::SbxList
     // failing the whole adoption pass.
     // base_branch = NULL: an adopted sandbox's host checkout state at the
     // time `sbx create` actually ran (outside the app) is unknown to us.
-    let created = match sandboxes::create(&conn, &project_id, mode, folder_path.as_deref(), None, DEFAULT_CLAUDE_PERMISSION_MODE, None, "claude") {
+    let created = match sandboxes::create(&conn, &project_id, mode, folder_path.as_deref(), None, crate::agents::CLAUDE.default_permission_mode, None, "claude") {
       Ok(sandbox) => sandbox,
       Err(e) => {
         log::warn!("adopt_orphan_sandboxes: could not create a row for {}: {e}", row.sbx_name);
@@ -1400,7 +1418,7 @@ mod adopt_orphan_sandboxes_tests {
     assert_eq!(adopted[0].folder_path.as_deref(), Some("/repo/overnight"));
     assert_eq!(adopted[0].status, "running");
     assert_eq!(adopted[0].sbx_name.as_deref(), Some("found-sandbox"));
-    assert_eq!(adopted[0].permission_mode, DEFAULT_CLAUDE_PERMISSION_MODE);
+    assert_eq!(adopted[0].permission_mode, crate::agents::CLAUDE.default_permission_mode);
   }
 
   #[test]
@@ -1463,6 +1481,7 @@ pub async fn create_sandbox(
   mode: String,
   name: Option<String>,
   permission_mode: Option<String>,
+  agent: Option<String>,
 ) -> std::result::Result<Sandbox, String> {
   if mode != "mount" && mode != "clone" {
     return Err(format!("invalid sandbox mode: {mode} (expected \"mount\" or \"clone\")"));
@@ -1470,22 +1489,28 @@ pub async fn create_sandbox(
   let name = name.filter(|n| !n.trim().is_empty());
   let pool = pool.inner().clone();
 
-  // Unset means "use whatever's configured as the app-wide default" —
+  let agent = match agent.filter(|a| !a.trim().is_empty()) {
+    Some(a) => a,
+    None => resolve_default_agent(&pool)?,
+  };
+  let agent_kit = crate::agents::get(&agent).ok_or_else(|| format!("invalid agent: {agent}"))?;
+
+  // Unset means "use whatever's configured as this agent's default" —
   // resolved and snapshotted onto the sandbox now rather than looked up
   // again on every session launch, same as folder_path/sbx_name are fixed
   // at creation time.
   let permission_mode = match permission_mode.filter(|m| !m.trim().is_empty()) {
     Some(m) => {
-      if !VALID_PERMISSION_MODES.contains(&m.as_str()) {
+      if !agent_kit.permission_modes.contains(&m.as_str()) {
         return Err(format!("invalid permission mode: {m}"));
       }
       m
     }
     None => {
       let conn = pool.get().map_err(|e| e.to_string())?;
-      settings::get(&conn, CLAUDE_PERMISSION_MODE_KEY)
+      settings::get(&conn, agent_kit.permission_mode_settings_key)
         .map_err(|e| e.to_string())?
-        .unwrap_or_else(|| DEFAULT_CLAUDE_PERMISSION_MODE.to_string())
+        .unwrap_or_else(|| agent_kit.default_permission_mode.to_string())
     }
   };
 
@@ -1518,7 +1543,7 @@ pub async fn create_sandbox(
     // Clone mode's clone lives inside the sandbox VM, not on the host — no
     // host-visible folder_path to record for it.
     let initial_folder = if mode == "mount" { Some(project.repo_path.as_str()) } else { None };
-    sandboxes::create(&conn, &project_id, &mode, initial_folder, name.as_deref(), &permission_mode, base_branch.as_deref(), "claude")
+    sandboxes::create(&conn, &project_id, &mode, initial_folder, name.as_deref(), &permission_mode, base_branch.as_deref(), &agent)
       .map_err(|e| e.to_string())?
   };
 
@@ -1545,10 +1570,11 @@ async fn provision_sandbox(
   sandbox: &Sandbox,
   mode: &str,
 ) -> std::result::Result<Sandbox, String> {
+  let agent_kit = crate::agents::get(&sandbox.agent).ok_or_else(|| format!("unknown agent: {}", sandbox.agent))?;
   let base_name = base_sbx_name(sandbox.name.as_deref(), &project.name, &sandbox.id);
   let clone = mode == "clone";
   let name = resolve_unique_sbx_name(&base_name, |candidate| async move {
-    crate::sbx::create(app, &candidate, clone, &project.repo_path, "claude").await.map_err(|e| e.to_string())
+    crate::sbx::create(app, &candidate, clone, &project.repo_path, agent_kit.cli_token).await.map_err(|e| e.to_string())
   })
   .await?;
   // `create` returning doesn't guarantee the VM is actually up for `exec`
@@ -1558,10 +1584,10 @@ async fn provision_sandbox(
     .map_err(|e| e.to_string())?;
 
   // Independent once the sandbox is ready: git identity, the
-  // permission-mode alias, env vars, secrets, and port publishing/lookup.
-  // Run concurrently.
-  let (permission_result, host_port_result, env_result, secret_result, ()) = tokio::join!(
-    crate::sbx::set_default_permission_mode(app, &name, "claude", "--permission-mode", &sandbox.permission_mode),
+  // permission-mode alias, env vars, secrets, port publishing/lookup, and
+  // (best-effort) syncing this agent's host auth file in. Run concurrently.
+  let (permission_result, host_port_result, env_result, secret_result, (), ()) = tokio::join!(
+    crate::sbx::set_default_permission_mode(app, &name, agent_kit.cli_token, agent_kit.permission_flag, &sandbox.permission_mode),
     async {
       crate::sbx::publish_port(app, &name, SANDBOX_PORT).await?;
       crate::sbx::host_port(app, &name, SANDBOX_PORT).await
@@ -1579,6 +1605,7 @@ async fn provision_sandbox(
       register_secrets(app, &merged, Some(&name)).await
     },
     sync_git_identity(app, &name),
+    sync_host_agent_auth(app, &name, agent_kit),
   );
   permission_result.map_err(|e| e.to_string())?;
   let host_port = host_port_result.map_err(|e| e.to_string())?;
@@ -1612,6 +1639,38 @@ fn host_git_config(key: &str) -> Option<String> {
   }
   let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
   (!value.is_empty()).then_some(value)
+}
+
+/// Best-effort: copies this agent's host auth file (if it has one — see
+/// `AgentKit::host_auth_relative_path`) into the sandbox, so e.g. a Codex
+/// session logged into on the host via `codex login` doesn't need a fresh
+/// interactive login inside every sandbox. Claude Code has no entry here
+/// (`host_auth_relative_path: None`) — it authenticates purely through the
+/// `anthropic` secret pushed by `register_secrets` instead. A missing host
+/// file (never logged in yet) or a failed copy is silently skipped, same
+/// as `sync_git_identity`'s "no host identity is fine" behavior.
+async fn sync_host_agent_auth(app: &AppHandle, name: &str, kit: &crate::agents::AgentKit) {
+  let Some(relative) = kit.host_auth_relative_path else { return };
+  let Some(home) = host_home_dir() else { return };
+  let host_path = std::path::Path::new(&home).join(relative);
+  if !host_path.is_file() {
+    return;
+  }
+  let remote_path = format!("{}/{relative}", kit.home_dir);
+  if let Err(e) = crate::sbx::cp_to_sandbox(app, name, &host_path.to_string_lossy(), &remote_path).await {
+    log::warn!("sync_host_agent_auth: failed to copy {} into {name}: {e}", host_path.display());
+  }
+}
+
+fn host_home_dir() -> Option<String> {
+  #[cfg(target_os = "windows")]
+  {
+    std::env::var("USERPROFILE").ok()
+  }
+  #[cfg(not(target_os = "windows"))]
+  {
+    std::env::var("HOME").ok()
+  }
 }
 
 #[cfg(test)]
