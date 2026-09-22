@@ -34,6 +34,8 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
   const saveSkillFolders = useAppStore((s) => s.saveSkillFolders)
   const defaultTerminalHost = useAppStore((s) => s.defaultTerminalHost)
   const saveDefaultTerminalHost = useAppStore((s) => s.saveDefaultTerminalHost)
+  const defaultAgent = useAppStore((s) => s.defaultAgent)
+  const saveDefaultAgent = useAppStore((s) => s.saveDefaultAgent)
   const backupIntervalMinutes = useAppStore((s) => s.backupIntervalMinutes)
   const saveBackupIntervalMinutes = useAppStore((s) => s.saveBackupIntervalMinutes)
   const autoBackupEnabled = useAppStore((s) => s.autoBackupEnabled)
@@ -43,9 +45,12 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
   const setHighlightNetworkPreset = useAppStore((s) => s.setHighlightNetworkPreset)
 
   const savedPermissionMode = settings?.default_claude_permission_mode ?? 'default'
+  const savedCodexPermissionMode = settings?.default_codex_permission_mode ?? 'on-request'
   const savedSkillFolders = settings?.skill_folders ?? []
 
   const [permissionMode, setPermissionMode] = useState<string>('default')
+  const [codexPermissionMode, setCodexPermissionMode] = useState<string>('on-request')
+  const [localDefaultAgent, setLocalDefaultAgent] = useState<string>('claude')
   const [terminalHost, setTerminalHost] = useState<string>('cmd')
   const [skillFolders, setSkillFolders] = useState<string[]>([])
   const [savingGeneral, setSavingGeneral] = useState(false)
@@ -96,13 +101,18 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
   useEffect(() => {
     if (settings) {
       setPermissionMode(settings.default_claude_permission_mode)
+      setCodexPermissionMode(savedCodexPermissionMode)
       setSkillFolders(settings.skill_folders)
     }
-  }, [settings])
+  }, [settings, savedCodexPermissionMode])
 
   useEffect(() => {
     setTerminalHost(defaultTerminalHost)
   }, [defaultTerminalHost])
+
+  useEffect(() => {
+    setLocalDefaultAgent(defaultAgent)
+  }, [defaultAgent])
 
   useEffect(() => {
     setBackupInterval(backupIntervalMinutes)
@@ -201,6 +211,8 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
 
   const generalDirty =
     permissionMode !== savedPermissionMode ||
+    codexPermissionMode !== savedCodexPermissionMode ||
+    localDefaultAgent !== defaultAgent ||
     terminalHost !== defaultTerminalHost ||
     !sameFolders(skillFolders, savedSkillFolders)
 
@@ -208,7 +220,10 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
     setSavingGeneral(true)
     setGeneralError(null)
     try {
-      if (permissionMode !== savedPermissionMode) await saveSettings(permissionMode)
+      if (permissionMode !== savedPermissionMode || codexPermissionMode !== savedCodexPermissionMode) {
+        await saveSettings(permissionMode, codexPermissionMode)
+      }
+      if (localDefaultAgent !== defaultAgent) await saveDefaultAgent(localDefaultAgent)
       if (!sameFolders(skillFolders, savedSkillFolders)) await saveSkillFolders(skillFolders)
       if (terminalHost !== defaultTerminalHost) await saveDefaultTerminalHost(terminalHost)
     } catch (e) {
@@ -220,6 +235,8 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
 
   function resetGeneral() {
     setPermissionMode(savedPermissionMode)
+    setCodexPermissionMode(savedCodexPermissionMode)
+    setLocalDefaultAgent(defaultAgent)
     setTerminalHost(defaultTerminalHost)
     setSkillFolders(savedSkillFolders)
     setGeneralError(null)
@@ -470,8 +487,12 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
       <div className="min-h-0 flex-1 overflow-auto">
         <TabsContent value="general">
           <GeneralTab
+            defaultAgent={localDefaultAgent}
+            setDefaultAgent={setLocalDefaultAgent}
             permissionMode={permissionMode}
             setPermissionMode={setPermissionMode}
+            codexPermissionMode={codexPermissionMode}
+            setCodexPermissionMode={setCodexPermissionMode}
             terminalHost={terminalHost}
             setTerminalHost={setTerminalHost}
             skillFolders={skillFolders}

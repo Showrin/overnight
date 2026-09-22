@@ -3,6 +3,7 @@ import { Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { AGENTS, AGENT_LABELS } from '@/lib/agentHost'
 import { PERMISSION_MODES } from '@/lib/permissionModes'
 import { TERMINAL_HOSTS, TERMINAL_HOST_LABELS } from '@/lib/terminalHost'
 import { SettingsRow } from '../SettingsLayout'
@@ -15,8 +16,12 @@ function skillName(path: string): string {
 }
 
 interface GeneralTabProps {
+  defaultAgent: string
+  setDefaultAgent: (agent: string) => void
   permissionMode: string
   setPermissionMode: (mode: string) => void
+  codexPermissionMode: string
+  setCodexPermissionMode: (mode: string) => void
   terminalHost: string
   setTerminalHost: (host: string) => void
   skillFolders: string[]
@@ -25,8 +30,12 @@ interface GeneralTabProps {
 }
 
 export function GeneralTab({
+  defaultAgent,
+  setDefaultAgent,
   permissionMode,
   setPermissionMode,
+  codexPermissionMode,
+  setCodexPermissionMode,
   terminalHost,
   setTerminalHost,
   skillFolders,
@@ -41,6 +50,24 @@ export function GeneralTab({
   return (
     <>
       <SettingsRow
+        label="Default agent"
+        description="Which coding CLI a new sandbox starts with when not chosen in the creation dialog."
+      >
+        <Select value={defaultAgent} onValueChange={setDefaultAgent}>
+          <SelectTrigger className="max-w-sm">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {AGENTS.map((agent) => (
+              <SelectItem key={agent} value={agent}>
+                {AGENT_LABELS[agent]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </SettingsRow>
+
+      <SettingsRow
         label="Default Claude permission mode"
         description="The permission mode new Claude sessions start in."
       >
@@ -49,7 +76,25 @@ export function GeneralTab({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {PERMISSION_MODES.map((mode) => (
+            {PERMISSION_MODES.claude.map((mode) => (
+              <SelectItem key={mode} value={mode}>
+                {mode}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </SettingsRow>
+
+      <SettingsRow
+        label="Default Codex approval mode"
+        description="The approval mode new Codex sessions start in."
+      >
+        <Select value={codexPermissionMode} onValueChange={setCodexPermissionMode}>
+          <SelectTrigger className="max-w-sm">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {PERMISSION_MODES.codex.map((mode) => (
               <SelectItem key={mode} value={mode}>
                 {mode}
               </SelectItem>
