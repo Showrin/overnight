@@ -1548,7 +1548,7 @@ async fn provision_sandbox(
   let base_name = base_sbx_name(sandbox.name.as_deref(), &project.name, &sandbox.id);
   let clone = mode == "clone";
   let name = resolve_unique_sbx_name(&base_name, |candidate| async move {
-    crate::sbx::create(app, &candidate, clone, &project.repo_path).await.map_err(|e| e.to_string())
+    crate::sbx::create(app, &candidate, clone, &project.repo_path, "claude").await.map_err(|e| e.to_string())
   })
   .await?;
   // `create` returning doesn't guarantee the VM is actually up for `exec`
@@ -1561,7 +1561,7 @@ async fn provision_sandbox(
   // permission-mode alias, env vars, secrets, and port publishing/lookup.
   // Run concurrently.
   let (permission_result, host_port_result, env_result, secret_result, ()) = tokio::join!(
-    crate::sbx::set_claude_default_permission_mode(app, &name, &sandbox.permission_mode),
+    crate::sbx::set_default_permission_mode(app, &name, "claude", "--permission-mode", &sandbox.permission_mode),
     async {
       crate::sbx::publish_port(app, &name, SANDBOX_PORT).await?;
       crate::sbx::host_port(app, &name, SANDBOX_PORT).await

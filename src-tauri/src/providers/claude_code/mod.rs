@@ -92,7 +92,7 @@ impl AgentProvider for ClaudeCodeProvider {
     // permission_mode is whatever the sandbox was created with (see
     // create_sandbox's VALID_PERMISSION_MODES) — not hardcoded, so
     // autonomous runs respect the same setting a manual terminal session
-    // in this sandbox uses (see sbx::set_claude_default_permission_mode).
+    // in this sandbox uses (see sbx::set_default_permission_mode).
     let claude_args = vec![
       "-p".to_string(),
       prompt.to_string(),

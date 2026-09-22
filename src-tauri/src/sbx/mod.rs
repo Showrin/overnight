@@ -613,7 +613,7 @@ pub async fn health_check<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
   Ok(())
 }
 
-/// `sbx create --name <name> [--clone] claude <workspace>` — creates a
+/// `sbx create --name <name> [--clone] <agent> <workspace>` — creates a
 /// sandbox in the background without attaching. `workspace` is the host
 /// repo path; in clone mode `sbx` clones it into an isolated copy inside
 /// the sandbox VM itself rather than us managing a host-side clone folder.
@@ -621,50 +621,58 @@ pub async fn health_check<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
 /// If this machine's global network policy has never been set, this
 /// returns `Error::PolicyNotInitialized` — callers should prompt for a
 /// preset and call `policy_init` before retrying.
-pub async fn create<R: Runtime>(app: &AppHandle<R>, name: &str, clone: bool, workspace: &str) -> Result<()> {
+pub async fn create<R: Runtime>(app: &AppHandle<R>, name: &str, clone: bool, workspace: &str, agent_token: &str) -> Result<()> {
   let mut args = vec!["create", "--name", name];
   if clone {
     args.push("--clone");
   }
-  args.push("claude");
+  args.push(agent_token);
   args.push(workspace);
   run(app, "Create sandbox", &args).await?;
   Ok(())
 }
 
-/// Makes a bare `claude` typed inside a manually-opened terminal
+/// Makes a bare `<cli_token>` typed inside a manually-opened terminal
 /// (`open_sandbox_terminal`'s `sbx exec -it <name> bash`) use the same
 /// permission mode the sandbox was created with, not just app-launched
 /// autonomous sessions.
 ///
-/// `sbx run --name <name> claude` goes through sbx's own managed `claude`
+/// `sbx run --name <name> <cli_token>` goes through sbx's own managed
 /// agent entrypoint and its own default startup flags. But our terminal
 /// button drops into a bare shell instead (so the user can run arbitrary
-/// commands, not just attach to the agent), and a `claude` typed there
-/// invokes the raw binary with none of sbx's defaults — landing on Claude
-/// Code's own manual-approval default regardless of what was configured.
-/// Confirmed against a real sandbox: `/status` inside a manually-opened
-/// terminal showed "manual" even though the app's own launched sessions
-/// were passing a different mode explicitly.
+/// commands, not just attach to the agent), and a `<cli_token>` typed
+/// there invokes the raw binary with none of sbx's defaults — landing on
+/// that agent's own default approval mode regardless of what was
+/// configured. Confirmed against a real sandbox for Claude Code: `/status`
+/// inside a manually-opened terminal showed "manual" even though the
+/// app's own launched sessions were passing a different mode explicitly.
 ///
 /// Appending an alias to `/etc/sandbox-persistent.sh` (sourced for every
 /// bash invocation, interactive or not, per sbx's docs) closes that gap.
 /// It only needs to run once at creation — the file is part of the
-/// sandbox's persistent state and survives stop/resume. `mode` must
-/// already be one of Claude Code's valid `--permission-mode` values —
-/// callers are expected to have validated it (see commands.rs's
-/// VALID_PERMISSION_MODES).
-pub async fn set_claude_default_permission_mode<R: Runtime>(app: &AppHandle<R>, name: &str, mode: &str) -> Result<()> {
+/// sandbox's persistent state and survives stop/resume. `cli_token` is
+/// the agent's CLI binary name (e.g. `claude`, `codex`), `permission_flag`
+/// is that CLI's own flag for setting its permission/approval mode (e.g.
+/// `--permission-mode`), and `mode` must already be one of that CLI's
+/// valid values for it — callers are expected to have validated it (see
+/// commands.rs's VALID_PERMISSION_MODES).
+pub async fn set_default_permission_mode<R: Runtime>(
+  app: &AppHandle<R>,
+  name: &str,
+  cli_token: &str,
+  permission_flag: &str,
+  mode: &str,
+) -> Result<()> {
   run(
     app,
-    "Set default Claude permission mode",
+    "Set default agent permission mode",
     &[
       "exec",
       "-d",
       name,
       "bash",
       "-c",
-      &format!("echo \"alias claude='claude --permission-mode {mode}'\" >> /etc/sandbox-persistent.sh"),
+      &format!("echo \"alias {cli_token}='{cli_token} {permission_flag} {mode}'\" >> /etc/sandbox-persistent.sh"),
     ],
   )
   .await?;
@@ -674,7 +682,7 @@ pub async fn set_claude_default_permission_mode<R: Runtime>(app: &AppHandle<R>, 
 /// `sbx exec -d <name> git config --global <key> <value>` — pushes one
 /// host git identity field into a sandbox. `sbx` doesn't import host
 /// `$HOME` config, so a fresh sandbox otherwise has none. This write is
-/// immediate and idempotent, unlike `set_claude_default_permission_mode`'s
+/// immediate and idempotent, unlike `set_default_permission_mode`'s
 /// persistent-shell-file trick.
 pub async fn set_git_config<R: Runtime>(app: &AppHandle<R>, name: &str, key: &str, value: &str) -> Result<()> {
   let args = git_config_exec_args(name, key, value);
@@ -702,7 +710,7 @@ const ENV_BLOCK_END: &str = "# overnight-env-end";
 /// `/etc/sandbox-persistent.sh` itself is, so `sed -i` failed with
 /// "couldn't open temporary file /etc/sedXXXXXX: Permission denied". A
 /// truncating `>` only needs write permission on the existing file,
-/// matching the `>>` append `set_claude_default_permission_mode` already
+/// matching the `>>` append `set_default_permission_mode` already
 /// relies on.
 ///
 /// Every line is written via `printf '%s\n' <quoted>` instead of a heredoc.
@@ -747,7 +755,7 @@ fn redact_env_vars(vars: &[EnvVar]) -> Vec<EnvVar> {
 /// sandbox-scoped vars (see commands.rs::merged_env_vars) — this function
 /// doesn't know about scopes, it just writes what it's given. Idempotent:
 /// safe to call again after edits or removals, unlike
-/// `set_claude_default_permission_mode`'s one-time append.
+/// `set_default_permission_mode`'s one-time append.
 pub async fn set_env_vars<R: Runtime>(app: &AppHandle<R>, name: &str, vars: &[EnvVar]) -> Result<()> {
   let script = build_env_persist_script(vars, "/etc/sandbox-persistent.sh");
   // The command log must never carry real values — build the same script
@@ -987,6 +995,15 @@ fn cp_to_sandbox_args(name: &str, host_src: &str, remote_path: &str) -> Vec<Stri
 /// so the fix is to clear each one's contents before copying the backup in,
 /// not just layer on top.
 pub const CLAUDE_HOME_MOUNTED_DIRS: &[&str] = &["projects", "sessions", "shell-snapshots", "statsig", "todos", "skills"];
+
+/// **UNVERIFIED / EMPTY BY DEFAULT**: unlike `CLAUDE_HOME_MOUNTED_DIRS`
+/// (confirmed against a real sandbox), no real Codex CLI install has been
+/// tested against a real sandbox to find out whether `~/.codex` has any
+/// mount-point subdirectories of its own. Left empty so a Codex restore
+/// treats every top-level entry under `~/.codex` as a plain
+/// remove-and-replace — verify against a real sandbox (the same way
+/// `CLAUDE_HOME_MOUNTED_DIRS` was) before assuming this is complete.
+pub const CODEX_HOME_MOUNTED_DIRS: &[&str] = &[];
 
 /// Restores `host_src` into `remote_dest` inside the sandbox by merging one
 /// top-level entry at a time — never removing or replacing `remote_dest`
