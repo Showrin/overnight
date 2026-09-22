@@ -16,7 +16,6 @@ export function SidebarSandboxList({ onNavigate }: { onNavigate: (route: Route) 
   const projects = useAppStore((s) => s.projects)
   const loadSandboxes = useAppStore((s) => s.loadSandboxes)
   const platform = useAppStore((s) => s.platform)
-  const defaultAgent = useAppStore((s) => s.defaultAgent)
   const [busy, setBusy] = useState<{ id: string; action: BusyAction } | null>(null)
 
   async function run(sandbox: Sandbox, action: Exclude<BusyAction, null>, invoker: () => Promise<unknown>) {
@@ -83,12 +82,12 @@ export function SidebarSandboxList({ onNavigate }: { onNavigate: (route: Route) 
                 {platform === 'windows' && (
                   <button
                     type="button"
-                    aria-label={`Run ${AGENT_LABELS[defaultAgent as Agent] ?? defaultAgent}`}
-                    title={`Run ${AGENT_LABELS[defaultAgent as Agent] ?? defaultAgent}`}
+                    aria-label={`Run ${AGENT_LABELS[sandbox.agent as Agent] ?? sandbox.agent}`}
+                    title={`Run ${AGENT_LABELS[sandbox.agent as Agent] ?? sandbox.agent}`}
                     disabled={isBusy}
                     onClick={() =>
                       run(sandbox, 'agent', () =>
-                        invoke('open_sandbox_agent', { id: sandbox.id, agent: defaultAgent }),
+                        invoke('open_sandbox_agent', { id: sandbox.id, agent: sandbox.agent }),
                       )
                     }
                     className="flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:opacity-50"

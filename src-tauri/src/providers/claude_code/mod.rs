@@ -90,7 +90,7 @@ impl AgentProvider for ClaudeCodeProvider {
     // module docs / sbx's claude-code.md), so this preserves the same
     // stream-json event pipeline translate_event() below expects.
     // permission_mode is whatever the sandbox was created with (see
-    // create_sandbox's VALID_PERMISSION_MODES) — not hardcoded, so
+    // crate::agents::AgentKit::permission_modes) — not hardcoded, so
     // autonomous runs respect the same setting a manual terminal session
     // in this sandbox uses (see sbx::set_default_permission_mode).
     let claude_args = vec![

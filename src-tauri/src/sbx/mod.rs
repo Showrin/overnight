@@ -655,7 +655,7 @@ pub async fn create<R: Runtime>(app: &AppHandle<R>, name: &str, clone: bool, wor
 /// is that CLI's own flag for setting its permission/approval mode (e.g.
 /// `--permission-mode`), and `mode` must already be one of that CLI's
 /// valid values for it — callers are expected to have validated it (see
-/// commands.rs's VALID_PERMISSION_MODES).
+/// `crate::agents::AgentKit::permission_modes`).
 pub async fn set_default_permission_mode<R: Runtime>(
   app: &AppHandle<R>,
   name: &str,

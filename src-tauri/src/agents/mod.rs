@@ -18,6 +18,7 @@ pub struct AgentKit {
   pub home_dir: &'static str,
   /// `sbx secret set <secret_service> ...` — must be one of
   /// `commands::KNOWN_SECRET_SERVICES`.
+  #[allow(dead_code)] // not consumed yet — Codex/Claude auth goes through the generic secrets UI today, not this field
   pub secret_service: &'static str,
   /// The CLI flag `set_default_permission_mode` appends after `cli_token`
   /// in the `/etc/sandbox-persistent.sh` alias.
@@ -74,6 +75,7 @@ pub fn get(id: &str) -> Option<&'static AgentKit> {
   ALL.iter().find(|kit| kit.id == id).copied()
 }
 
+#[allow(dead_code)] // no production caller yet — exists for future use (e.g. a list_agents command) and this module's own tests
 pub fn all() -> &'static [&'static AgentKit] {
   ALL
 }

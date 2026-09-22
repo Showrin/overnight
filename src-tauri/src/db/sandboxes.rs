@@ -37,6 +37,7 @@ fn row_to_sandbox(row: &rusqlite::Row) -> rusqlite::Result<Sandbox> {
   })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn create(
   conn: &Connection,
   project_id: &str,
