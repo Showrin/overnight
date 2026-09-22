@@ -1,3 +1,4 @@
+mod agents;
 mod backup;
 mod commands;
 mod daemon_log;
