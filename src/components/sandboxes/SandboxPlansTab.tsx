@@ -6,6 +6,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeSlug from 'rehype-slug'
 import { Button } from '@/components/ui/button'
+import { AGENT_HOME_DIRS, type Agent } from '@/lib/agentHost'
 import type { PlanFile, Sandbox } from './types'
 
 // Obsidian-like read-only markdown styling via Tailwind's arbitrary child
@@ -121,7 +122,9 @@ export function SandboxPlansTab({ sandbox }: { sandbox: Sandbox }) {
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 text-sm">
       <div className="flex items-center justify-between">
-        <span className="text-xs text-muted-foreground/70">Plans from /.claude/plans</span>
+        <span className="text-xs text-muted-foreground/70">
+          Plans from {AGENT_HOME_DIRS[sandbox.agent as Agent] ?? AGENT_HOME_DIRS.claude}/plans
+        </span>
         <Button size="sm" variant="outline" disabled={loading || !isRunning} onClick={load}>
           {loading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
           Resync
