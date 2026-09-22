@@ -1339,7 +1339,7 @@ fn adopt_orphan_sandboxes_from_rows(pool: &DbPool, rows: Vec<crate::sbx::SbxList
     // failing the whole adoption pass.
     // base_branch = NULL: an adopted sandbox's host checkout state at the
     // time `sbx create` actually ran (outside the app) is unknown to us.
-    let created = match sandboxes::create(&conn, &project_id, mode, folder_path.as_deref(), None, DEFAULT_CLAUDE_PERMISSION_MODE, None) {
+    let created = match sandboxes::create(&conn, &project_id, mode, folder_path.as_deref(), None, DEFAULT_CLAUDE_PERMISSION_MODE, None, "claude") {
       Ok(sandbox) => sandbox,
       Err(e) => {
         log::warn!("adopt_orphan_sandboxes: could not create a row for {}: {e}", row.sbx_name);
@@ -1427,7 +1427,7 @@ mod adopt_orphan_sandboxes_tests {
     let pool = test_pool();
     let conn = pool.get().unwrap();
     let project = projects::create(&conn, "Overnight", "/repo/overnight", None, None).unwrap();
-    let existing = sandboxes::create(&conn, &project.id, "mount", None, None, "default", None).unwrap();
+    let existing = sandboxes::create(&conn, &project.id, "mount", None, None, "default", None, "claude").unwrap();
     sandboxes::update_status(&conn, &existing.id, "running", Some("already-known"), None).unwrap();
     drop(conn);
 
@@ -1518,7 +1518,7 @@ pub async fn create_sandbox(
     // Clone mode's clone lives inside the sandbox VM, not on the host — no
     // host-visible folder_path to record for it.
     let initial_folder = if mode == "mount" { Some(project.repo_path.as_str()) } else { None };
-    sandboxes::create(&conn, &project_id, &mode, initial_folder, name.as_deref(), &permission_mode, base_branch.as_deref())
+    sandboxes::create(&conn, &project_id, &mode, initial_folder, name.as_deref(), &permission_mode, base_branch.as_deref(), "claude")
       .map_err(|e| e.to_string())?
   };
 
@@ -1731,7 +1731,7 @@ mod stop_sandbox_tests {
     let sandbox_id = {
       let conn = pool.get().unwrap();
       let project = projects::create(&conn, "Overnight", "/repo", None, None).unwrap();
-      sandboxes::create(&conn, &project.id, "mount", None, None, "default", None).unwrap().id
+      sandboxes::create(&conn, &project.id, "mount", None, None, "default", None, "claude").unwrap().id
     };
 
     let check_pool = pool.clone();

@@ -170,6 +170,7 @@ pub async fn backup_sandbox(
       trigger,
       &root.to_string_lossy(),
       has_claude,
+      false,
       has_git,
       sandbox.base_branch.as_deref(),
       sandbox.current_branch.as_deref(),
@@ -396,7 +397,7 @@ mod tests {
     let (pool, db_path) = test_pool();
     let conn = pool.get().unwrap();
     let project = crate::db::projects::create(&conn, "Overnight", "/repo", None, None).unwrap();
-    let sandbox = crate::db::sandboxes::create(&conn, &project.id, "mount", None, None, "default", None).unwrap();
+    let sandbox = crate::db::sandboxes::create(&conn, &project.id, "mount", None, None, "default", None, "claude").unwrap();
 
     let dirs: Vec<_> = (0..12)
       .map(|i| std::env::temp_dir().join(format!("overnight-prune-test-{}-{i}", crate::db::models::new_id())))
@@ -407,7 +408,7 @@ mod tests {
 
     for (i, dir) in dirs.iter().enumerate() {
       let row =
-        backups::insert(&conn, &sandbox.id, None, "scheduled", &dir.to_string_lossy(), true, true, None, None, &[], 0).unwrap();
+        backups::insert(&conn, &sandbox.id, None, "scheduled", &dir.to_string_lossy(), true, false, true, None, None, &[], 0).unwrap();
       conn
         .execute("UPDATE sandbox_backups SET created_at = ?1 WHERE id = ?2", rusqlite::params![i as i64, row.id])
         .unwrap();

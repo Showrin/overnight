@@ -153,6 +153,9 @@ pub struct Sandbox {
   /// "mount" (bind-mounts the project's repo_path) or "clone" (git-clones
   /// repo_path into an isolated folder first).
   pub mode: String,
+  /// Which coding CLI this sandbox runs — `"claude"` | `"codex"`. Fixed at
+  /// creation time; see `crate::agents` for what each id resolves to.
+  pub agent: String,
   /// Claude permission mode this sandbox was created with: "plan" |
   /// "default" | "acceptEdits" | "bypassPermissions". Applied both to
   /// app-launched autonomous sessions and to `claude` run manually in the
@@ -225,6 +228,7 @@ pub struct SandboxBackup {
   /// Host directory this backup's `claude`/`git` subfolders live under.
   pub host_dir: String,
   pub has_claude: bool,
+  pub has_codex: bool,
   pub has_git: bool,
   pub base_branch: Option<String>,
   pub current_branch: Option<String>,
