@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { AGENTS, AGENT_LABELS } from '@/lib/agentHost'
 import type { NetworkRuleDecision } from '@/lib/networkPolicy'
 import { SANDBOX_NETWORK_PRESET_OVERRIDE_LABELS, SANDBOX_NETWORK_PRESET_OVERRIDES } from '@/lib/networkPolicy'
 import { notify } from '@/lib/notify'
@@ -57,8 +58,10 @@ export function CreateSandboxDialog({
   const projects = useAppStore((s) => s.projects)
   const sandboxes = useAppStore((s) => s.sandboxes)
   const loadNetworkPolicyPreset = useAppStore((s) => s.loadNetworkPolicyPreset)
+  const defaultAgent = useAppStore((s) => s.defaultAgent)
   const [projectId, setProjectId] = useState(defaultProjectId ?? projects[0]?.id ?? '')
   const [name, setName] = useState('')
+  const [agent, setAgent] = useState(defaultAgent)
   const [permissionMode, setPermissionMode] = useState('')
   const [mode, setMode] = useState<SandboxMode>('mount')
   const [creating, setCreating] = useState(false)
@@ -117,6 +120,7 @@ export function CreateSandboxDialog({
         mode,
         name: name.trim() || null,
         permissionMode: permissionMode || null,
+        agent,
       })
       notify('Sandbox started', 'Your sandbox is up and running.', sandbox.id)
       try {
@@ -184,6 +188,21 @@ export function CreateSandboxDialog({
           />
         </div>
         <div className="flex flex-col gap-1">
+          <Label htmlFor="sandbox-agent">Agent</Label>
+          <Select value={agent} onValueChange={(value) => { setAgent(value); setPermissionMode('') }}>
+            <SelectTrigger id="sandbox-agent">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {AGENTS.map((a) => (
+                <SelectItem key={a} value={a}>
+                  {AGENT_LABELS[a]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex flex-col gap-1">
           <Label htmlFor="sandbox-permission-mode">Permission mode</Label>
           <Select
             value={permissionMode || DEFAULT_PERMISSION_MODE}
@@ -196,7 +215,7 @@ export function CreateSandboxDialog({
             </SelectTrigger>
             <SelectContent>
               <SelectItem value={DEFAULT_PERMISSION_MODE}>Use Settings default</SelectItem>
-              {PERMISSION_MODES.map((m) => (
+              {PERMISSION_MODES[agent as keyof typeof PERMISSION_MODES].map((m) => (
                 <SelectItem key={m} value={m}>
                   {m}
                 </SelectItem>
