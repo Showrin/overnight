@@ -156,10 +156,12 @@ pub struct Sandbox {
   /// Which coding CLI this sandbox runs — `"claude"` | `"codex"`. Fixed at
   /// creation time; see `crate::agents` for what each id resolves to.
   pub agent: String,
-  /// Claude permission mode this sandbox was created with: "plan" |
-  /// "default" | "acceptEdits" | "bypassPermissions". Applied both to
-  /// app-launched autonomous sessions and to `claude` run manually in the
-  /// sandbox's own terminal.
+  /// This sandbox's agent's permission/approval mode, chosen from its own
+  /// `crate::agents::AgentKit::permission_modes` (e.g. Claude's "plan" |
+  /// "default" | "acceptEdits" | "bypassPermissions", or Codex's
+  /// "untrusted" | "on-failure" | "on-request" | "never"). Applied both to
+  /// app-launched autonomous sessions and to the agent CLI run manually in
+  /// the sandbox's own terminal.
   pub permission_mode: String,
   /// "starting" | "running" | "stopping" | "stopped" | "error"
   pub status: String,
@@ -176,11 +178,12 @@ pub struct Sandbox {
   /// can't be scoped to one sandbox. The allow/deny rules this applies are
   /// never stored here — always read live via `sbx policy ls`.
   pub network_preset_override: Option<String>,
-  /// When the in-VM `~/.claude` directory was last copied to the host via
-  /// `sbx cp` (see `sbx::cp_from_sandbox`). `None` until the first backup.
+  /// When this sandbox's agent home directory (`~/.claude` or `~/.codex`,
+  /// per `crate::agents::get`) was last copied to the host via `sbx cp`
+  /// (see `sbx::cp_from_sandbox`). `None` until the first backup.
   pub last_backup_at: Option<i64>,
   /// Host destination folder the last backup landed in, under
-  /// `<app_data_dir>/claude-backups/<sbx_name>/<unix_ms>/`.
+  /// `<app_data_dir>/sandbox-backups/<sbx_name>/<unix_ms>/`.
   pub last_backup_path: Option<String>,
   /// The host repo's checked-out branch, snapshotted once via
   /// `git::current_branch` at `create_sandbox` time. `None` on detached
@@ -211,8 +214,9 @@ pub struct Sandbox {
   pub last_git_sync_result: Vec<crate::git::BranchSyncOutcome>,
 }
 
-/// One periodic (or pre-stop/pre-delete) backup of a sandbox's `~/.claude`
-/// and `<workspace>/.git` directories. See `db::backups::insert`.
+/// One periodic (or pre-stop/pre-delete) backup of a sandbox's agent home
+/// directory (`~/.claude` or `~/.codex`) and `<workspace>/.git` directory.
+/// See `db::backups::insert`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SandboxBackup {
   pub id: String,
@@ -225,7 +229,9 @@ pub struct SandboxBackup {
   pub created_at: i64,
   /// "scheduled" | "pre_stop" | "pre_delete"
   pub trigger: String,
-  /// Host directory this backup's `claude`/`git` subfolders live under.
+  /// Host directory this backup's `claude`/`codex`/`git` subfolders live
+  /// under (only one of `claude`/`codex` is ever present — see
+  /// `has_claude`/`has_codex`).
   pub host_dir: String,
   pub has_claude: bool,
   pub has_codex: bool,

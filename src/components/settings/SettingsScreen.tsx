@@ -44,12 +44,10 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
   const highlightNetworkPreset = useAppStore((s) => s.highlightNetworkPreset)
   const setHighlightNetworkPreset = useAppStore((s) => s.setHighlightNetworkPreset)
 
-  const savedPermissionMode = settings?.default_claude_permission_mode ?? 'default'
-  const savedCodexPermissionMode = settings?.default_codex_permission_mode ?? 'on-request'
+  const savedPermissionMode = settings?.default_permission_mode ?? 'never'
   const savedSkillFolders = settings?.skill_folders ?? []
 
-  const [permissionMode, setPermissionMode] = useState<string>('default')
-  const [codexPermissionMode, setCodexPermissionMode] = useState<string>('on-request')
+  const [permissionMode, setPermissionMode] = useState<string>('never')
   const [localDefaultAgent, setLocalDefaultAgent] = useState<string>('claude')
   const [terminalHost, setTerminalHost] = useState<string>('cmd')
   const [skillFolders, setSkillFolders] = useState<string[]>([])
@@ -100,11 +98,10 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
 
   useEffect(() => {
     if (settings) {
-      setPermissionMode(settings.default_claude_permission_mode)
-      setCodexPermissionMode(savedCodexPermissionMode)
+      setPermissionMode(settings.default_permission_mode)
       setSkillFolders(settings.skill_folders)
     }
-  }, [settings, savedCodexPermissionMode])
+  }, [settings])
 
   useEffect(() => {
     setTerminalHost(defaultTerminalHost)
@@ -211,7 +208,6 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
 
   const generalDirty =
     permissionMode !== savedPermissionMode ||
-    codexPermissionMode !== savedCodexPermissionMode ||
     localDefaultAgent !== defaultAgent ||
     terminalHost !== defaultTerminalHost ||
     !sameFolders(skillFolders, savedSkillFolders)
@@ -220,8 +216,11 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
     setSavingGeneral(true)
     setGeneralError(null)
     try {
-      if (permissionMode !== savedPermissionMode || codexPermissionMode !== savedCodexPermissionMode) {
-        await saveSettings(permissionMode, codexPermissionMode)
+      // permissionMode is only ever meaningful together with the agent it
+      // was chosen for (see permissionModes.ts) — pass localDefaultAgent
+      // explicitly rather than relying on saveDefaultAgent landing first.
+      if (permissionMode !== savedPermissionMode || localDefaultAgent !== defaultAgent) {
+        await saveSettings(localDefaultAgent, permissionMode)
       }
       if (localDefaultAgent !== defaultAgent) await saveDefaultAgent(localDefaultAgent)
       if (!sameFolders(skillFolders, savedSkillFolders)) await saveSkillFolders(skillFolders)
@@ -235,7 +234,6 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
 
   function resetGeneral() {
     setPermissionMode(savedPermissionMode)
-    setCodexPermissionMode(savedCodexPermissionMode)
     setLocalDefaultAgent(defaultAgent)
     setTerminalHost(defaultTerminalHost)
     setSkillFolders(savedSkillFolders)
@@ -491,8 +489,6 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
             setDefaultAgent={setLocalDefaultAgent}
             permissionMode={permissionMode}
             setPermissionMode={setPermissionMode}
-            codexPermissionMode={codexPermissionMode}
-            setCodexPermissionMode={setCodexPermissionMode}
             terminalHost={terminalHost}
             setTerminalHost={setTerminalHost}
             skillFolders={skillFolders}

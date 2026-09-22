@@ -6,11 +6,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { AGENTS, AGENT_LABELS } from '@/lib/agentHost'
+import { AGENTS, AGENT_LABELS, type Agent } from '@/lib/agentHost'
 import type { NetworkRuleDecision } from '@/lib/networkPolicy'
 import { SANDBOX_NETWORK_PRESET_OVERRIDE_LABELS, SANDBOX_NETWORK_PRESET_OVERRIDES } from '@/lib/networkPolicy'
 import { notify } from '@/lib/notify'
-import { PERMISSION_MODES } from '@/lib/permissionModes'
+import { fullPermissionMode, PERMISSION_MODES } from '@/lib/permissionModes'
 import { useAppStore } from '@/store/useAppStore'
 import type { Sandbox, SandboxMode } from './types'
 
@@ -189,7 +189,18 @@ export function CreateSandboxDialog({
         </div>
         <div className="flex flex-col gap-1">
           <Label htmlFor="sandbox-agent">Agent</Label>
-          <Select value={agent} onValueChange={(value) => { setAgent(value); setPermissionMode('') }}>
+          <Select
+            value={agent}
+            onValueChange={(value) => {
+              setAgent(value)
+              // Keeping the sandbox on the global default agent: leave the
+              // permission mode on "use Settings default", freely changeable.
+              // Overriding to a different agent: land on its full-permission
+              // mode explicitly, rather than a moderate mode that could
+              // surprise the user for a one-off, deliberately-chosen agent.
+              setPermissionMode(value === defaultAgent ? '' : fullPermissionMode(value as Agent))
+            }}
+          >
             <SelectTrigger id="sandbox-agent">
               <SelectValue />
             </SelectTrigger>

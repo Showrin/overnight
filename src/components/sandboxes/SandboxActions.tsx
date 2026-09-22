@@ -240,11 +240,7 @@ export function SandboxActions({
                 size="sm"
                 variant="outline"
                 disabled={busyAction != null}
-                className={
-                  sandbox.agent === "codex"
-                    ? "border-info/40 text-info hover:bg-info/10 hover:text-info"
-                    : undefined
-                }
+                className="border-info/40 text-info hover:bg-info/10 hover:text-info"
                 onClick={() =>
                   run("agent", () =>
                     invoke("open_sandbox_agent", { id: sandbox.id, agent: sandbox.agent }),

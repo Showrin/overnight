@@ -1,6 +1,9 @@
 // Agent id -> what `sbx run --name <sandbox> <id>` launches. Add an entry
-// here (and to the AGENTS tuple in src-tauri/src/agents/mod.rs) to support
-// another agent.
+// here (and to the `ALL` slice in src-tauri/src/agents/mod.rs) to support
+// another agent. `commands::list_agents` exposes that Rust registry over
+// the wire, but these constants stay the frontend's actual source of
+// truth for now — `Agent` below is a compile-time-checked string union,
+// which a value loaded at runtime can't provide.
 export const AGENTS = ['claude', 'codex'] as const
 export type Agent = (typeof AGENTS)[number]
 

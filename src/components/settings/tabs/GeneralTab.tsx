@@ -3,8 +3,8 @@ import { Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { AGENTS, AGENT_LABELS } from '@/lib/agentHost'
-import { PERMISSION_MODES } from '@/lib/permissionModes'
+import { AGENTS, AGENT_LABELS, type Agent } from '@/lib/agentHost'
+import { DEFAULT_PERMISSION_MODE, PERMISSION_MODES } from '@/lib/permissionModes'
 import { TERMINAL_HOSTS, TERMINAL_HOST_LABELS } from '@/lib/terminalHost'
 import { SettingsRow } from '../SettingsLayout'
 
@@ -20,8 +20,6 @@ interface GeneralTabProps {
   setDefaultAgent: (agent: string) => void
   permissionMode: string
   setPermissionMode: (mode: string) => void
-  codexPermissionMode: string
-  setCodexPermissionMode: (mode: string) => void
   terminalHost: string
   setTerminalHost: (host: string) => void
   skillFolders: string[]
@@ -34,8 +32,6 @@ export function GeneralTab({
   setDefaultAgent,
   permissionMode,
   setPermissionMode,
-  codexPermissionMode,
-  setCodexPermissionMode,
   terminalHost,
   setTerminalHost,
   skillFolders,
@@ -53,7 +49,16 @@ export function GeneralTab({
         label="Default agent"
         description="Which coding CLI a new sandbox starts with when not chosen in the creation dialog."
       >
-        <Select value={defaultAgent} onValueChange={setDefaultAgent}>
+        <Select
+          value={defaultAgent}
+          onValueChange={(value) => {
+            setDefaultAgent(value)
+            // The permission mode is one shared setting, not one per agent
+            // (see permissionModes.ts) — switching agents here must reset
+            // it to a value that's actually valid for the new one.
+            setPermissionMode(DEFAULT_PERMISSION_MODE[value as Agent])
+          }}
+        >
           <SelectTrigger className="max-w-sm">
             <SelectValue />
           </SelectTrigger>
@@ -68,33 +73,15 @@ export function GeneralTab({
       </SettingsRow>
 
       <SettingsRow
-        label="Default Claude permission mode"
-        description="The permission mode new Claude sessions start in."
+        label={`Default ${AGENT_LABELS[defaultAgent as Agent] ?? defaultAgent} permission mode`}
+        description={`The permission mode new ${AGENT_LABELS[defaultAgent as Agent] ?? defaultAgent} sessions start in.`}
       >
         <Select value={permissionMode} onValueChange={setPermissionMode}>
           <SelectTrigger className="max-w-sm">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {PERMISSION_MODES.claude.map((mode) => (
-              <SelectItem key={mode} value={mode}>
-                {mode}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </SettingsRow>
-
-      <SettingsRow
-        label="Default Codex approval mode"
-        description="The approval mode new Codex sessions start in."
-      >
-        <Select value={codexPermissionMode} onValueChange={setCodexPermissionMode}>
-          <SelectTrigger className="max-w-sm">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {PERMISSION_MODES.codex.map((mode) => (
+            {(PERMISSION_MODES[defaultAgent as Agent] ?? PERMISSION_MODES.claude).map((mode) => (
               <SelectItem key={mode} value={mode}>
                 {mode}
               </SelectItem>

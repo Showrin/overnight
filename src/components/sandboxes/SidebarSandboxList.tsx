@@ -90,7 +90,7 @@ export function SidebarSandboxList({ onNavigate }: { onNavigate: (route: Route) 
                         invoke('open_sandbox_agent', { id: sandbox.id, agent: sandbox.agent }),
                       )
                     }
-                    className="flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
+                    className="flex size-6 items-center justify-center rounded border border-info/40 text-info hover:bg-info/10 hover:text-info disabled:opacity-50"
                   >
                     {isBusy && busy?.action === 'agent' ? (
                       <Loader2 className="size-3 animate-spin" />

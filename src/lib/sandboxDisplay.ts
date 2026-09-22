@@ -1,10 +1,12 @@
 import type { BranchSyncStatus, SandboxStatus } from '@/components/sandboxes/types'
+import type { Agent } from '@/lib/agentHost'
 import {
   NETWORK_POLICY_PRESET_LABELS,
   SANDBOX_NETWORK_PRESET_OVERRIDE_LABELS,
   type NetworkPolicyPreset,
   type SandboxNetworkPresetOverride,
 } from '@/lib/networkPolicy'
+import { PERMISSION_MODES } from '@/lib/permissionModes'
 
 type BadgeVariant = 'outline-muted' | 'outline-success' | 'outline-warning' | 'outline-destructive'
 
@@ -23,9 +25,17 @@ export function statusBadgeVariant(status: SandboxStatus): BadgeVariant {
   }
 }
 
-export function permissionBadgeVariant(permissionMode: string): BadgeVariant {
-  if (permissionMode === 'bypassPermissions') return 'outline-destructive'
-  if (permissionMode === 'acceptEdits') return 'outline-warning'
+// Scales with the mode's position in PERMISSION_MODES[agent], which is
+// ordered least-restrictive-approval-required first, most-permissive last
+// (see that file's doc comment) — the last mode (Claude's
+// "bypassPermissions", Codex's "never") is always the highest-risk one,
+// regardless of agent, so a mode this function has never seen still gets a
+// sensible severity from where it sits in its own agent's list.
+export function permissionBadgeVariant(agent: string, permissionMode: string): BadgeVariant {
+  const modes = PERMISSION_MODES[agent as Agent] ?? PERMISSION_MODES.claude
+  const index = modes.indexOf(permissionMode)
+  if (index === modes.length - 1) return 'outline-destructive'
+  if (index === modes.length - 2) return 'outline-warning'
   return 'outline-muted'
 }
 

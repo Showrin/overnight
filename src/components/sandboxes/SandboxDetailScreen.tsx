@@ -54,7 +54,7 @@ export function SandboxDetailScreen({
           <div className="grid grid-cols-2 gap-4 text-sm text-muted-foreground md:grid-cols-4">
             <div className="flex min-w-0 flex-col gap-0.5">
               <span className="text-xs text-muted-foreground/70">Permission Mode</span>
-              <Badge variant={permissionBadgeVariant(sandbox.permission_mode)} className="w-fit">
+              <Badge variant={permissionBadgeVariant(sandbox.agent, sandbox.permission_mode)} className="w-fit">
                 {sandbox.permission_mode}
               </Badge>
             </div>

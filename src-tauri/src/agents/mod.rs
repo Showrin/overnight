@@ -17,17 +17,26 @@ pub struct AgentKit {
   /// source and the destination for `host_auth_relative_path`.
   pub home_dir: &'static str,
   /// `sbx secret set <secret_service> ...` — must be one of
-  /// `commands::KNOWN_SECRET_SERVICES`.
-  #[allow(dead_code)] // not consumed yet — Codex/Claude auth goes through the generic secrets UI today, not this field
+  /// `commands::KNOWN_SECRET_SERVICES`. Surfaced read-only via
+  /// `commands::list_agents`; Codex/Claude auth itself goes through the
+  /// generic secrets UI today, not this field.
   pub secret_service: &'static str,
   /// The CLI flag `set_default_permission_mode` appends after `cli_token`
   /// in the `/etc/sandbox-persistent.sh` alias.
   pub permission_flag: &'static str,
+  /// Ordered least-restrictive-approval-required first, most-permissive
+  /// (no approval ever asked) last. The last entry is this agent's "full
+  /// permission" mode — `src/lib/permissionModes.ts`'s `fullPermissionMode`
+  /// mirrors this on the frontend, and both `create_sandbox`'s validation
+  /// and the Settings UI rely on this ordering, not just the values.
   pub permission_modes: &'static [&'static str],
+  /// This agent's baseline permission mode — used both as the fallback
+  /// when the single `default_permission_mode` setting has never been
+  /// saved, and (in `create_sandbox`) whenever the chosen agent differs
+  /// from the app's current default agent, so an explicit agent override
+  /// never inherits a permission-mode string that may not even be valid
+  /// for it.
   pub default_permission_mode: &'static str,
-  /// `settings` table key this agent's default permission mode is stored
-  /// under, e.g. `"default_claude_permission_mode"`.
-  pub permission_mode_settings_key: &'static str,
   /// Path under the host's home directory to copy into `home_dir` (same
   /// basename) when a sandbox is created, or `None` if this agent
   /// authenticates purely via `secret_service` (Claude Code does — it has
@@ -45,7 +54,6 @@ pub const CLAUDE: AgentKit = AgentKit {
   permission_flag: "--permission-mode",
   permission_modes: &["plan", "default", "acceptEdits", "bypassPermissions"],
   default_permission_mode: "default",
-  permission_mode_settings_key: "default_claude_permission_mode",
   host_auth_relative_path: None,
 };
 
@@ -64,8 +72,10 @@ pub const CODEX: AgentKit = AgentKit {
   secret_service: "openai",
   permission_flag: "--ask-for-approval",
   permission_modes: &["untrusted", "on-failure", "on-request", "never"],
-  default_permission_mode: "on-request",
-  permission_mode_settings_key: "default_codex_permission_mode",
+  // Deliberately Codex's most-permissive mode, not a cautious middle
+  // ground — a fresh Codex sandbox should be able to run unattended out
+  // of the box, matching how Codex is expected to be used in this app.
+  default_permission_mode: "never",
   host_auth_relative_path: Some(".codex/auth.json"),
 };
 
@@ -75,7 +85,6 @@ pub fn get(id: &str) -> Option<&'static AgentKit> {
   ALL.iter().find(|kit| kit.id == id).copied()
 }
 
-#[allow(dead_code)] // no production caller yet — exists for future use (e.g. a list_agents command) and this module's own tests
 pub fn all() -> &'static [&'static AgentKit] {
   ALL
 }
@@ -114,5 +123,11 @@ mod tests {
   fn plans_dir_is_home_dir_slash_plans() {
     assert_eq!(plans_dir(&CLAUDE), "/home/agent/.claude/plans");
     assert_eq!(plans_dir(&CODEX), "/home/agent/.codex/plans");
+  }
+
+  #[test]
+  fn codex_defaults_to_its_own_full_permission_mode() {
+    assert_eq!(CODEX.default_permission_mode, "never");
+    assert_eq!(CODEX.permission_modes.last(), Some(&"never"));
   }
 }

@@ -685,27 +685,29 @@ async fn register_secrets(app: &AppHandle, secrets: &[Secret], sandbox_name: Opt
   Ok(())
 }
 
+/// A single shared setting, not one per agent — its meaning is always
+/// relative to whichever agent `SANDBOX_AGENT_KEY` currently names. Changing
+/// the default agent (see `save_default_agent`) doesn't rewrite this value;
+/// `get_settings`/`create_sandbox` fall back to the *new* agent's own
+/// `AgentKit::default_permission_mode` whenever this stored value would be
+/// invalid for it, so a leftover Claude-shaped string never leaks into a
+/// Codex sandbox's defaults or vice versa.
+const DEFAULT_PERMISSION_MODE_KEY: &str = "default_permission_mode";
+
 #[derive(Serialize)]
 pub struct AppSettings {
-  pub default_claude_permission_mode: String,
-  pub default_codex_permission_mode: String,
+  pub default_permission_mode: String,
   pub skill_folders: Vec<String>,
-}
-
-fn default_permission_mode_for(kit: &crate::agents::AgentKit) -> Result<String> {
-  // Read via the global pool inline at each call site instead — kept as a
-  // free function only for the two lookups below to share the fallback.
-  Ok(kit.default_permission_mode.to_string())
 }
 
 #[tauri::command]
 pub fn get_settings(pool: State<DbPool>) -> Result<AppSettings> {
   let conn = pool.get()?;
+  let default_agent = settings::get(&conn, SANDBOX_AGENT_KEY)?.unwrap_or_else(|| DEFAULT_AGENT.to_string());
+  let agent_kit = crate::agents::get(&default_agent).unwrap_or(&crate::agents::CLAUDE);
   Ok(AppSettings {
-    default_claude_permission_mode: settings::get(&conn, crate::agents::CLAUDE.permission_mode_settings_key)?
-      .unwrap_or_else(|| default_permission_mode_for(&crate::agents::CLAUDE).unwrap()),
-    default_codex_permission_mode: settings::get(&conn, crate::agents::CODEX.permission_mode_settings_key)?
-      .unwrap_or_else(|| default_permission_mode_for(&crate::agents::CODEX).unwrap()),
+    default_permission_mode: settings::get(&conn, DEFAULT_PERMISSION_MODE_KEY)?
+      .unwrap_or_else(|| agent_kit.default_permission_mode.to_string()),
     skill_folders: settings::get_json(&conn, SKILL_FOLDERS_KEY)?.unwrap_or_default(),
   })
 }
@@ -717,17 +719,17 @@ fn validate_permission_mode(kit: &crate::agents::AgentKit, mode: &str) -> Result
   Ok(())
 }
 
+/// `agent` is the agent this `default_permission_mode` was chosen for —
+/// passed explicitly by the frontend (its currently-selected default agent
+/// at save time) rather than read back from `SANDBOX_AGENT_KEY`, so saving
+/// both settings together in one "Save" click never depends on which of
+/// the two writes lands first.
 #[tauri::command]
-pub fn save_settings(
-  pool: State<DbPool>,
-  default_claude_permission_mode: String,
-  default_codex_permission_mode: String,
-) -> Result<()> {
-  validate_permission_mode(&crate::agents::CLAUDE, &default_claude_permission_mode)?;
-  validate_permission_mode(&crate::agents::CODEX, &default_codex_permission_mode)?;
+pub fn save_settings(pool: State<DbPool>, agent: String, default_permission_mode: String) -> Result<()> {
+  let agent_kit = crate::agents::get(&agent).ok_or_else(|| Error::InvalidValue(format!("invalid agent: {agent}")))?;
+  validate_permission_mode(agent_kit, &default_permission_mode)?;
   let conn = pool.get()?;
-  settings::set(&conn, crate::agents::CLAUDE.permission_mode_settings_key, &default_claude_permission_mode)?;
-  settings::set(&conn, crate::agents::CODEX.permission_mode_settings_key, &default_codex_permission_mode)
+  settings::set(&conn, DEFAULT_PERMISSION_MODE_KEY, &default_permission_mode)
 }
 
 /// Persists the chosen skill folders and copies each into sbx's shared
@@ -760,7 +762,7 @@ const VALID_TERMINAL_HOSTS: [&str; 2] = ["cmd", "powershell"];
 /// Windows-only: which console app wraps `sbx exec -it <name> bash` when a
 /// per-launch choice isn't given (see `open_sandbox_terminal`). Ignored on
 /// macOS/Linux, but kept unscoped by OS here — same shape as
-/// `default_claude_permission_mode` — since it's a harmless no-op elsewhere.
+/// `DEFAULT_PERMISSION_MODE_KEY` — since it's a harmless no-op elsewhere.
 #[tauri::command]
 pub fn get_default_terminal_host(pool: State<DbPool>) -> std::result::Result<String, String> {
   let conn = pool.get().map_err(|e| e.to_string())?;
@@ -831,6 +833,40 @@ pub fn save_default_agent(pool: State<DbPool>, agent: String) -> std::result::Re
   settings::set(&conn, SANDBOX_AGENT_KEY, &agent).map_err(|e| e.to_string())
 }
 
+/// One agent's public-facing config — the wire form of `agents::AgentKit`,
+/// trimming fields (`cli_token`, `permission_flag`, `home_dir`,
+/// `host_auth_relative_path`) that are only meaningful to backend-side
+/// sandbox orchestration and have no frontend use today.
+#[derive(Serialize)]
+pub struct AgentInfo {
+  pub id: String,
+  pub label: String,
+  pub permission_modes: Vec<String>,
+  pub default_permission_mode: String,
+  pub secret_service: String,
+}
+
+/// Every known agent's display info, straight from `agents::all()` — lets
+/// the frontend eventually stop hand-mirroring `AGENTS`/`AGENT_LABELS`/
+/// `PERMISSION_MODES` as parallel, comment-synced constants, though nothing
+/// consumes this yet (those constants remain the frontend's actual source
+/// of truth for now, since they double as compile-time-checked `Agent`
+/// union members). Exists so a new `AgentKit` is visible from the wire the
+/// moment it's added, without waiting on that frontend migration.
+#[tauri::command]
+pub fn list_agents() -> Vec<AgentInfo> {
+  crate::agents::all()
+    .iter()
+    .map(|kit| AgentInfo {
+      id: kit.id.to_string(),
+      label: kit.label.to_string(),
+      permission_modes: kit.permission_modes.iter().map(|m| m.to_string()).collect(),
+      default_permission_mode: kit.default_permission_mode.to_string(),
+      secret_service: kit.secret_service.to_string(),
+    })
+    .collect()
+}
+
 const SIDEBAR_WIDTH_KEY: &str = "sidebar_width";
 const DEFAULT_SIDEBAR_WIDTH: i32 = 208;
 const MIN_SIDEBAR_WIDTH: i32 = 208;
@@ -887,6 +923,17 @@ mod agent_cli_token_tests {
   #[test]
   fn unknown_agent_returns_none() {
     assert_eq!(agent_cli_token("gpt4"), None);
+  }
+
+  #[test]
+  fn list_agents_includes_every_known_agent_with_its_secret_service() {
+    let agents = list_agents();
+    let claude = agents.iter().find(|a| a.id == "claude").expect("claude listed");
+    assert_eq!(claude.secret_service, "anthropic");
+    assert_eq!(claude.default_permission_mode, "default");
+    let codex = agents.iter().find(|a| a.id == "codex").expect("codex listed");
+    assert_eq!(codex.secret_service, "openai");
+    assert_eq!(codex.default_permission_mode, "never");
   }
 }
 
@@ -1489,16 +1536,21 @@ pub async fn create_sandbox(
   let name = name.filter(|n| !n.trim().is_empty());
   let pool = pool.inner().clone();
 
+  let stored_default_agent = resolve_default_agent(&pool)?;
   let agent = match agent.filter(|a| !a.trim().is_empty()) {
     Some(a) => a,
-    None => resolve_default_agent(&pool)?,
+    None => stored_default_agent.clone(),
   };
   let agent_kit = crate::agents::get(&agent).ok_or_else(|| format!("invalid agent: {agent}"))?;
 
-  // Unset means "use whatever's configured as this agent's default" —
-  // resolved and snapshotted onto the sandbox now rather than looked up
-  // again on every session launch, same as folder_path/sbx_name are fixed
-  // at creation time.
+  // Unset means "use this agent's configured default" — resolved and
+  // snapshotted onto the sandbox now rather than looked up again on every
+  // session launch, same as folder_path/sbx_name are fixed at creation
+  // time. The single `default_permission_mode` setting is only consulted
+  // when `agent` matches the app's current default agent — it was saved
+  // for that agent specifically (see `DEFAULT_PERMISSION_MODE_KEY`'s doc
+  // comment), so applying it to a different, explicitly-overridden agent
+  // could hand it a permission-mode string that isn't even valid for it.
   let permission_mode = match permission_mode.filter(|m| !m.trim().is_empty()) {
     Some(m) => {
       if !agent_kit.permission_modes.contains(&m.as_str()) {
@@ -1506,12 +1558,13 @@ pub async fn create_sandbox(
       }
       m
     }
-    None => {
+    None if agent == stored_default_agent => {
       let conn = pool.get().map_err(|e| e.to_string())?;
-      settings::get(&conn, agent_kit.permission_mode_settings_key)
+      settings::get(&conn, DEFAULT_PERMISSION_MODE_KEY)
         .map_err(|e| e.to_string())?
         .unwrap_or_else(|| agent_kit.default_permission_mode.to_string())
     }
+    None => agent_kit.default_permission_mode.to_string(),
   };
 
   let project = {
@@ -2347,11 +2400,11 @@ fn read_plan_files(dir: &std::path::Path) -> std::io::Result<Vec<PlanFile>> {
   Ok(plans)
 }
 
-/// Wipes and re-copies this sandbox's `/.claude/plans` to
-/// `<app_data_dir>/plans/<sbx_name>/` (rather than trusting `sbx cp`'s
-/// overwrite behavior, which is unverified — see `backup_sandbox_claude_data`)
-/// so a plan deleted inside the sandbox doesn't linger on the host, then
-/// returns every `.md` file found there.
+/// Wipes and re-copies this sandbox's agent's `plans` directory (see
+/// `plans_source_path`) to `<app_data_dir>/plans/<sbx_name>/` (rather than
+/// trusting `sbx cp`'s overwrite behavior, which is unverified — see
+/// `crate::sbx::cp_from_sandbox`) so a plan deleted inside the sandbox
+/// doesn't linger on the host, then returns every `.md` file found there.
 #[tauri::command]
 pub async fn sync_sandbox_plans(app: AppHandle, pool: State<'_, DbPool>, id: String) -> std::result::Result<Vec<PlanFile>, String> {
   let sandbox = {
