@@ -1656,10 +1656,22 @@ async fn sync_host_agent_auth(app: &AppHandle, name: &str, kit: &crate::agents::
   if !host_path.is_file() {
     return;
   }
-  let remote_path = format!("{}/{relative}", kit.home_dir);
+  let remote_path = host_auth_remote_path(kit.home_dir, relative);
   if let Err(e) = crate::sbx::cp_to_sandbox(app, name, &host_path.to_string_lossy(), &remote_path).await {
     log::warn!("sync_host_agent_auth: failed to copy {} into {name}: {e}", host_path.display());
   }
+}
+
+/// Where `sync_host_agent_auth` copies `relative`'s host file to inside the
+/// sandbox: `home_dir` joined with just the file's basename, not the whole
+/// `relative` path — `relative` may itself start with a directory that
+/// duplicates part of `home_dir` (e.g. Codex's `.codex/auth.json` against
+/// `home_dir = "/home/agent/.codex"`), and joining the full relative path
+/// would produce `/home/agent/.codex/.codex/auth.json` instead of the
+/// `/home/agent/.codex/auth.json` the agent actually reads.
+fn host_auth_remote_path(home_dir: &str, relative: &str) -> String {
+  let basename = std::path::Path::new(relative).file_name().and_then(|f| f.to_str()).unwrap_or(relative);
+  format!("{home_dir}/{basename}")
 }
 
 fn host_home_dir() -> Option<String> {
@@ -1670,6 +1682,21 @@ fn host_home_dir() -> Option<String> {
   #[cfg(not(target_os = "windows"))]
   {
     std::env::var("HOME").ok()
+  }
+}
+
+#[cfg(test)]
+mod host_auth_remote_path_tests {
+  use super::host_auth_remote_path;
+
+  #[test]
+  fn joins_home_dir_with_just_the_basename_not_the_full_relative_path() {
+    assert_eq!(host_auth_remote_path("/home/agent/.codex", ".codex/auth.json"), "/home/agent/.codex/auth.json");
+  }
+
+  #[test]
+  fn a_bare_filename_with_no_directory_component_still_joins_correctly() {
+    assert_eq!(host_auth_remote_path("/home/agent/.claude", "credentials.json"), "/home/agent/.claude/credentials.json");
   }
 }
 
