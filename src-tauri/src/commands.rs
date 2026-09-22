@@ -2124,6 +2124,22 @@ mod finalize_sandbox_rm_tests {
   }
 }
 
+#[cfg(test)]
+mod plans_source_path_tests {
+  use super::*;
+
+  #[test]
+  fn resolves_per_agent_plans_dir() {
+    assert_eq!(plans_source_path("claude"), "/home/agent/.claude/plans");
+    assert_eq!(plans_source_path("codex"), "/home/agent/.codex/plans");
+  }
+
+  #[test]
+  fn falls_back_to_claude_for_unknown_agent() {
+    assert_eq!(plans_source_path("gpt4"), "/home/agent/.claude/plans");
+  }
+}
+
 #[derive(Serialize)]
 pub struct SandboxUsage {
   pub input_tokens: i64,
@@ -2284,12 +2300,15 @@ pub async fn restore_backup(
   crate::restore::restore_backup(&app, &pool, &backup_id, &target_sandbox_id, scope).await
 }
 
-/// The `claude` CLI's plans directory inside the sandbox — resynced to the
-/// host each time the Plans tab loads or "Resync" is clicked (unlike the
-/// Claude-data backup above, this path is re-synced in place rather than
-/// versioned per timestamp, since it's meant to always reflect the current
-/// in-sandbox plan files).
-const PLANS_SOURCE_PATH: &str = "/home/agent/.claude/plans";
+/// This sandbox's agent's plans directory inside the sandbox — resynced to
+/// the host each time the Plans tab loads or "Resync" is clicked (unlike
+/// the agent-data backup above, this path is re-synced in place rather
+/// than versioned per timestamp, since it's meant to always reflect the
+/// current in-sandbox plan files). Falls back to Claude's own plans dir
+/// for an unknown/legacy agent id rather than failing the sync outright.
+fn plans_source_path(agent: &str) -> String {
+  crate::agents::get(agent).map(crate::agents::plans_dir).unwrap_or_else(|| crate::agents::plans_dir(&crate::agents::CLAUDE))
+}
 
 #[derive(Serialize)]
 pub struct PlanFile {
@@ -2350,7 +2369,8 @@ pub async fn sync_sandbox_plans(app: AppHandle, pool: State<'_, DbPool>, id: Str
   }
   std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
 
-  crate::sbx::cp_from_sandbox(&app, &name, PLANS_SOURCE_PATH, &dest.to_string_lossy())
+  let source_path = plans_source_path(&sandbox.agent);
+  crate::sbx::cp_from_sandbox(&app, &name, &source_path, &dest.to_string_lossy())
     .await
     .map_err(|e| e.to_string())?;
 
