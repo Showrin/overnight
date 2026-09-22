@@ -1,4 +1,4 @@
-export type BackupScope = 'claude' | 'git' | 'all'
+export type BackupScope = 'claude' | 'codex' | 'git' | 'all'
 
 export interface SandboxBackup {
   id: string
@@ -11,6 +11,7 @@ export interface SandboxBackup {
   trigger: string
   host_dir: string
   has_claude: boolean
+  has_codex: boolean
   has_git: boolean
   base_branch: string | null
   current_branch: string | null
