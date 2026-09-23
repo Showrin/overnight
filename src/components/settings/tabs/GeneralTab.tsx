@@ -3,7 +3,8 @@ import { Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { PERMISSION_MODES } from '@/lib/permissionModes'
+import { AGENTS, AGENT_LABELS, type Agent } from '@/lib/agentHost'
+import { DEFAULT_PERMISSION_MODE, PERMISSION_MODES } from '@/lib/permissionModes'
 import { TERMINAL_HOSTS, TERMINAL_HOST_LABELS } from '@/lib/terminalHost'
 import { SettingsRow } from '../SettingsLayout'
 
@@ -15,6 +16,8 @@ function skillName(path: string): string {
 }
 
 interface GeneralTabProps {
+  defaultAgent: string
+  setDefaultAgent: (agent: string) => void
   permissionMode: string
   setPermissionMode: (mode: string) => void
   terminalHost: string
@@ -25,6 +28,8 @@ interface GeneralTabProps {
 }
 
 export function GeneralTab({
+  defaultAgent,
+  setDefaultAgent,
   permissionMode,
   setPermissionMode,
   terminalHost,
@@ -41,15 +46,42 @@ export function GeneralTab({
   return (
     <>
       <SettingsRow
-        label="Default Claude permission mode"
-        description="The permission mode new Claude sessions start in."
+        label="Default agent"
+        description="Which coding CLI a new sandbox starts with when not chosen in the creation dialog."
+      >
+        <Select
+          value={defaultAgent}
+          onValueChange={(value) => {
+            setDefaultAgent(value)
+            // The permission mode is one shared setting, not one per agent
+            // (see permissionModes.ts) — switching agents here must reset
+            // it to a value that's actually valid for the new one.
+            setPermissionMode(DEFAULT_PERMISSION_MODE[value as Agent])
+          }}
+        >
+          <SelectTrigger className="max-w-sm">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {AGENTS.map((agent) => (
+              <SelectItem key={agent} value={agent}>
+                {AGENT_LABELS[agent]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </SettingsRow>
+
+      <SettingsRow
+        label={`Default ${AGENT_LABELS[defaultAgent as Agent] ?? defaultAgent} permission mode`}
+        description={`The permission mode new ${AGENT_LABELS[defaultAgent as Agent] ?? defaultAgent} sessions start in.`}
       >
         <Select value={permissionMode} onValueChange={setPermissionMode}>
           <SelectTrigger className="max-w-sm">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {PERMISSION_MODES.map((mode) => (
+            {(PERMISSION_MODES[defaultAgent as Agent] ?? PERMISSION_MODES.claude).map((mode) => (
               <SelectItem key={mode} value={mode}>
                 {mode}
               </SelectItem>

@@ -1,5 +1,6 @@
-//! Periodic (and pre-stop/pre-delete) backups of a sandbox's `~/.claude`
-//! and `<workspace>/.git` directories, keeping only the newest
+//! Periodic (and pre-stop/pre-delete) backups of a sandbox's agent home
+//! directory (`~/.claude` or `~/.codex`, per `crate::agents::get`) and
+//! `<workspace>/.git` directory, keeping only the newest
 //! `KEEP_BACKUPS_PER_SANDBOX` per sandbox. See `db::backups` for storage
 //! and `run_scheduler` for the interval loop started from `lib.rs::setup`.
 
@@ -12,7 +13,6 @@ use tauri::{AppHandle, Manager};
 use crate::db::models::{now_millis, SandboxBackup};
 use crate::db::{backups, sandboxes, settings, DbPool};
 
-pub const CLAUDE_SOURCE_PATH: &str = "/home/agent/.claude";
 /// Subdirectory of `app_data_dir` every sandbox's backups live under —
 /// shared with `commands::open_backups_root_folder` so the global Backups
 /// page can open the same root a backup's `host_dir` is nested inside.
@@ -29,10 +29,15 @@ const BACKUP_LAST_RUN_KEY: &str = "backup_last_run_at";
 /// matching the scheduler's behavior before this toggle existed.
 pub const AUTO_BACKUP_ENABLED_KEY: &str = "auto_backup_enabled";
 
-/// Which halves of a sandbox a backup (or restore) covers.
+/// Which halves of a sandbox a backup (or restore) covers. `Claude`/`Codex`
+/// both mean "this sandbox's own agent home directory" — a sandbox only
+/// ever has one agent, so requesting the wrong one for a given sandbox is
+/// rejected by `backup_sandbox`/`restore::restore_backup` rather than
+/// silently doing nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackupScope {
   Claude,
+  Codex,
   Git,
   All,
 }
@@ -41,18 +46,30 @@ impl BackupScope {
   pub fn parse(raw: &str) -> std::result::Result<Self, String> {
     match raw {
       "claude" => Ok(Self::Claude),
+      "codex" => Ok(Self::Codex),
       "git" => Ok(Self::Git),
       "all" => Ok(Self::All),
       other => Err(format!("invalid backup scope: {other}")),
     }
   }
 
-  pub fn wants_claude(self) -> bool {
-    matches!(self, Self::Claude | Self::All)
+  pub fn wants_agent_home(self) -> bool {
+    matches!(self, Self::Claude | Self::Codex | Self::All)
   }
 
   pub fn wants_git(self) -> bool {
     matches!(self, Self::Git | Self::All)
+  }
+
+  /// The agent id an explicit `Claude`/`Codex` scope names, or `None` for
+  /// `Git`/`All` (which don't pin a specific agent — `All` always means
+  /// "whichever agent this sandbox actually is").
+  pub fn named_agent(self) -> Option<&'static str> {
+    match self {
+      Self::Claude => Some("claude"),
+      Self::Codex => Some("codex"),
+      Self::Git | Self::All => None,
+    }
   }
 }
 
@@ -101,12 +118,12 @@ impl Drop for ActiveBackupGuard {
   }
 }
 
-/// Copies `sandbox_id`'s `~/.claude` and (if it has a git workspace)
-/// `.git` directory to a fresh host folder, records the backup, and prunes
-/// anything beyond the newest `KEEP_BACKUPS_PER_SANDBOX`. A missing `.git`
-/// (or a failed copy of either half) doesn't cancel the other half — the
-/// two must stay independently importable. Every call site treats this as
-/// best-effort and only logs the error.
+/// Copies `sandbox_id`'s agent home directory and (if it has a git
+/// workspace) `.git` directory to a fresh host folder, records the backup,
+/// and prunes anything beyond the newest `KEEP_BACKUPS_PER_SANDBOX`. A
+/// missing `.git` (or a failed copy of either half) doesn't cancel the
+/// other half — the two must stay independently importable. Every call
+/// site treats this as best-effort and only logs the error.
 pub async fn backup_sandbox(
   app: &AppHandle,
   pool: &DbPool,
@@ -123,6 +140,12 @@ pub async fn backup_sandbox(
   }
   let name = sandbox.sbx_name.ok_or_else(|| "sandbox has no sbx sandbox yet".to_string())?;
   let sandbox_label = sandbox.name.clone().unwrap_or_else(|| name.clone());
+  let agent_kit = crate::agents::get(&sandbox.agent).ok_or_else(|| format!("unknown agent: {}", sandbox.agent))?;
+  if let Some(requested) = scope.named_agent() {
+    if requested != sandbox.agent {
+      return Err(format!("this sandbox's agent is \"{}\", not \"{requested}\"", sandbox.agent));
+    }
+  }
 
   if let Some(state) = app.try_state::<Mutex<BackupState>>() {
     if let Ok(mut state) = state.lock() {
@@ -142,11 +165,15 @@ pub async fn backup_sandbox(
     .join(&name)
     .join(now_millis().to_string());
 
-  let claude_dir = root.join("claude");
-  let has_claude = if scope.wants_claude() {
-    try_copy(app, &name, CLAUDE_SOURCE_PATH, &claude_dir).await
+  let agent_dir = root.join(agent_kit.id);
+  let has_agent_home = if scope.wants_agent_home() {
+    try_copy(app, &name, agent_kit.home_dir, &agent_dir).await
   } else {
     false
+  };
+  let (has_claude, has_codex) = match agent_kit.id {
+    "codex" => (false, has_agent_home),
+    _ => (has_agent_home, false),
   };
 
   let workspace = crate::sbx::workspace_path(app, &name).await.map_err(|e| e.to_string())?;
@@ -159,7 +186,8 @@ pub async fn backup_sandbox(
     false
   };
 
-  let plan_file_count = count_plan_files(&claude_dir);
+  let agent_basename = agent_kit.home_dir.rsplit('/').next().unwrap_or("");
+  let plan_file_count = count_plan_files(&agent_dir, agent_basename);
 
   let row = {
     let conn = pool.get().map_err(|e| e.to_string())?;
@@ -170,6 +198,7 @@ pub async fn backup_sandbox(
       trigger,
       &root.to_string_lossy(),
       has_claude,
+      has_codex,
       has_git,
       sandbox.base_branch.as_deref(),
       sandbox.current_branch.as_deref(),
@@ -177,7 +206,7 @@ pub async fn backup_sandbox(
       plan_file_count,
     )
     .map_err(|e| e.to_string())?;
-    // Best-effort: reflects this snapshot's root (containing claude/ and
+    // Best-effort: reflects this snapshot's root (containing <agent>/ and
     // git/) as the sandbox's most recent backup, regardless of trigger —
     // a failure here shouldn't undo an otherwise-successful backup.
     if let Err(e) = sandboxes::record_backup(&conn, sandbox_id, &root.to_string_lossy(), inserted.created_at) {
@@ -213,12 +242,13 @@ async fn try_copy(app: &AppHandle, name: &str, remote_path: &str, host_dest: &st
   }
 }
 
-/// `~/.claude/plans` is nested inside the just-copied `~/.claude`, so
-/// counting `.md` files here needs no extra remote copy. Checks both
-/// `claude_dir/plans` and `claude_dir/.claude/plans` since `sbx cp`'s exact
-/// nesting behavior is unverified (see `sbx::cp_from_sandbox`).
-fn count_plan_files(claude_dir: &std::path::Path) -> i64 {
-  let candidates = [claude_dir.join("plans"), claude_dir.join(".claude").join("plans")];
+/// `<agent>/plans` is nested inside the just-copied agent home directory,
+/// so counting `.md` files here needs no extra remote copy. Checks both
+/// `agent_dir/plans` and `agent_dir/<agent_basename>/plans` (e.g.
+/// `.claude`/`.codex`) since `sbx cp`'s exact nesting behavior is
+/// unverified (see `sbx::cp_from_sandbox`).
+fn count_plan_files(agent_dir: &std::path::Path, agent_basename: &str) -> i64 {
+  let candidates = [agent_dir.join("plans"), agent_dir.join(agent_basename).join("plans")];
   let Some(plans_dir) = candidates.into_iter().find(|p| p.is_dir()) else {
     return 0;
   };
@@ -332,6 +362,7 @@ mod tests {
   #[test]
   fn parses_valid_scopes() {
     assert_eq!(BackupScope::parse("claude"), Ok(BackupScope::Claude));
+    assert_eq!(BackupScope::parse("codex"), Ok(BackupScope::Codex));
     assert_eq!(BackupScope::parse("git"), Ok(BackupScope::Git));
     assert_eq!(BackupScope::parse("all"), Ok(BackupScope::All));
     assert!(BackupScope::parse("everything").is_err());
@@ -339,18 +370,28 @@ mod tests {
 
   #[test]
   fn scope_gates_which_halves_are_wanted() {
-    assert!(BackupScope::Claude.wants_claude());
+    assert!(BackupScope::Claude.wants_agent_home());
     assert!(!BackupScope::Claude.wants_git());
+    assert!(BackupScope::Codex.wants_agent_home());
+    assert!(!BackupScope::Codex.wants_git());
     assert!(BackupScope::Git.wants_git());
-    assert!(!BackupScope::Git.wants_claude());
-    assert!(BackupScope::All.wants_claude());
+    assert!(!BackupScope::Git.wants_agent_home());
+    assert!(BackupScope::All.wants_agent_home());
     assert!(BackupScope::All.wants_git());
+  }
+
+  #[test]
+  fn named_agent_only_set_for_claude_and_codex() {
+    assert_eq!(BackupScope::Claude.named_agent(), Some("claude"));
+    assert_eq!(BackupScope::Codex.named_agent(), Some("codex"));
+    assert_eq!(BackupScope::Git.named_agent(), None);
+    assert_eq!(BackupScope::All.named_agent(), None);
   }
 
   #[test]
   fn count_plan_files_returns_zero_when_missing() {
     let dir = std::env::temp_dir().join(format!("overnight-backup-test-{}", crate::db::models::new_id()));
-    assert_eq!(count_plan_files(&dir), 0);
+    assert_eq!(count_plan_files(&dir, ".claude"), 0);
   }
 
   #[test]
@@ -362,19 +403,31 @@ mod tests {
     std::fs::write(plans.join("b.md"), "plan b").unwrap();
     std::fs::write(plans.join("notes.txt"), "not a plan").unwrap();
 
-    assert_eq!(count_plan_files(&dir), 2);
+    assert_eq!(count_plan_files(&dir, ".claude"), 2);
 
     std::fs::remove_dir_all(&dir).ok();
   }
 
   #[test]
-  fn count_plan_files_checks_nested_claude_dir() {
+  fn count_plan_files_checks_nested_agent_dir() {
     let dir = std::env::temp_dir().join(format!("overnight-backup-test-{}", crate::db::models::new_id()));
     let plans = dir.join(".claude").join("plans");
     std::fs::create_dir_all(&plans).unwrap();
     std::fs::write(plans.join("a.md"), "plan a").unwrap();
 
-    assert_eq!(count_plan_files(&dir), 1);
+    assert_eq!(count_plan_files(&dir, ".claude"), 1);
+
+    std::fs::remove_dir_all(&dir).ok();
+  }
+
+  #[test]
+  fn count_plan_files_checks_nested_codex_dir() {
+    let dir = std::env::temp_dir().join(format!("overnight-backup-test-{}", crate::db::models::new_id()));
+    let plans = dir.join(".codex").join("plans");
+    std::fs::create_dir_all(&plans).unwrap();
+    std::fs::write(plans.join("a.md"), "plan a").unwrap();
+
+    assert_eq!(count_plan_files(&dir, ".codex"), 1);
 
     std::fs::remove_dir_all(&dir).ok();
   }
@@ -396,7 +449,7 @@ mod tests {
     let (pool, db_path) = test_pool();
     let conn = pool.get().unwrap();
     let project = crate::db::projects::create(&conn, "Overnight", "/repo", None, None).unwrap();
-    let sandbox = crate::db::sandboxes::create(&conn, &project.id, "mount", None, None, "default", None).unwrap();
+    let sandbox = crate::db::sandboxes::create(&conn, &project.id, "mount", None, None, "default", None, "claude").unwrap();
 
     let dirs: Vec<_> = (0..12)
       .map(|i| std::env::temp_dir().join(format!("overnight-prune-test-{}-{i}", crate::db::models::new_id())))
@@ -407,7 +460,7 @@ mod tests {
 
     for (i, dir) in dirs.iter().enumerate() {
       let row =
-        backups::insert(&conn, &sandbox.id, None, "scheduled", &dir.to_string_lossy(), true, true, None, None, &[], 0).unwrap();
+        backups::insert(&conn, &sandbox.id, None, "scheduled", &dir.to_string_lossy(), true, false, true, None, None, &[], 0).unwrap();
       conn
         .execute("UPDATE sandbox_backups SET created_at = ?1 WHERE id = ?2", rusqlite::params![i as i64, row.id])
         .unwrap();

@@ -6,16 +6,20 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { notify } from '@/lib/notify'
-import { AGENT_LABELS, type Agent } from '@/lib/agentHost'
+import { AGENT_ACCENT_CLASSES, AGENT_LABELS, type Agent } from '@/lib/agentHost'
+import { AGENT_ICONS } from '@/components/agent-icons'
 import { TERMINAL_HOSTS, TERMINAL_HOST_LABELS, TERMINAL_HOST_OPEN_LABELS, type TerminalHost } from '@/lib/terminalHost'
 import { useAppStore } from '@/store/useAppStore'
 import type { BranchSyncOutcome, Sandbox } from './types'
 
-const BACKUP_SCOPES: { value: 'all' | 'claude' | 'git'; label: string }[] = [
-  { value: 'all', label: 'Backup all' },
-  { value: 'claude', label: 'Backup .claude' },
-  { value: 'git', label: 'Backup .git' },
-]
+function backupScopesFor(agent: string): { value: 'all' | 'claude' | 'codex' | 'git'; label: string }[] {
+  const agentScope = agent === 'codex' ? 'codex' : 'claude'
+  return [
+    { value: 'all', label: 'Backup all' },
+    { value: agentScope, label: `Backup .${agentScope}` },
+    { value: 'git', label: 'Backup .git' },
+  ]
+}
 
 type BusyAction = 'start' | 'stop' | 'delete' | 'vscode' | 'terminal' | 'agent' | 'git-sync' | 'backup' | null
 type ConfirmAction = 'stop' | 'delete' | null
@@ -33,7 +37,6 @@ export function SandboxActions({
 }) {
   const defaultTerminalHost = useAppStore((s) => s.defaultTerminalHost)
   const saveDefaultTerminalHost = useAppStore((s) => s.saveDefaultTerminalHost)
-  const defaultAgent = useAppStore((s) => s.defaultAgent)
   const platform = useAppStore((s) => s.platform)
   const isBackingUp = useAppStore((s) => s.activeBackups.some((b) => b.sandbox_id === sandbox.id))
   const showGitSyncToast = useAppStore((s) => s.showGitSyncToast)
@@ -102,7 +105,7 @@ export function SandboxActions({
     }
   }
 
-  async function handleBackupNow(scope: 'all' | 'claude' | 'git') {
+  async function handleBackupNow(scope: 'all' | 'claude' | 'codex' | 'git') {
     setBusyAction('backup')
     setError(null)
     try {
@@ -135,6 +138,8 @@ export function SandboxActions({
     }
   }
 
+  const backupScopes = backupScopesFor(sandbox.agent)
+
   return (
     <div className="flex flex-col gap-6">
       {error && <p className="text-sm text-destructive">{error}</p>}
@@ -159,6 +164,29 @@ export function SandboxActions({
               )}
               VS Code
             </Button>
+            {platform === "windows" && (() => {
+              const AgentIcon = AGENT_ICONS[sandbox.agent as Agent] ?? AGENT_ICONS.claude
+              return (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busyAction != null}
+                  className={AGENT_ACCENT_CLASSES[sandbox.agent as Agent] ?? AGENT_ACCENT_CLASSES.claude}
+                  onClick={() =>
+                    run("agent", () =>
+                      invoke("open_sandbox_agent", { id: sandbox.id, agent: sandbox.agent }),
+                    )
+                  }
+                >
+                  {busyAction === "agent" ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <AgentIcon className="size-3.5" />
+                  )}
+                  {AGENT_LABELS[sandbox.agent as Agent] ?? sandbox.agent}
+                </Button>
+              )
+            })()}
             {platform === "windows" ? (
               context === "detail" && (
                 <div className="inline-flex">
@@ -231,25 +259,6 @@ export function SandboxActions({
                 Terminal
               </Button>
             )}
-            {platform === "windows" && (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busyAction != null}
-                onClick={() =>
-                  run("agent", () =>
-                    invoke("open_sandbox_agent", { id: sandbox.id, agent: defaultAgent }),
-                  )
-                }
-              >
-                {busyAction === "agent" ? (
-                  <Loader2 className="size-3.5 animate-spin" />
-                ) : (
-                  <TerminalSquare className="size-3.5" />
-                )}
-                {AGENT_LABELS[defaultAgent as Agent] ?? defaultAgent}
-              </Button>
-            )}
             {sandbox.host_port != null && (
               <Button size="sm" variant="outline" onClick={openInBrowser}>
                 <ExternalLink className="size-3.5" />
@@ -283,7 +292,7 @@ export function SandboxActions({
                 </Button>
               </PopoverTrigger>
               <PopoverContent align="start" className="flex flex-col gap-0.5">
-                {BACKUP_SCOPES.map(({ value, label }) => (
+                {backupScopes.map(({ value, label }) => (
                   <button
                     key={value}
                     type="button"

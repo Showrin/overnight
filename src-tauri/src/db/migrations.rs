@@ -356,6 +356,19 @@ pub fn migrations() -> Migrations<'static> {
     ALTER TABLE sandboxes ADD COLUMN last_git_sync_at INTEGER;
     ALTER TABLE sandboxes ADD COLUMN last_git_sync_result TEXT NOT NULL DEFAULT '[]';
     ",
+  ), M::up(
+    "
+    -- Which coding CLI this sandbox was created for ('claude' | 'codex').
+    -- Existing rows default to 'claude' since that was the only agent
+    -- before this column existed. See src-tauri/src/agents/mod.rs.
+    ALTER TABLE sandboxes ADD COLUMN agent TEXT NOT NULL DEFAULT 'claude';
+
+    -- Parallels has_claude: whether this backup's agent-home copy is
+    -- Codex's ~/.codex rather than Claude's ~/.claude. A backup only ever
+    -- has one of has_claude/has_codex true, since a sandbox has exactly
+    -- one agent — never both.
+    ALTER TABLE sandbox_backups ADD COLUMN has_codex INTEGER NOT NULL DEFAULT 0;
+    ",
   )])
 }
 

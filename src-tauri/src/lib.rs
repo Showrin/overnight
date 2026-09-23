@@ -1,3 +1,4 @@
+mod agents;
 mod backup;
 mod commands;
 mod daemon_log;
@@ -95,6 +96,7 @@ pub fn run() {
       commands::open_sandbox_terminal,
       commands::get_default_agent,
       commands::save_default_agent,
+      commands::list_agents,
       commands::get_sidebar_width,
       commands::save_sidebar_width,
       commands::open_sandbox_agent,

@@ -55,6 +55,7 @@ impl Drop for ActiveRestoreGuard {
 fn scope_label(scope: BackupScope) -> &'static str {
   match scope {
     BackupScope::Claude => "claude",
+    BackupScope::Codex => "codex",
     BackupScope::Git => "git",
     BackupScope::All => "all",
   }
@@ -97,12 +98,26 @@ pub async fn restore_backup(
   }
   let _guard = ActiveRestoreGuard { app: app.clone(), id: op_id };
 
-  if scope.wants_claude() {
-    if !backup.has_claude {
-      return Err("this backup has no .claude copy".to_string());
+  if scope.wants_agent_home() {
+    let agent_kit = crate::agents::get(&target.agent).ok_or_else(|| format!("unknown agent: {}", target.agent))?;
+    if let Some(requested) = scope.named_agent() {
+      if requested != target.agent {
+        return Err(format!("target sandbox's agent is \"{}\", not \"{requested}\"", target.agent));
+      }
     }
-    let host_src = format!("{}/claude", backup.host_dir);
-    crate::sbx::restore_directory(app, &name, &host_src, crate::backup::CLAUDE_SOURCE_PATH, crate::sbx::CLAUDE_HOME_MOUNTED_DIRS)
+    let has_agent_data = match agent_kit.id {
+      "codex" => backup.has_codex,
+      _ => backup.has_claude,
+    };
+    if !has_agent_data {
+      return Err(format!("this backup has no .{} copy", agent_kit.id));
+    }
+    let host_src = format!("{}/{}", backup.host_dir, agent_kit.id);
+    let mounted_dirs = match agent_kit.id {
+      "codex" => crate::sbx::CODEX_HOME_MOUNTED_DIRS,
+      _ => crate::sbx::CLAUDE_HOME_MOUNTED_DIRS,
+    };
+    crate::sbx::restore_directory(app, &name, &host_src, agent_kit.home_dir, mounted_dirs)
       .await
       .map_err(|e| e.to_string())?;
   }

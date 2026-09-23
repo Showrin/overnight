@@ -34,6 +34,8 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
   const saveSkillFolders = useAppStore((s) => s.saveSkillFolders)
   const defaultTerminalHost = useAppStore((s) => s.defaultTerminalHost)
   const saveDefaultTerminalHost = useAppStore((s) => s.saveDefaultTerminalHost)
+  const defaultAgent = useAppStore((s) => s.defaultAgent)
+  const saveDefaultAgent = useAppStore((s) => s.saveDefaultAgent)
   const backupIntervalMinutes = useAppStore((s) => s.backupIntervalMinutes)
   const saveBackupIntervalMinutes = useAppStore((s) => s.saveBackupIntervalMinutes)
   const autoBackupEnabled = useAppStore((s) => s.autoBackupEnabled)
@@ -42,10 +44,11 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
   const highlightNetworkPreset = useAppStore((s) => s.highlightNetworkPreset)
   const setHighlightNetworkPreset = useAppStore((s) => s.setHighlightNetworkPreset)
 
-  const savedPermissionMode = settings?.default_claude_permission_mode ?? 'default'
+  const savedPermissionMode = settings?.default_permission_mode ?? 'never'
   const savedSkillFolders = settings?.skill_folders ?? []
 
-  const [permissionMode, setPermissionMode] = useState<string>('default')
+  const [permissionMode, setPermissionMode] = useState<string>('never')
+  const [localDefaultAgent, setLocalDefaultAgent] = useState<string>('claude')
   const [terminalHost, setTerminalHost] = useState<string>('cmd')
   const [skillFolders, setSkillFolders] = useState<string[]>([])
   const [savingGeneral, setSavingGeneral] = useState(false)
@@ -95,7 +98,7 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
 
   useEffect(() => {
     if (settings) {
-      setPermissionMode(settings.default_claude_permission_mode)
+      setPermissionMode(settings.default_permission_mode)
       setSkillFolders(settings.skill_folders)
     }
   }, [settings])
@@ -103,6 +106,10 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
   useEffect(() => {
     setTerminalHost(defaultTerminalHost)
   }, [defaultTerminalHost])
+
+  useEffect(() => {
+    setLocalDefaultAgent(defaultAgent)
+  }, [defaultAgent])
 
   useEffect(() => {
     setBackupInterval(backupIntervalMinutes)
@@ -201,6 +208,7 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
 
   const generalDirty =
     permissionMode !== savedPermissionMode ||
+    localDefaultAgent !== defaultAgent ||
     terminalHost !== defaultTerminalHost ||
     !sameFolders(skillFolders, savedSkillFolders)
 
@@ -208,7 +216,13 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
     setSavingGeneral(true)
     setGeneralError(null)
     try {
-      if (permissionMode !== savedPermissionMode) await saveSettings(permissionMode)
+      // permissionMode is only ever meaningful together with the agent it
+      // was chosen for (see permissionModes.ts) — pass localDefaultAgent
+      // explicitly rather than relying on saveDefaultAgent landing first.
+      if (permissionMode !== savedPermissionMode || localDefaultAgent !== defaultAgent) {
+        await saveSettings(localDefaultAgent, permissionMode)
+      }
+      if (localDefaultAgent !== defaultAgent) await saveDefaultAgent(localDefaultAgent)
       if (!sameFolders(skillFolders, savedSkillFolders)) await saveSkillFolders(skillFolders)
       if (terminalHost !== defaultTerminalHost) await saveDefaultTerminalHost(terminalHost)
     } catch (e) {
@@ -220,6 +234,7 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
 
   function resetGeneral() {
     setPermissionMode(savedPermissionMode)
+    setLocalDefaultAgent(defaultAgent)
     setTerminalHost(defaultTerminalHost)
     setSkillFolders(savedSkillFolders)
     setGeneralError(null)
@@ -470,6 +485,8 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
       <div className="min-h-0 flex-1 overflow-auto">
         <TabsContent value="general">
           <GeneralTab
+            defaultAgent={localDefaultAgent}
+            setDefaultAgent={setLocalDefaultAgent}
             permissionMode={permissionMode}
             setPermissionMode={setPermissionMode}
             terminalHost={terminalHost}

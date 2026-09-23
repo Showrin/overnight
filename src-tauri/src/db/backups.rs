@@ -33,6 +33,7 @@ fn row_to_backup(row: &rusqlite::Row) -> rusqlite::Result<SandboxBackup> {
     trigger: row.get("trigger")?,
     host_dir,
     has_claude: row.get("has_claude")?,
+    has_codex: row.get("has_codex")?,
     has_git: row.get("has_git")?,
     base_branch: row.get("base_branch")?,
     current_branch: row.get("current_branch")?,
@@ -50,6 +51,7 @@ pub fn insert(
   trigger: &str,
   host_dir: &str,
   has_claude: bool,
+  has_codex: bool,
   has_git: bool,
   base_branch: Option<&str>,
   current_branch: Option<&str>,
@@ -61,9 +63,9 @@ pub fn insert(
   let branches_json = serde_json::to_string(branches).unwrap_or_else(|_| "[]".to_string());
   conn.execute(
     "INSERT INTO sandbox_backups (
-       id, sandbox_id, sandbox_label, created_at, trigger, host_dir, has_claude, has_git,
+       id, sandbox_id, sandbox_label, created_at, trigger, host_dir, has_claude, has_codex, has_git,
        base_branch, current_branch, branches, plan_file_count
-     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
     params![
       id,
       sandbox_id,
@@ -72,6 +74,7 @@ pub fn insert(
       trigger,
       host_dir,
       has_claude,
+      has_codex,
       has_git,
       base_branch,
       current_branch,
@@ -132,7 +135,7 @@ mod tests {
 
   fn make_sandbox(conn: &Connection) -> String {
     let project = crate::db::projects::create(conn, "Overnight", "/repo/overnight", None, None).unwrap();
-    crate::db::sandboxes::create(conn, &project.id, "mount", None, None, "default", None).unwrap().id
+    crate::db::sandboxes::create(conn, &project.id, "mount", None, None, "default", None, "claude").unwrap().id
   }
 
   #[test]
@@ -148,6 +151,7 @@ mod tests {
       "scheduled",
       "/data/sandbox-backups/my-sbx/abc",
       true,
+      false,
       true,
       Some("main"),
       Some("feature"),
@@ -160,6 +164,7 @@ mod tests {
     assert_eq!(backup.sandbox_label.as_deref(), Some("my-sbx"));
     assert_eq!(backup.branches, branches);
     assert!(backup.has_claude);
+    assert!(!backup.has_codex);
     assert!(backup.has_git);
     assert_eq!(backup.plan_file_count, 3);
     // Nonexistent host_dir: sums to 0 rather than erroring.
@@ -192,7 +197,7 @@ mod tests {
     let mut ids = Vec::new();
     for i in 0..12 {
       let backup =
-        insert(&conn, &sandbox_id, None, "scheduled", &format!("/data/{i}"), true, true, None, None, &[], 0).unwrap();
+        insert(&conn, &sandbox_id, None, "scheduled", &format!("/data/{i}"), true, false, true, None, None, &[], 0).unwrap();
       // created_at is millis-now for every insert in this test; force a
       // strictly increasing order so LIMIT/OFFSET has a stable sort key.
       conn
@@ -211,7 +216,7 @@ mod tests {
   fn beyond_limit_empty_when_under_keep() {
     let conn = test_conn();
     let sandbox_id = make_sandbox(&conn);
-    insert(&conn, &sandbox_id, None, "scheduled", "/data/1", true, true, None, None, &[], 0).unwrap();
+    insert(&conn, &sandbox_id, None, "scheduled", "/data/1", true, false, true, None, None, &[], 0).unwrap();
 
     assert!(beyond_limit(&conn, &sandbox_id, 10).unwrap().is_empty());
   }
@@ -223,7 +228,7 @@ mod tests {
   fn deleting_sandbox_does_not_delete_backups() {
     let conn = test_conn();
     let sandbox_id = make_sandbox(&conn);
-    let backup = insert(&conn, &sandbox_id, Some("my-sbx"), "scheduled", "/data/1", true, true, None, None, &[], 0).unwrap();
+    let backup = insert(&conn, &sandbox_id, Some("my-sbx"), "scheduled", "/data/1", true, false, true, None, None, &[], 0).unwrap();
 
     crate::db::sandboxes::delete(&conn, &sandbox_id).unwrap();
 
@@ -238,9 +243,9 @@ mod tests {
     let conn = test_conn();
     let sandbox_id = make_sandbox(&conn);
     let other_id = make_sandbox(&conn);
-    insert(&conn, &sandbox_id, None, "scheduled", "/data/1", true, true, None, None, &[], 0).unwrap();
-    insert(&conn, &sandbox_id, None, "scheduled", "/data/2", true, true, None, None, &[], 0).unwrap();
-    insert(&conn, &other_id, None, "scheduled", "/data/3", true, true, None, None, &[], 0).unwrap();
+    insert(&conn, &sandbox_id, None, "scheduled", "/data/1", true, false, true, None, None, &[], 0).unwrap();
+    insert(&conn, &sandbox_id, None, "scheduled", "/data/2", true, false, true, None, None, &[], 0).unwrap();
+    insert(&conn, &other_id, None, "scheduled", "/data/3", true, false, true, None, None, &[], 0).unwrap();
 
     assert_eq!(list_for_sandbox(&conn, &sandbox_id).unwrap().len(), 2);
 

@@ -14,6 +14,7 @@ fn row_to_sandbox(row: &rusqlite::Row) -> rusqlite::Result<Sandbox> {
     project_id: row.get("project_id")?,
     name: row.get("name")?,
     mode: row.get("mode")?,
+    agent: row.get("agent")?,
     permission_mode: row.get("permission_mode")?,
     status: row.get("status")?,
     sbx_name: row.get("sbx_name")?,
@@ -36,6 +37,7 @@ fn row_to_sandbox(row: &rusqlite::Row) -> rusqlite::Result<Sandbox> {
   })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn create(
   conn: &Connection,
   project_id: &str,
@@ -44,13 +46,14 @@ pub fn create(
   name: Option<&str>,
   permission_mode: &str,
   base_branch: Option<&str>,
+  agent: &str,
 ) -> Result<Sandbox> {
   let id = new_id();
   let now = now_millis();
   let result = conn.execute(
-    "INSERT INTO sandboxes (id, project_id, mode, status, folder_path, name, permission_mode, created_at, base_branch)
-     VALUES (?1, ?2, ?3, 'starting', ?4, ?5, ?6, ?7, ?8)",
-    params![id, project_id, mode, folder_path, name, permission_mode, now, base_branch],
+    "INSERT INTO sandboxes (id, project_id, mode, status, folder_path, name, permission_mode, created_at, base_branch, agent)
+     VALUES (?1, ?2, ?3, 'starting', ?4, ?5, ?6, ?7, ?8, ?9)",
+    params![id, project_id, mode, folder_path, name, permission_mode, now, base_branch, agent],
   );
   // ux_sandboxes_active_mount_per_project and ux_sandboxes_one_starting_per_project
   // close the race between callers' pre-insert checks and the insert itself.
@@ -266,7 +269,7 @@ mod tests {
     let conn = test_conn();
     let project_id = make_project(&conn);
 
-    let sandbox = create(&conn, &project_id, "mount", None, None, "default", None).unwrap();
+    let sandbox = create(&conn, &project_id, "mount", None, None, "default", None, "claude").unwrap();
     assert_eq!(sandbox.status, "starting");
     assert_eq!(sandbox.mode, "mount");
     assert_eq!(sandbox.sbx_name, None);
@@ -314,10 +317,10 @@ mod tests {
     let conn = test_conn();
     // Separate projects, since a partial unique index allows only one
     // "starting" sandbox per project at a time.
-    let running = create(&conn, &make_project(&conn), "clone", None, None, "default", None).unwrap();
+    let running = create(&conn, &make_project(&conn), "clone", None, None, "default", None, "claude").unwrap();
     update_status(&conn, &running.id, "running", Some("sbx-a"), None).unwrap();
-    let starting = create(&conn, &make_project(&conn), "clone", None, None, "default", None).unwrap();
-    let already_stopped = create(&conn, &make_project(&conn), "clone", None, None, "default", None).unwrap();
+    let starting = create(&conn, &make_project(&conn), "clone", None, None, "default", None, "claude").unwrap();
+    let already_stopped = create(&conn, &make_project(&conn), "clone", None, None, "default", None, "claude").unwrap();
     update_status(&conn, &already_stopped.id, "stopped", Some("sbx-c"), None).unwrap();
 
     let affected = stop_all_for_policy_reset(&conn).unwrap();
@@ -335,12 +338,12 @@ mod tests {
     let conn = test_conn();
     let project_id = make_project(&conn);
 
-    let named = create(&conn, &project_id, "clone", None, Some("staging"), "default", None).unwrap();
+    let named = create(&conn, &project_id, "clone", None, Some("staging"), "default", None, "claude").unwrap();
     assert_eq!(named.name.as_deref(), Some("staging"));
     assert_eq!(get(&conn, &named.id).unwrap().name.as_deref(), Some("staging"));
     update_status(&conn, &named.id, "running", Some("sbx-1"), None).unwrap();
 
-    let unnamed = create(&conn, &project_id, "clone", None, None, "default", None).unwrap();
+    let unnamed = create(&conn, &project_id, "clone", None, None, "default", None, "claude").unwrap();
     assert_eq!(unnamed.name, None);
   }
 
@@ -349,9 +352,25 @@ mod tests {
     let conn = test_conn();
     let project_id = make_project(&conn);
 
-    let sandbox = create(&conn, &project_id, "clone", None, None, "bypassPermissions", None).unwrap();
+    let sandbox = create(&conn, &project_id, "clone", None, None, "bypassPermissions", None, "claude").unwrap();
     assert_eq!(sandbox.permission_mode, "bypassPermissions");
     assert_eq!(get(&conn, &sandbox.id).unwrap().permission_mode, "bypassPermissions");
+  }
+
+  #[test]
+  fn stores_and_returns_agent() {
+    let conn = test_conn();
+    let project_id = make_project(&conn);
+
+    let claude_sandbox = create(&conn, &project_id, "mount", None, None, "default", None, "claude").unwrap();
+    assert_eq!(claude_sandbox.agent, "claude");
+    // Move the first sandbox out of "starting" so the second create() below
+    // doesn't trip ux_sandboxes_one_starting_per_project (same project).
+    update_status(&conn, &claude_sandbox.id, "running", Some("sbx-1"), None).unwrap();
+
+    let codex_sandbox = create(&conn, &project_id, "clone", None, None, "on-request", None, "codex").unwrap();
+    assert_eq!(codex_sandbox.agent, "codex");
+    assert_eq!(get(&conn, &codex_sandbox.id).unwrap().agent, "codex");
   }
 
   #[test]
@@ -359,18 +378,18 @@ mod tests {
     let conn = test_conn();
     let project_id = make_project(&conn);
 
-    let mount = create(&conn, &project_id, "mount", None, None, "default", None).unwrap();
-    let second = create(&conn, &project_id, "mount", None, None, "default", None);
+    let mount = create(&conn, &project_id, "mount", None, None, "default", None, "claude").unwrap();
+    let second = create(&conn, &project_id, "mount", None, None, "default", None, "claude");
     assert!(matches!(second, Err(Error::DuplicateMountSandbox)));
 
     // Still rejected once the first is "running", not just "starting".
     update_status(&conn, &mount.id, "running", Some("sbx-1"), None).unwrap();
-    let second_after_running = create(&conn, &project_id, "mount", None, None, "default", None);
+    let second_after_running = create(&conn, &project_id, "mount", None, None, "default", None, "claude");
     assert!(matches!(second_after_running, Err(Error::DuplicateMountSandbox)));
 
     // Other projects are unaffected by the partial index.
     let other_project_id = make_project(&conn);
-    create(&conn, &other_project_id, "mount", None, None, "default", None).unwrap();
+    create(&conn, &other_project_id, "mount", None, None, "default", None, "claude").unwrap();
   }
 
   #[test]
@@ -378,21 +397,21 @@ mod tests {
     let conn = test_conn();
     let project_id = make_project(&conn);
 
-    let first = create(&conn, &project_id, "clone", None, None, "default", None).unwrap();
-    let second = create(&conn, &project_id, "clone", None, None, "default", None);
+    let first = create(&conn, &project_id, "clone", None, None, "default", None, "claude").unwrap();
+    let second = create(&conn, &project_id, "clone", None, None, "default", None, "claude");
     assert!(matches!(second, Err(Error::SandboxAlreadyStarting)));
 
     // Once the first finishes starting, clone mode still allows several
     // sandboxes running at once for the same project.
     update_status(&conn, &first.id, "running", Some("sbx-1"), None).unwrap();
-    create(&conn, &project_id, "clone", None, None, "default", None).unwrap();
+    create(&conn, &project_id, "clone", None, None, "default", None, "claude").unwrap();
   }
 
   #[test]
   fn sets_env_vars() {
     let conn = test_conn();
     let project_id = make_project(&conn);
-    let sandbox = create(&conn, &project_id, "mount", None, None, "default", None).unwrap();
+    let sandbox = create(&conn, &project_id, "mount", None, None, "default", None, "claude").unwrap();
     assert_eq!(sandbox.env_vars, Vec::<EnvVar>::new());
 
     let vars = vec![EnvVar { key: "FOO".to_string(), value: "bar".to_string() }];
@@ -411,7 +430,7 @@ mod tests {
   fn sets_secrets() {
     let conn = test_conn();
     let project_id = make_project(&conn);
-    let sandbox = create(&conn, &project_id, "mount", None, None, "default", None).unwrap();
+    let sandbox = create(&conn, &project_id, "mount", None, None, "default", None, "claude").unwrap();
     assert_eq!(sandbox.secrets, Vec::<Secret>::new());
 
     let secrets = vec![Secret {
@@ -433,7 +452,7 @@ mod tests {
   fn sets_and_clears_network_preset_override() {
     let conn = test_conn();
     let project_id = make_project(&conn);
-    let sandbox = create(&conn, &project_id, "mount", None, None, "default", None).unwrap();
+    let sandbox = create(&conn, &project_id, "mount", None, None, "default", None, "claude").unwrap();
     assert_eq!(sandbox.network_preset_override, None);
 
     let overridden = set_network_preset_override(&conn, &sandbox.id, Some("open")).unwrap();
@@ -455,7 +474,7 @@ mod tests {
     let conn = test_conn();
     let project_id = make_project(&conn);
 
-    let sandbox = create(&conn, &project_id, "mount", None, None, "default", Some("feature/x")).unwrap();
+    let sandbox = create(&conn, &project_id, "mount", None, None, "default", Some("feature/x"), "claude").unwrap();
     assert_eq!(sandbox.base_branch.as_deref(), Some("feature/x"));
     assert_eq!(sandbox.current_branch, None);
     assert_eq!(sandbox.branches, Vec::<String>::new());
@@ -463,7 +482,7 @@ mod tests {
     assert_eq!(sandbox.branch_snapshot_at, None);
 
     let other_project_id = make_project(&conn);
-    let no_base_branch = create(&conn, &other_project_id, "clone", None, None, "default", None).unwrap();
+    let no_base_branch = create(&conn, &other_project_id, "clone", None, None, "default", None, "claude").unwrap();
     assert_eq!(no_base_branch.base_branch, None);
   }
 
@@ -471,7 +490,7 @@ mod tests {
   fn records_git_sync_result() {
     let conn = test_conn();
     let project_id = make_project(&conn);
-    let sandbox = create(&conn, &project_id, "clone", None, None, "default", None).unwrap();
+    let sandbox = create(&conn, &project_id, "clone", None, None, "default", None, "claude").unwrap();
     assert_eq!(sandbox.last_git_sync_at, None);
     assert_eq!(sandbox.last_git_sync_result, Vec::new());
 
@@ -497,7 +516,7 @@ mod tests {
   fn records_and_returns_branch_snapshot() {
     let conn = test_conn();
     let project_id = make_project(&conn);
-    let sandbox = create(&conn, &project_id, "mount", None, None, "default", Some("main")).unwrap();
+    let sandbox = create(&conn, &project_id, "mount", None, None, "default", Some("main"), "claude").unwrap();
 
     let worktrees =
       vec![WorktreeInfo { path: "/home/agent/proj".to_string(), branch: Some("main".to_string()), head_sha: "abc123".to_string() }];
@@ -527,7 +546,7 @@ mod tests {
   fn records_backup() {
     let conn = test_conn();
     let project_id = make_project(&conn);
-    let sandbox = create(&conn, &project_id, "mount", None, None, "default", None).unwrap();
+    let sandbox = create(&conn, &project_id, "mount", None, None, "default", None, "claude").unwrap();
     assert_eq!(sandbox.last_backup_at, None);
     assert_eq!(sandbox.last_backup_path, None);
 
@@ -550,7 +569,7 @@ mod tests {
   fn finds_sandbox_by_sbx_name() {
     let conn = test_conn();
     let project_id = make_project(&conn);
-    let sandbox = create(&conn, &project_id, "mount", None, None, "default", None).unwrap();
+    let sandbox = create(&conn, &project_id, "mount", None, None, "default", None, "claude").unwrap();
     update_status(&conn, &sandbox.id, "running", Some("my-sbx-name"), None).unwrap();
 
     let found = find_by_sbx_name(&conn, "my-sbx-name").unwrap();
@@ -564,7 +583,7 @@ mod tests {
     let conn = test_conn();
     let project_id = make_project(&conn);
     let sandbox =
-      create(&conn, &project_id, "clone", Some("/data/sandboxes/abc"), Some("my sandbox"), "default", None).unwrap();
+      create(&conn, &project_id, "clone", Some("/data/sandboxes/abc"), Some("my sandbox"), "default", None, "claude").unwrap();
 
     crate::db::projects::delete(&conn, &project_id).unwrap();
 

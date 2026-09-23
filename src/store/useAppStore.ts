@@ -13,7 +13,7 @@ const HOST_STATS_HISTORY_SEED_MS = 24 * 60 * 60 * 1000
 const HOST_STATS_HISTORY_MAX_POINTS = 150
 
 export interface AppSettings {
-  default_claude_permission_mode: string
+  default_permission_mode: string
   skill_folders: string[]
 }
 
@@ -47,7 +47,7 @@ interface AppStore {
   loadProjects: () => Promise<void>
   loadSandboxes: () => Promise<void>
   loadSettings: () => Promise<void>
-  saveSettings: (defaultClaudePermissionMode: string) => Promise<void>
+  saveSettings: (agent: string, defaultPermissionMode: string) => Promise<void>
   saveSkillFolders: (folders: string[]) => Promise<void>
   loadPlatform: () => Promise<void>
   loadDefaultTerminalHost: () => Promise<void>
@@ -107,11 +107,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ settings })
   },
 
-  async saveSettings(defaultClaudePermissionMode) {
-    await invoke('save_settings', { defaultClaudePermissionMode })
+  async saveSettings(agent, defaultPermissionMode) {
+    await invoke('save_settings', { agent, defaultPermissionMode })
     set((state) => ({
       settings: {
-        default_claude_permission_mode: defaultClaudePermissionMode,
+        default_permission_mode: defaultPermissionMode,
         skill_folders: state.settings?.skill_folders ?? [],
       },
     }))
@@ -121,7 +121,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     await invoke('save_skill_folders', { folders })
     set((state) => ({
       settings: {
-        default_claude_permission_mode: state.settings?.default_claude_permission_mode ?? 'default',
+        default_permission_mode: state.settings?.default_permission_mode ?? 'never',
         skill_folders: folders,
       },
     }))

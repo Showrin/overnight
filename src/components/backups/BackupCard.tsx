@@ -86,6 +86,7 @@ export function BackupCard({
           <span>{backup.plan_file_count} plan file(s)</span>
           <span>{formatBytes(backup.size_bytes)}</span>
           <span>.claude {backup.has_claude ? 'included' : 'missing'}</span>
+          <span>.codex {backup.has_codex ? 'included' : 'missing'}</span>
           <span>.git {backup.has_git ? 'included' : 'missing'}</span>
         </div>
       </CardContent>

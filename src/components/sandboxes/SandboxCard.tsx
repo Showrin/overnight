@@ -155,7 +155,7 @@ export function SandboxCard({
               Permission Mode
             </span>
             <Badge
-              variant={permissionBadgeVariant(sandbox.permission_mode)}
+              variant={permissionBadgeVariant(sandbox.agent, sandbox.permission_mode)}
               className="w-fit"
             >
               {sandbox.permission_mode}

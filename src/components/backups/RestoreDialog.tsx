@@ -9,17 +9,28 @@ import { notify } from '@/lib/notify'
 import { useAppStore } from '@/store/useAppStore'
 import type { BackupScope, SandboxBackup } from './types'
 
-const SCOPE_LABELS: Record<BackupScope, string> = {
-  all: 'All (.claude + .git)',
-  claude: '.claude only',
-  git: '.git only',
+function scopeLabel(scope: BackupScope, backup: SandboxBackup | undefined): string {
+  switch (scope) {
+    case 'all': {
+      const agentLabel = backup?.has_codex ? '.codex' : '.claude'
+      return `All (${agentLabel} + .git)`
+    }
+    case 'claude':
+      return '.claude only'
+    case 'codex':
+      return '.codex only'
+    case 'git':
+      return '.git only'
+  }
 }
 
 function availableScopes(backup: SandboxBackup | undefined): BackupScope[] {
   if (!backup) return []
   const scopes: BackupScope[] = []
-  if (backup.has_claude && backup.has_git) scopes.push('all')
+  const hasAgentData = backup.has_claude || backup.has_codex
+  if (hasAgentData && backup.has_git) scopes.push('all')
   if (backup.has_claude) scopes.push('claude')
+  if (backup.has_codex) scopes.push('codex')
   if (backup.has_git) scopes.push('git')
   return scopes
 }
@@ -180,7 +191,7 @@ export function RestoreDialog({
                 <SelectContent>
                   {scopes.map((s) => (
                     <SelectItem key={s} value={s}>
-                      {SCOPE_LABELS[s]}
+                      {scopeLabel(s, effectiveBackup)}
                     </SelectItem>
                   ))}
                 </SelectContent>
