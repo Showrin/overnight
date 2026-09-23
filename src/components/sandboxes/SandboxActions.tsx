@@ -6,7 +6,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { notify } from '@/lib/notify'
-import { AGENT_LABELS, type Agent } from '@/lib/agentHost'
+import { AGENT_ACCENT_CLASSES, AGENT_LABELS, type Agent } from '@/lib/agentHost'
+import { AGENT_ICONS } from '@/components/agent-icons'
 import { TERMINAL_HOSTS, TERMINAL_HOST_LABELS, TERMINAL_HOST_OPEN_LABELS, type TerminalHost } from '@/lib/terminalHost'
 import { useAppStore } from '@/store/useAppStore'
 import type { BranchSyncOutcome, Sandbox } from './types'
@@ -235,26 +236,29 @@ export function SandboxActions({
                 Terminal
               </Button>
             )}
-            {platform === "windows" && (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busyAction != null}
-                className="border-info/40 text-info hover:bg-info/10 hover:text-info"
-                onClick={() =>
-                  run("agent", () =>
-                    invoke("open_sandbox_agent", { id: sandbox.id, agent: sandbox.agent }),
-                  )
-                }
-              >
-                {busyAction === "agent" ? (
-                  <Loader2 className="size-3.5 animate-spin" />
-                ) : (
-                  <TerminalSquare className="size-3.5" />
-                )}
-                {AGENT_LABELS[sandbox.agent as Agent] ?? sandbox.agent}
-              </Button>
-            )}
+            {platform === "windows" && (() => {
+              const AgentIcon = AGENT_ICONS[sandbox.agent as Agent] ?? AGENT_ICONS.claude
+              return (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busyAction != null}
+                  className={AGENT_ACCENT_CLASSES[sandbox.agent as Agent] ?? AGENT_ACCENT_CLASSES.claude}
+                  onClick={() =>
+                    run("agent", () =>
+                      invoke("open_sandbox_agent", { id: sandbox.id, agent: sandbox.agent }),
+                    )
+                  }
+                >
+                  {busyAction === "agent" ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <AgentIcon className="size-3.5" />
+                  )}
+                  {AGENT_LABELS[sandbox.agent as Agent] ?? sandbox.agent}
+                </Button>
+              )
+            })()}
             {sandbox.host_port != null && (
               <Button size="sm" variant="outline" onClick={openInBrowser}>
                 <ExternalLink className="size-3.5" />

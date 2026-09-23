@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { ChevronsUpDown, Code, Loader2, Play, Square, TerminalSquare } from 'lucide-react'
+import { ChevronsUpDown, Code, Loader2, Play, Square } from 'lucide-react'
 import type { Route } from '@/lib/router'
 import { notify } from '@/lib/notify'
-import { AGENT_LABELS, type Agent } from '@/lib/agentHost'
+import { AGENT_ACCENT_CLASSES, AGENT_LABELS, type Agent } from '@/lib/agentHost'
+import { AGENT_ICONS } from '@/components/agent-icons'
 import { useAppStore } from '@/store/useAppStore'
 import type { Sandbox } from './types'
 
@@ -47,6 +48,7 @@ export function SidebarSandboxList({ onNavigate }: { onNavigate: (route: Route) 
         const isRunning = sandbox.status === 'running'
         const isStopping = sandbox.status === 'stopping'
         const isBusy = busy?.id === sandbox.id
+        const AgentIcon = AGENT_ICONS[sandbox.agent as Agent] ?? AGENT_ICONS.claude
 
         return (
           <div
@@ -90,12 +92,12 @@ export function SidebarSandboxList({ onNavigate }: { onNavigate: (route: Route) 
                         invoke('open_sandbox_agent', { id: sandbox.id, agent: sandbox.agent }),
                       )
                     }
-                    className="flex size-6 items-center justify-center rounded border border-info/40 text-info hover:bg-info/10 hover:text-info disabled:opacity-50"
+                    className={`flex size-6 items-center justify-center rounded border disabled:opacity-50 ${AGENT_ACCENT_CLASSES[sandbox.agent as Agent] ?? AGENT_ACCENT_CLASSES.claude}`}
                   >
                     {isBusy && busy?.action === 'agent' ? (
                       <Loader2 className="size-3 animate-spin" />
                     ) : (
-                      <TerminalSquare className="size-3" strokeWidth={1.5} />
+                      <AgentIcon className="size-3" />
                     )}
                   </button>
                 )}

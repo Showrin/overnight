@@ -44,6 +44,8 @@
     --color-border-strong: var(--border-strong);
     --color-destructive: var(--destructive);
     --color-info: var(--info);
+    --color-agent-claude: var(--agent-claude);
+    --color-agent-codex: var(--agent-codex);
     --color-warning: var(--warning);
     --color-warning-foreground: var(--warning-foreground);
     --color-success: var(--success);
@@ -100,6 +102,8 @@
     --accent-foreground: #11181c;
     --destructive: #e5484d;
     --info: #0ea5e9;
+    --agent-claude: #d27354;
+    --agent-codex: #28a78e;
     --warning: #f97316;
     --warning-foreground: #1c1c1c;
     --success: #22c55e;
@@ -144,6 +148,8 @@
     --accent-foreground: #f5f5f7;
     --destructive: #e5484d;
     --info: #0ea5e9;
+    --agent-claude: #d27354;
+    --agent-codex: #28a78e;
     --warning: #f97316;
     --warning-foreground: #fff7ed;
     --success: #22c55e;
