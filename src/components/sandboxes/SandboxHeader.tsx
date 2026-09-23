@@ -1,12 +1,11 @@
 import { DatabaseBackup, GitBranch } from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
 import type { Project } from '@/components/projects/types'
 import type { DetailTab, Route } from '@/lib/router'
-import { statusBadgeVariant } from '@/lib/sandboxDisplay'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
 import { SandboxActions } from './SandboxActions'
 import { SandboxBreadcrumb, type BreadcrumbSegment } from './SandboxBreadcrumb'
+import { StatusIndicator } from './StatusIndicator'
 import type { Sandbox } from './types'
 
 const TAB_LINK_CLASS =
@@ -50,7 +49,7 @@ export function SandboxHeader({
       <div className="flex flex-col gap-1.5">
         <div className="flex items-center gap-2">
           <h1 className="text-lg font-medium">{title}</h1>
-          <Badge variant={statusBadgeVariant(sandbox.status)}>{sandbox.status}</Badge>
+          <StatusIndicator status={sandbox.status} />
           {isBackingUp && (
             <button
               type="button"

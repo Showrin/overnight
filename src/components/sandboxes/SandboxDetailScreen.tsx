@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { Badge } from '@/components/ui/badge'
 import type { DetailTab, Route } from '@/lib/router'
-import { formatNetworkPolicyLabel, permissionBadgeVariant } from '@/lib/sandboxDisplay'
+import { formatNetworkPolicyLabel, permissionTextClass } from '@/lib/sandboxDisplay'
+import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
 import { SandboxBackupsTab } from './SandboxBackupsTab'
 import { SandboxBranchTab } from './SandboxBranchTab'
@@ -54,9 +54,9 @@ export function SandboxDetailScreen({
           <div className="grid grid-cols-2 gap-4 text-sm text-muted-foreground md:grid-cols-4">
             <div className="flex min-w-0 flex-col gap-0.5">
               <span className="text-xs text-muted-foreground/70">Permission Mode</span>
-              <Badge variant={permissionBadgeVariant(sandbox.agent, sandbox.permission_mode)} className="w-fit">
+              <span className={cn('truncate text-sm', permissionTextClass(sandbox.agent, sandbox.permission_mode))}>
                 {sandbox.permission_mode}
-              </Badge>
+              </span>
             </div>
             <div className="flex min-w-0 flex-col gap-0.5">
               <span className="text-xs text-muted-foreground/70">Project Attachment</span>

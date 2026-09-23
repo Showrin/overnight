@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { DatabaseBackup } from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { NetworkRuleEditor } from '@/components/settings/NetworkRuleEditor'
@@ -12,10 +11,11 @@ import {
   SANDBOX_NETWORK_PRESET_OVERRIDE_LABELS,
   SANDBOX_NETWORK_PRESET_OVERRIDES,
 } from '@/lib/networkPolicy'
-import { formatRelativeTime, permissionBadgeVariant, statusBadgeVariant } from '@/lib/sandboxDisplay'
+import { formatRelativeTime, permissionTextClass } from '@/lib/sandboxDisplay'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
 import { SandboxActions } from './SandboxActions'
+import { StatusIndicator } from './StatusIndicator'
 import type { Sandbox } from './types'
 
 const DEFAULT_NETWORK_OVERRIDE = '__global_default__'
@@ -123,9 +123,7 @@ export function SandboxCard({
               {sandbox.name ?? projectName}
             </button>
           </CardTitle>
-          <Badge variant={statusBadgeVariant(sandbox.status)}>
-            {sandbox.status}
-          </Badge>
+          <StatusIndicator status={sandbox.status} />
           {isBackingUp && (
             <button
               type="button"
@@ -154,12 +152,9 @@ export function SandboxCard({
             <span className="text-xs text-muted-foreground/70">
               Permission Mode
             </span>
-            <Badge
-              variant={permissionBadgeVariant(sandbox.agent, sandbox.permission_mode)}
-              className="w-fit"
-            >
+            <span className={cn('truncate text-sm', permissionTextClass(sandbox.agent, sandbox.permission_mode))}>
               {sandbox.permission_mode}
-            </Badge>
+            </span>
           </div>
           <div className="flex min-w-0 flex-col gap-0.5">
             <span className="text-xs text-muted-foreground/70">

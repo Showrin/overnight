@@ -31,12 +31,12 @@ export function statusBadgeVariant(status: SandboxStatus): BadgeVariant {
 // "bypassPermissions", Codex's "never") is always the highest-risk one,
 // regardless of agent, so a mode this function has never seen still gets a
 // sensible severity from where it sits in its own agent's list.
-export function permissionBadgeVariant(agent: string, permissionMode: string): BadgeVariant {
+export function permissionTextClass(agent: string, permissionMode: string): string {
   const modes = PERMISSION_MODES[agent as Agent] ?? PERMISSION_MODES.claude
   const index = modes.indexOf(permissionMode)
-  if (index === modes.length - 1) return 'outline-destructive'
-  if (index === modes.length - 2) return 'outline-warning'
-  return 'outline-muted'
+  if (index === modes.length - 1) return 'text-destructive/90'
+  if (index === modes.length - 2) return 'text-warning'
+  return 'text-foreground'
 }
 
 export function branchSyncStatusLabel(status: BranchSyncStatus): string {

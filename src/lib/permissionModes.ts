@@ -2,7 +2,7 @@ import type { Agent } from './agentHost'
 
 // Mirrors src-tauri/src/agents/mod.rs's AgentKit::permission_modes. Each
 // list is ordered least-restrictive-approval-required first, most-permissive
-// (no approval ever asked) last — sandboxDisplay.ts's permissionBadgeVariant
+// (no approval ever asked) last — sandboxDisplay.ts's permissionTextClass
 // and fullPermissionMode() below both rely on that ordering, not just the
 // values. Codex's modes ('untrusted' | 'on-failure' | 'on-request' | 'never')
 // are its --ask-for-approval values — unverified against a real Codex CLI
