@@ -97,6 +97,8 @@ pub fn run() {
       commands::restore_backup,
       commands::sync_sandbox_plans,
       commands::get_sandbox_branch_info,
+      commands::is_ssh_setup,
+      commands::setup_sandbox_ssh,
       commands::open_sandbox_vscode,
       commands::open_sandbox_terminal,
       commands::get_default_agent,

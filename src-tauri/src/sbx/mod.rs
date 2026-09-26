@@ -253,12 +253,26 @@ fn container_start_failed_message(stderr: &str) -> String {
 
 /// `sbx setup ssh` — (re)generates the managed `Host *.sbx` block in the
 /// user's SSH config so `<name>.sbx` resolves for `ssh`/VS Code Remote-SSH.
-/// Documented as safe to re-run to regenerate the block, so callers can
-/// invoke this before every VS Code launch instead of requiring the user
-/// to run it once manually first.
+/// Documented as safe to re-run to regenerate the block.
 pub async fn setup_ssh<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
   run(app, "Setup SSH", &["setup", "ssh"]).await?;
   Ok(())
+}
+
+/// True when `sbx setup ssh` has already added its `*.sbx` entry to the
+/// user's SSH config. Reads the file only, so no console window.
+pub fn ssh_is_setup<R: Runtime>(app: &AppHandle<R>) -> bool {
+  let Ok(home) = app.path().home_dir() else { return false };
+  std::fs::read_to_string(home.join(".ssh").join("config"))
+    .map(|config| ssh_config_has_sbx_host(&config))
+    .unwrap_or(false)
+}
+
+fn ssh_config_has_sbx_host(config: &str) -> bool {
+  config.lines().map(|line| line.trim().to_ascii_lowercase()).any(|line| {
+    (line.starts_with("host ") && line.contains("*.sbx"))
+      || (line.starts_with("include ") && line.contains("dockersandboxes"))
+  })
 }
 
 /// Clears any stale `known_hosts` entry for `<name>.sbx` so a sandbox
@@ -267,7 +281,10 @@ pub async fn setup_ssh<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
 /// call even if no entry exists.
 pub fn clear_stale_host_key(name: &str) {
   let host = format!("{name}.sbx");
-  if let Err(e) = std::process::Command::new("ssh-keygen").args(["-R", &host]).output() {
+  let mut cmd = std::process::Command::new("ssh-keygen");
+  cmd.args(["-R", &host]);
+  crate::git::hide_console(&mut cmd);
+  if let Err(e) = cmd.output() {
     log::warn!("clear_stale_host_key: ssh-keygen -R {host} failed: {e}");
   }
 }
@@ -289,7 +306,10 @@ pub fn fix_ssh_config_permissions() {
   let Ok(user) = std::env::var("USERNAME") else { return };
   let dir = ssh_dir.to_string_lossy().to_string();
   let run = |args: &[&str]| {
-    if let Err(e) = std::process::Command::new("icacls").args(args).output() {
+    let mut cmd = std::process::Command::new("icacls");
+    cmd.args(args);
+    crate::git::hide_console(&mut cmd);
+    if let Err(e) = cmd.output() {
       log::warn!("fix_ssh_config_permissions: icacls {args:?} failed: {e}");
     }
   };
@@ -1786,6 +1806,23 @@ mod tests {
   #[test]
   fn reports_free_memory() {
     assert!(host_free_memory_mb() > 0.0);
+  }
+
+  #[test]
+  fn detects_sbx_host_block() {
+    assert!(ssh_config_has_sbx_host("Host github.com\n  User git\n\nHost *.sbx\n  ProxyCommand sbx ssh-proxy %h\n"));
+  }
+
+  #[test]
+  fn detects_sbx_include() {
+    assert!(ssh_config_has_sbx_host(r"Include C:\Users\me\AppData\Local\DockerSandboxes\sandboxes\config\ssh\config"));
+  }
+
+  #[test]
+  fn ignores_missing_or_commented_sbx_entry() {
+    assert!(!ssh_config_has_sbx_host("Host github.com\n  User git\n"));
+    assert!(!ssh_config_has_sbx_host("# Host *.sbx\n"));
+    assert!(!ssh_config_has_sbx_host(""));
   }
 
   #[test]

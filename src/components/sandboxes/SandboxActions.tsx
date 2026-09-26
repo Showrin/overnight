@@ -11,6 +11,7 @@ import { AGENT_ICONS } from '@/components/agent-icons'
 import { TERMINAL_HOSTS, TERMINAL_HOST_LABELS, TERMINAL_HOST_OPEN_LABELS, type TerminalHost } from '@/lib/terminalHost'
 import { useAppStore } from '@/store/useAppStore'
 import type { BranchSyncOutcome, Sandbox } from './types'
+import { useOpenInVscode } from './useOpenInVscode'
 
 function backupScopesFor(agent: string): { value: 'all' | 'claude' | 'codex' | 'git'; label: string }[] {
   const agentScope = agent === 'codex' ? 'codex' : 'claude'
@@ -46,6 +47,7 @@ export function SandboxActions({
   const [backupMenuOpen, setBackupMenuOpen] = useState(false)
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null)
   const [notFoundDialogOpen, setNotFoundDialogOpen] = useState(false)
+  const { openInVscode, sshSetupDialog } = useOpenInVscode()
 
   async function run(which: Exclude<BusyAction, null>, action: () => Promise<unknown>) {
     setBusyAction(which)
@@ -152,9 +154,7 @@ export function SandboxActions({
               variant="outline"
               disabled={busyAction != null}
               onClick={() =>
-                run("vscode", () =>
-                  invoke("open_sandbox_vscode", { id: sandbox.id }),
-                )
+                run("vscode", () => openInVscode(sandbox.id))
               }
             >
               {busyAction === "vscode" ? (
@@ -404,6 +404,8 @@ export function SandboxActions({
           </Card>
         </DialogContent>
       </Dialog>
+
+      {sshSetupDialog}
     </div>
   )
 }

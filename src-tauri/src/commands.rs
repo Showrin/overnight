@@ -2616,9 +2616,21 @@ pub fn get_sandbox_resource_history(pool: State<DbPool>, sandbox_id: String, sin
   container_metrics::list_for_sandbox_since(&conn, &sandbox_id, since_ms)
 }
 
-/// Opens VS Code's Remote-SSH into the sandbox, running `sbx setup ssh`
-/// first so the `<name>.sbx` SSH host is always registered (no manual
-/// one-time setup required). The folder to open is asked from `sbx`
+#[tauri::command]
+pub fn is_ssh_setup(app: AppHandle) -> bool {
+  crate::sbx::ssh_is_setup(&app)
+}
+
+#[tauri::command]
+pub async fn setup_sandbox_ssh(app: AppHandle) -> std::result::Result<(), String> {
+  crate::sbx::setup_ssh(&app).await.map_err(|e| e.to_string())?;
+  crate::sbx::fix_ssh_config_permissions();
+  Ok(())
+}
+
+/// Opens VS Code's Remote-SSH into the sandbox. Expects `<name>.sbx` to
+/// resolve already — the frontend checks `is_ssh_setup` and runs
+/// `setup_sandbox_ssh` first when needed. The folder to open is asked from `sbx`
 /// itself (`sbx ls`'s WORKSPACE column) rather than read from our own DB
 /// row — that's the same path a plain `sbx exec`/`sbx run` attach lands
 /// you in by default, and it's correct for both mount mode (host repo
@@ -2633,10 +2645,6 @@ pub async fn open_sandbox_vscode(app: AppHandle, pool: State<'_, DbPool>, id: St
   let name = sandbox.sbx_name.ok_or_else(|| "sandbox isn't running".to_string())?;
   let remote = format!("ssh-remote+{name}.sbx");
 
-  // Regenerates the managed `Host *.sbx` SSH config block so `<name>.sbx`
-  // resolves — documented as safe to re-run, so this replaces requiring
-  // the user to run `sbx setup ssh` manually once beforehand.
-  crate::sbx::setup_ssh(&app).await.map_err(|e| e.to_string())?;
   crate::sbx::fix_ssh_config_permissions();
   crate::sbx::clear_stale_host_key(&name);
   let workspace_path = crate::sbx::workspace_path(&app, &name).await.map_err(|e| e.to_string())?;
@@ -2672,6 +2680,7 @@ pub async fn open_sandbox_vscode(app: AppHandle, pool: State<'_, DbPool>, id: St
   );
   let program = cmd.get_program().to_string_lossy().to_string();
   let cmd_args: Vec<String> = cmd.get_args().map(|a| a.to_string_lossy().to_string()).collect();
+  crate::git::hide_console(&mut cmd);
   let result = cmd.spawn();
   log_spawn_result(&pool, "Open sandbox in VS Code", &program, &cmd_args, &result);
   match result {

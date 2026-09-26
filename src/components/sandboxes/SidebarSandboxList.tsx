@@ -7,6 +7,7 @@ import { AGENT_ACCENT_CLASSES, AGENT_LABELS, type Agent } from '@/lib/agentHost'
 import { AGENT_ICONS } from '@/components/agent-icons'
 import { useAppStore } from '@/store/useAppStore'
 import type { Sandbox } from './types'
+import { useOpenInVscode } from './useOpenInVscode'
 
 const MAX_VISIBLE = 4
 
@@ -18,6 +19,7 @@ export function SidebarSandboxList({ onNavigate }: { onNavigate: (route: Route) 
   const loadSandboxes = useAppStore((s) => s.loadSandboxes)
   const platform = useAppStore((s) => s.platform)
   const [busy, setBusy] = useState<{ id: string; action: BusyAction } | null>(null)
+  const { openInVscode, sshSetupDialog } = useOpenInVscode()
 
   async function run(sandbox: Sandbox, action: Exclude<BusyAction, null>, invoker: () => Promise<unknown>) {
     setBusy({ id: sandbox.id, action })
@@ -71,7 +73,7 @@ export function SidebarSandboxList({ onNavigate }: { onNavigate: (route: Route) 
                   title="Open in VS Code"
                   disabled={isBusy}
                   onClick={() =>
-                    run(sandbox, 'vscode', () => invoke('open_sandbox_vscode', { id: sandbox.id }))
+                    run(sandbox, 'vscode', () => openInVscode(sandbox.id))
                   }
                   className="flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
                 >
@@ -138,6 +140,7 @@ export function SidebarSandboxList({ onNavigate }: { onNavigate: (route: Route) 
           View More
         </button>
       )}
+      {sshSetupDialog}
     </div>
   )
 }
