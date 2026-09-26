@@ -8,7 +8,7 @@ import { SettingsActions, SettingsSection } from '@/components/settings/Settings
 import { Button } from '@/components/ui/button'
 import type { EnvVar } from '@/lib/envVars'
 import type { Secret } from '@/lib/secrets'
-import type { Route } from '@/lib/router'
+import { useAppStore } from '@/store/useAppStore'
 import type { Sandbox } from './types'
 
 function sameEnvVars(a: EnvVar[], b: EnvVar[]): boolean {
@@ -19,7 +19,8 @@ function sameSecrets(a: Secret[], b: Secret[]): boolean {
   return a.length === b.length && a.every((v, i) => JSON.stringify(v) === JSON.stringify(b[i]))
 }
 
-export function SandboxCredentialsTab({ sandbox, navigate }: { sandbox: Sandbox; navigate: (route: Route) => void }) {
+export function SandboxCredentialsTab({ sandbox }: { sandbox: Sandbox }) {
+  const openSettings = useAppStore((s) => s.openSettings)
   const [vars, setVars] = useState<EnvVar[]>([])
   const [saved, setSaved] = useState<EnvVar[]>([])
   const [loading, setLoading] = useState(true)
@@ -128,7 +129,7 @@ export function SandboxCredentialsTab({ sandbox, navigate }: { sandbox: Sandbox;
   }
 
   function goToGlobalCredentials() {
-    navigate({ screen: 'settings', settingsTab: 'credentials' })
+    openSettings('credentials')
   }
 
   return (

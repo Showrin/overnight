@@ -1,5 +1,6 @@
 import { useCallback, useRef } from 'react'
-import { Activity, Archive, Box, FolderGit2, ScrollText, Settings, Terminal } from 'lucide-react'
+import { Archive, Box, FolderGit2, Settings } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { SidebarSandboxList } from '@/components/sandboxes/SidebarSandboxList'
 import { useAppStore } from '@/store/useAppStore'
 import type { Route, Screen } from '@/lib/router'
@@ -15,20 +16,8 @@ const groups: { label: string; items: NavItem[] }[] = [
     items: [
       { screen: 'projects', label: 'Projects', icon: FolderGit2 },
       { screen: 'sandboxes', label: 'Sandboxes', icon: Box },
-      { screen: 'performance-monitor', label: 'Performance Monitor', icon: Activity },
       { screen: 'backups', label: 'Backups', icon: Archive },
     ],
-  },
-  {
-    label: 'Developer',
-    items: [
-      { screen: 'dev-telemetry', label: 'Daemon Logs', icon: ScrollText },
-      { screen: 'dev-commands', label: 'Command Logs', icon: Terminal },
-    ],
-  },
-  {
-    label: 'System',
-    items: [{ screen: 'settings', label: 'Settings', icon: Settings }],
   },
 ]
 
@@ -44,6 +33,7 @@ export function Sidebar({
   const sidebarWidth = useAppStore((s) => s.sidebarWidth)
   const setSidebarWidth = useAppStore((s) => s.setSidebarWidth)
   const saveSidebarWidth = useAppStore((s) => s.saveSidebarWidth)
+  const openSettings = useAppStore((s) => s.openSettings)
   const resizing = useRef(false)
 
   const handleMouseDown = useCallback(
@@ -107,8 +97,11 @@ export function Sidebar({
         ))}
       </div>
       <SidebarSandboxList onNavigate={onNavigate} />
-      <div className="border-t border-sidebar-border px-3 py-2.5 text-xs text-muted-foreground">
-        Overnight v0.0.0
+      <div className="flex items-center justify-between border-t border-sidebar-border py-1.5 pr-1.5 pl-3 text-xs text-muted-foreground">
+        <span>Overnight v0.0.0</span>
+        <Button variant="ghost" size="icon-sm" aria-label="Settings" onClick={() => openSettings()}>
+          <Settings className="size-4" strokeWidth={1.5} />
+        </Button>
       </div>
       <div
         onMouseDown={handleMouseDown}

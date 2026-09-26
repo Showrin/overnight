@@ -1,33 +1,25 @@
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { EnvVar } from '@/lib/envVars'
 import type { NetworkPolicySettings, NetworkRuleDecision } from '@/lib/networkPolicy'
 import type { Secret } from '@/lib/secrets'
-import type { Route, SettingsTab } from '@/lib/router'
 import { useAppStore } from '@/store/useAppStore'
 import type { JiraConfig } from './JiraConfigForm'
 import { EnvVarsSavedDialog } from './EnvVarsSavedDialog'
-import { SettingsActions, type TabActions, UnsavedChangesNotice } from './SettingsLayout'
+import { SettingsActions, SettingsDialogHeader, type TabActions } from './SettingsLayout'
+import { SHOW_JIRA_SETTINGS, type SettingsTab, sectionLabel } from './sections'
 import { BackupsTab } from './tabs/BackupsTab'
 import { CredentialsTab } from './tabs/CredentialsTab'
 import { GeneralTab } from './tabs/GeneralTab'
 import { IntegrationsTab } from './tabs/IntegrationsTab'
 import { NetworkTab } from './tabs/NetworkTab'
 
-const SHOW_JIRA_SETTINGS = false
-
 function sameFolders(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((path, i) => path === b[i])
 }
 
-interface SettingsScreenProps {
-  settingsTab: SettingsTab
-  navigate: (route: Route) => void
-}
-
-export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
+export function SettingsScreen({ section }: { section: SettingsTab }) {
   const settings = useAppStore((s) => s.settings)
   const projects = useAppStore((s) => s.projects)
   const saveSettings = useAppStore((s) => s.saveSettings)
@@ -456,34 +448,15 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
     integrations: { dirty: false, canSave: false, saving: false, error: null, onSave: noop, onCancel: noop },
   }
 
-  const activeActions = tabActions[settingsTab]
+  const activeActions = tabActions[section]
 
   return (
-    <Tabs
-      value={settingsTab}
-      onValueChange={(value) => navigate({ screen: 'settings', settingsTab: value as SettingsTab })}
-      className="flex h-full min-h-0 w-full flex-col gap-4"
-    >
-      <div className="flex shrink-0 flex-col gap-4">
-        <div className="flex items-center justify-between gap-4">
-          <h1 className="text-lg font-medium">Settings</h1>
-          {settingsTab !== 'integrations' && <SettingsActions {...activeActions} />}
-        </div>
+    <div className="flex h-full min-h-0 w-full flex-col">
+      <SettingsDialogHeader title={sectionLabel(section)} dirty={activeActions.dirty} />
+      {activeActions.error && <p className="shrink-0 px-6 pt-4 text-sm text-destructive">{activeActions.error}</p>}
 
-        <TabsList>
-          <TabsTrigger value="general">General</TabsTrigger>
-          <TabsTrigger value="backups">Backups</TabsTrigger>
-          <TabsTrigger value="network">Network</TabsTrigger>
-          <TabsTrigger value="credentials">Credentials</TabsTrigger>
-          {SHOW_JIRA_SETTINGS && <TabsTrigger value="integrations">Integrations</TabsTrigger>}
-        </TabsList>
-
-        {activeActions.dirty && <UnsavedChangesNotice />}
-        {activeActions.error && <p className="text-sm text-destructive">{activeActions.error}</p>}
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-auto">
-        <TabsContent value="general">
+      <div className="min-h-0 flex-1 overflow-auto px-6 pb-6">
+        {section === 'general' && (
           <GeneralTab
             defaultAgent={localDefaultAgent}
             setDefaultAgent={setLocalDefaultAgent}
@@ -495,18 +468,18 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
             onAddSkillFolders={addSkillFolders}
             onRemoveSkillFolder={removeSkillFolder}
           />
-        </TabsContent>
+        )}
 
-        <TabsContent value="backups">
+        {section === 'backups' && (
           <BackupsTab
             autoBackup={autoBackup}
             setAutoBackup={setAutoBackup}
             backupInterval={backupInterval}
             setBackupInterval={setBackupInterval}
           />
-        </TabsContent>
+        )}
 
-        <TabsContent value="network">
+        {section === 'network' && (
           <NetworkTab
             networkPreset={networkPreset}
             setNetworkPreset={setNetworkPreset}
@@ -522,9 +495,9 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
             highlightPreset={highlightNetworkPreset}
             onHighlightPresetShown={() => setHighlightNetworkPreset(false)}
           />
-        </TabsContent>
+        )}
 
-        <TabsContent value="credentials">
+        {section === 'credentials' && (
           <CredentialsTab
             globalVars={globalEnvVars}
             setGlobalVars={setGlobalEnvVars}
@@ -542,21 +515,25 @@ export function SettingsScreen({ settingsTab, navigate }: SettingsScreenProps) {
             setProjectSecrets={setProjectSecrets}
             loadingProjectSecrets={loadingProjectSecrets}
           />
-        </TabsContent>
+        )}
 
-        {SHOW_JIRA_SETTINGS && (
-          <TabsContent value="integrations">
-            <IntegrationsTab
-              jiraConfig={jiraConfig}
-              editingJira={editingJira}
-              setEditingJira={setEditingJira}
-              onJiraSaved={loadJiraConfig}
-            />
-          </TabsContent>
+        {SHOW_JIRA_SETTINGS && section === 'integrations' && (
+          <IntegrationsTab
+            jiraConfig={jiraConfig}
+            editingJira={editingJira}
+            setEditingJira={setEditingJira}
+            onJiraSaved={loadJiraConfig}
+          />
         )}
       </div>
 
+      {section !== 'integrations' && (
+        <div className="flex shrink-0 justify-end border-t border-border px-6 py-3">
+          <SettingsActions {...activeActions} />
+        </div>
+      )}
+
       <EnvVarsSavedDialog open={credentialsSavedDialogOpen} onOpenChange={setCredentialsSavedDialogOpen} />
-    </Tabs>
+    </div>
   )
 }

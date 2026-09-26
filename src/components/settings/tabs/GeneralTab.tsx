@@ -108,7 +108,7 @@ export function GeneralTab({
         </Select>
       </SettingsRow>
 
-      <SettingsRow label="Skill folders" description="Folders scanned for Claude skills.">
+      <SettingsRow label="Skill folders" description="Folders scanned for Claude skills." divider={false}>
         <div className="flex gap-2">
           {skillFolders.length > 0 && (
             <div className="relative min-w-0 flex-1">

@@ -7,11 +7,8 @@ import { BackupsScreen } from '@/components/backups/BackupsScreen'
 import { JiraIssueList } from '@/components/dashboard/JiraIssueList'
 import { ProjectsScreen } from '@/components/projects/ProjectsScreen'
 import { GitSyncToast } from '@/components/sandboxes/GitSyncToast'
-import { PerformanceMonitorTab } from '@/components/sandboxes/PerformanceMonitorTab'
 import { SandboxesScreen } from '@/components/sandboxes/SandboxesScreen'
-import { SettingsScreen } from '@/components/settings/SettingsScreen'
-import { TelemetryTab } from '@/components/developer/TelemetryTab'
-import { CommandLogTab } from '@/components/developer/CommandLogTab'
+import { SettingsDialog } from '@/components/settings/SettingsDialog'
 import { parseRoute, pushRoute, type Route } from '@/lib/router'
 import { initAppStore, useAppStore } from '@/store/useAppStore'
 import { cn } from '@/lib/utils'
@@ -79,14 +76,6 @@ function App() {
                 navigate={navigate}
               />
             </div>
-          ) : route.screen === 'dev-telemetry' || route.screen === 'dev-commands' || route.screen === 'settings' ? (
-            <div className={cn('@container flex h-full w-full flex-col p-6', !layoutExpanded && 'max-w-5xl')}>
-              {route.screen === 'dev-telemetry' && <TelemetryTab />}
-              {route.screen === 'dev-commands' && <CommandLogTab />}
-              {route.screen === 'settings' && (
-                <SettingsScreen settingsTab={route.settingsTab ?? 'general'} navigate={navigate} />
-              )}
-            </div>
           ) : route.screen === 'sandboxes' && route.sandboxId && !route.branches ? (
             <div className={cn('@container flex h-full w-full flex-col p-6', !layoutExpanded && 'max-w-5xl')}>
               <SandboxesScreen
@@ -108,7 +97,6 @@ function App() {
                   navigate={navigate}
                 />
               )}
-              {route.screen === 'performance-monitor' && <PerformanceMonitorTab />}
               {route.screen === 'backups' && <BackupsScreen />}
             </div>
           )}
@@ -116,6 +104,7 @@ function App() {
       </div>
       <OperationsIndicator navigate={navigate} />
       <GitSyncToast />
+      <SettingsDialog />
     </div>
   )
 }

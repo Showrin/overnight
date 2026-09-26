@@ -88,6 +88,7 @@ export function SandboxesScreen({
   const loadSandboxes = useAppStore((s) => s.loadSandboxes)
   const networkPolicyPreset = useAppStore((s) => s.networkPolicyPreset)
   const setHighlightNetworkPreset = useAppStore((s) => s.setHighlightNetworkPreset)
+  const openSettings = useAppStore((s) => s.openSettings)
   const [sbxError, setSbxError] = useState<string | null>(null)
   const [checkingSbx, setCheckingSbx] = useState(true)
   const [creatingForProjectId, setCreatingForProjectId] = useState<string | null>(null)
@@ -193,7 +194,7 @@ export function SandboxesScreen({
               onGoToSettings={() => {
                 setNetworkPolicyGateOpen(false);
                 setHighlightNetworkPreset(true);
-                navigate({ screen: 'settings', settingsTab: 'network' });
+                openSettings('network');
               }}
             />
           </DialogContent>

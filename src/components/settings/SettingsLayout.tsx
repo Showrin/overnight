@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react'
-import { TriangleAlert } from 'lucide-react'
+import { TriangleAlert, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { useAppStore } from '@/store/useAppStore'
 
 /**
  * Label + description on the left, controls on the right, divided by a
@@ -74,11 +75,29 @@ export function SettingsActions({ dirty, canSave, saving, onSave, onCancel }: Ta
   )
 }
 
-export function UnsavedChangesNotice() {
+export function UnsavedChangesNotice({ className }: { className?: string }) {
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-foreground">
+    <div
+      className={cn(
+        'flex items-center gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-foreground',
+        className
+      )}
+    >
       <TriangleAlert className="size-3.5 shrink-0 text-warning" strokeWidth={1.5} />
       You have unsaved changes.
+    </div>
+  )
+}
+
+export function SettingsDialogHeader({ title, dirty = false }: { title: string; dirty?: boolean }) {
+  const closeSettings = useAppStore((s) => s.closeSettings)
+  return (
+    <div className="flex h-14 shrink-0 items-center gap-4 border-b border-border pr-3 pl-6">
+      <h1 className="text-lg font-medium">{title}</h1>
+      {dirty && <UnsavedChangesNotice className="py-1.5" />}
+      <Button variant="ghost" size="icon-sm" aria-label="Close settings" className="ml-auto" onClick={closeSettings}>
+        <X className="size-4" strokeWidth={1.5} />
+      </Button>
     </div>
   )
 }

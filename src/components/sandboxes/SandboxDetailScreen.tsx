@@ -99,7 +99,7 @@ export function SandboxDetailScreen({
 
       {tab === 'backups' && <SandboxBackupsTab sandbox={sandbox} />}
 
-      {tab === 'credentials' && <SandboxCredentialsTab sandbox={sandbox} navigate={navigate} />}
+      {tab === 'credentials' && <SandboxCredentialsTab sandbox={sandbox} />}
     </div>
   )
 }

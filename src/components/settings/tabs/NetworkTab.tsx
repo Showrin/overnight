@@ -85,6 +85,7 @@ export function NetworkTab({
       <SettingsRow
         label="Custom rules"
         description="Allow or deny specific hosts for every sandbox. Applied as soon as you add or remove them."
+        divider={false}
       >
         {loadingNetworkPolicy ? (
           <p className="text-xs text-muted-foreground">Loading…</p>

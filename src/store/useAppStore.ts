@@ -4,6 +4,7 @@ import type { Project } from '@/components/projects/types'
 import type { BranchSyncOutcome, HostMetric, Sandbox } from '@/components/sandboxes/types'
 import type { ActiveBackup, ActiveOperation } from '@/components/backups/types'
 import type { NetworkPolicySettings } from '@/lib/networkPolicy'
+import type { SettingsSection } from '@/components/settings/sections'
 
 const SANDBOX_POLL_MS = 5000
 // Orphan adoption shells out to `sbx ls` itself, so it runs far less often
@@ -35,6 +36,7 @@ interface AppStore {
   defaultAgent: string
   networkPolicyPreset: string | null
   highlightNetworkPreset: boolean
+  settingsDialogSection: SettingsSection | null
   hostStats: HostMetric | null
   hostStatsHistory: HostMetric[]
   backupIntervalMinutes: number
@@ -58,6 +60,8 @@ interface AppStore {
   saveDefaultAgent: (agent: string) => Promise<void>
   loadNetworkPolicyPreset: () => Promise<void>
   setHighlightNetworkPreset: (value: boolean) => void
+  openSettings: (section?: SettingsSection) => void
+  closeSettings: () => void
   loadHostStatsHistory: () => Promise<void>
   loadHostStats: () => Promise<void>
   loadBackupIntervalMinutes: () => Promise<void>
@@ -83,6 +87,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   defaultAgent: 'claude',
   networkPolicyPreset: null,
   highlightNetworkPreset: false,
+  settingsDialogSection: null,
   hostStats: null,
   hostStatsHistory: [],
   backupIntervalMinutes: 15,
@@ -173,6 +178,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   setHighlightNetworkPreset(value) {
     set({ highlightNetworkPreset: value })
+  },
+
+  openSettings(section = 'general') {
+    set({ settingsDialogSection: section })
+  },
+
+  closeSettings() {
+    set({ settingsDialogSection: null })
   },
 
   async loadHostStatsHistory() {

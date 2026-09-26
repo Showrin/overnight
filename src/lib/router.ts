@@ -9,26 +9,12 @@ export type Screen =
   | 'dashboard'
   | 'projects'
   | 'sandboxes'
-  | 'performance-monitor'
-  | 'dev-telemetry'
-  | 'dev-commands'
   | 'backups'
-  | 'settings'
 
 // Sandbox detail page tabs. Not persisted into the hash — a same-session
 // navigation hint only (e.g. jumping straight to Backups from an
 // in-progress indicator), so a page refresh lands back on Overview.
 export type DetailTab = 'overview' | 'metrics' | 'plans' | 'backups' | 'credentials'
-
-// Settings page tabs. Persisted into the hash (`#/settings/<tab>`), unlike
-// DetailTab — Settings tabs are primary navigation, not a same-session hint.
-export type SettingsTab = 'general' | 'backups' | 'network' | 'credentials' | 'integrations'
-
-const SETTINGS_TABS: readonly SettingsTab[] = ['general', 'backups', 'network', 'credentials', 'integrations']
-
-function isSettingsTab(value: string): value is SettingsTab {
-  return (SETTINGS_TABS as readonly string[]).includes(value)
-}
 
 export interface Route {
   screen: Screen
@@ -36,18 +22,13 @@ export interface Route {
   branches?: boolean
   branch?: string
   detailTab?: DetailTab
-  settingsTab?: SettingsTab
 }
 
 const SCREENS: readonly Screen[] = [
   'dashboard',
   'projects',
   'sandboxes',
-  'performance-monitor',
-  'dev-telemetry',
-  'dev-commands',
   'backups',
-  'settings',
 ]
 
 function isScreen(value: string): value is Screen {
@@ -67,16 +48,10 @@ export function parseRoute(hash: string): Route {
     }
     return { screen, sandboxId: idPart }
   }
-  if (screen === 'settings') {
-    return { screen, settingsTab: idPart && isSettingsTab(idPart) ? idPart : 'general' }
-  }
   return { screen }
 }
 
 function routeToHash(route: Route): string {
-  if (route.screen === 'settings' && route.settingsTab && route.settingsTab !== 'general') {
-    return `#/settings/${route.settingsTab}`
-  }
   if (!route.sandboxId) return `#/${route.screen}`
   if (!route.branches) return `#/${route.screen}/${route.sandboxId}`
   const branchSegment = route.branch ? `/${encodeURIComponent(route.branch)}` : ''

@@ -19,7 +19,7 @@ export function BackupsTab({ autoBackup, setAutoBackup, backupInterval, setBacku
         <Switch checked={autoBackup} onCheckedChange={setAutoBackup} />
       </SettingsRow>
 
-      <SettingsRow label="Backup interval" description="How often (in minutes) auto backup runs.">
+      <SettingsRow label="Backup interval" description="How often (in minutes) auto backup runs." divider={false}>
         <Input
           type="number"
           min={1}
