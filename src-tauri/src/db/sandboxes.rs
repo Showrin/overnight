@@ -34,6 +34,8 @@ fn row_to_sandbox(row: &rusqlite::Row) -> rusqlite::Result<Sandbox> {
     secrets: serde_json::from_str(&secrets_raw).unwrap_or_default(),
     last_git_sync_at: row.get("last_git_sync_at")?,
     last_git_sync_result: serde_json::from_str(&last_git_sync_result_raw).unwrap_or_default(),
+    backup_enabled: row.get("backup_enabled")?,
+    backup_interval_minutes: row.get("backup_interval_minutes")?,
   })
 }
 
@@ -200,6 +202,17 @@ pub fn record_backup(conn: &Connection, id: &str, path: &str, at: i64) -> Result
   get(conn, id)
 }
 
+pub fn set_backup_settings(conn: &Connection, id: &str, enabled: bool, interval_minutes: Option<i64>) -> Result<Sandbox> {
+  let changed = conn.execute(
+    "UPDATE sandboxes SET backup_enabled = ?1, backup_interval_minutes = ?2 WHERE id = ?3",
+    params![enabled, interval_minutes, id],
+  )?;
+  if changed == 0 {
+    return Err(Error::NotFound);
+  }
+  get(conn, id)
+}
+
 /// Persists one "branch snapshot" — current branch, local branch list, and
 /// worktree list, all captured together in a single `sbx exec` round trip
 /// (see `sbx::read_branch_snapshot`) — as of `at`. `branches`/`worktrees`
@@ -262,6 +275,20 @@ mod tests {
 
   fn make_project(conn: &Connection) -> String {
     crate::db::projects::create(conn, "Overnight", "/repo/overnight", None, None).unwrap().id
+  }
+
+  #[test]
+  fn set_backup_settings_round_trips() {
+    let conn = test_conn();
+    let project_id = make_project(&conn);
+    let sandbox = create(&conn, &project_id, "mount", None, None, "default", None, "claude").unwrap();
+    assert!(sandbox.backup_enabled);
+    assert_eq!(sandbox.backup_interval_minutes, None);
+
+    let updated = set_backup_settings(&conn, &sandbox.id, false, Some(30)).unwrap();
+    assert!(!updated.backup_enabled);
+    assert_eq!(updated.backup_interval_minutes, Some(30));
+    assert!(matches!(set_backup_settings(&conn, "missing", true, None), Err(Error::NotFound)));
   }
 
   #[test]

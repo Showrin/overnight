@@ -11,6 +11,7 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use tauri::{AppHandle, Manager, Runtime};
+use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 
 use crate::db::models::{EnvVar, SecretSource, WorktreeInfo};
@@ -35,12 +36,74 @@ pub enum Error {
   NotFound,
   #[error("sbx {0:?} didn't finish within {1:?} — it may be waiting on an interactive prompt this app can't answer")]
   TimedOut(Vec<String>, std::time::Duration),
+  #[error("cancelled")]
+  Cancelled,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// Flips to `true` when the user cancels the operation using it.
+pub type CancelRx = tokio::sync::watch::Receiver<bool>;
+
 async fn run<R: Runtime>(app: &AppHandle<R>, operation: &str, args: &[&str]) -> Result<String> {
   run_with_logged_args(app, operation, args, args).await
+}
+
+/// Like `run`, but kills the child as soon as `cancel` flips to `true`.
+async fn run_cancellable<R: Runtime>(
+  app: &AppHandle<R>,
+  operation: &str,
+  args: &[&str],
+  cancel: Option<CancelRx>,
+) -> Result<String> {
+  let Some(mut cancel) = cancel else {
+    return run(app, operation, args).await;
+  };
+  if *cancel.borrow() {
+    return Err(Error::Cancelled);
+  }
+  let (mut rx, child) = app.shell().command("sbx").args(args).spawn()?;
+  let (mut stdout, mut stderr, mut code) = (Vec::new(), Vec::new(), None);
+  loop {
+    tokio::select! {
+      event = rx.recv() => match event {
+        Some(CommandEvent::Stdout(line)) => {
+          stdout.extend(line);
+          stdout.push(b'\n');
+        }
+        Some(CommandEvent::Stderr(line)) => {
+          stderr.extend(line);
+          stderr.push(b'\n');
+        }
+        Some(CommandEvent::Terminated(payload)) => {
+          code = payload.code;
+          break;
+        }
+        Some(_) => {}
+        None => break,
+      },
+      changed = cancel.changed() => {
+        if changed.is_ok() && !*cancel.borrow() {
+          continue;
+        }
+        if let Err(e) = child.kill() {
+          log::warn!("run_cancellable: failed to kill sbx {args:?}: {e}");
+        }
+        record(app, operation, args, false, None, Some("cancelled"));
+        return Err(Error::Cancelled);
+      }
+    }
+  }
+  let stderr = String::from_utf8_lossy(&stderr).trim().to_string();
+  let success = code == Some(0);
+  record(app, operation, args, success, code.map(i64::from), (!stderr.is_empty()).then_some(stderr.as_str()));
+  if !success {
+    if let Some(err) = classify_command_failure(&stderr) {
+      return Err(err);
+    }
+    return Err(Error::CommandFailed(format!("sbx {args:?} exited with {code:?}: {stderr}")));
+  }
+  Ok(String::from_utf8_lossy(&stdout).trim().to_string())
 }
 
 /// Like `run`, but persists `logged_args` to the command log instead of
@@ -942,9 +1005,15 @@ pub fn resume<R: Runtime>(app: &AppHandle<R>, name: &str) -> Result<()> {
 /// `remote_path`'s *contents* placed directly at `host_dest` must leave
 /// `host_dest` non-existent (only its parent needs to exist) before
 /// calling this, so `sbx cp` creates it fresh from the source.
-pub async fn cp_from_sandbox<R: Runtime>(app: &AppHandle<R>, name: &str, remote_path: &str, host_dest: &str) -> Result<()> {
+pub async fn cp_from_sandbox<R: Runtime>(
+  app: &AppHandle<R>,
+  name: &str,
+  remote_path: &str,
+  host_dest: &str,
+  cancel: Option<CancelRx>,
+) -> Result<()> {
   let args = cp_from_sandbox_args(name, remote_path, host_dest);
-  run(app, "Copy files from sandbox", &args.iter().map(String::as_str).collect::<Vec<_>>()).await?;
+  run_cancellable(app, "Copy files from sandbox", &args.iter().map(String::as_str).collect::<Vec<_>>(), cancel).await?;
   Ok(())
 }
 
@@ -967,9 +1036,15 @@ fn cp_from_sandbox_args(name: &str, remote_path: &str, host_dest: &str) -> Vec<S
 /// The exact rule isn't pinned down and may not be stable across `sbx`
 /// versions, so `restore_directory` treats the nesting depth as unknown
 /// and resolves it generically rather than assuming either shape.
-pub async fn cp_to_sandbox<R: Runtime>(app: &AppHandle<R>, name: &str, host_src: &str, remote_path: &str) -> Result<()> {
+pub async fn cp_to_sandbox<R: Runtime>(
+  app: &AppHandle<R>,
+  name: &str,
+  host_src: &str,
+  remote_path: &str,
+  cancel: Option<CancelRx>,
+) -> Result<()> {
   let args = cp_to_sandbox_args(name, host_src, remote_path);
-  run(app, "Copy files to sandbox", &args.iter().map(String::as_str).collect::<Vec<_>>()).await?;
+  run_cancellable(app, "Copy files to sandbox", &args.iter().map(String::as_str).collect::<Vec<_>>(), cancel).await?;
   Ok(())
 }
 
@@ -1027,12 +1102,21 @@ pub async fn restore_directory<R: Runtime>(
   host_src: &str,
   remote_dest: &str,
   merge_in_place: &[&str],
+  cancel: Option<CancelRx>,
 ) -> Result<()> {
   let scratch = format!("/tmp/overnight-restore-{}", crate::db::models::new_id());
-  cp_to_sandbox(app, name, host_src, &scratch).await?;
-  let script = restore_directory_script(&scratch, remote_dest, merge_in_place);
-  run(app, "Restore backup into sandbox", &["exec", "-d", name, "sh", "-c", &script]).await?;
-  Ok(())
+  let result = async {
+    cp_to_sandbox(app, name, host_src, &scratch, cancel.clone()).await?;
+    let script = restore_directory_script(&scratch, remote_dest, merge_in_place);
+    run_cancellable(app, "Restore backup into sandbox", &["exec", "-d", name, "sh", "-c", &script], cancel).await
+  }
+  .await;
+  if matches!(result, Err(Error::Cancelled)) {
+    if let Err(e) = run(app, "Clean up cancelled restore", &["exec", "-d", name, "rm", "-rf", &scratch]).await {
+      log::warn!("restore_directory: failed to remove {scratch} in {name}: {e}");
+    }
+  }
+  result.map(|_| ())
 }
 
 /// Pure POSIX globbing rather than `find -mindepth/-maxdepth` — a sandbox's

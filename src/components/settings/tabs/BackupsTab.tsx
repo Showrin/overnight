@@ -7,9 +7,18 @@ interface BackupsTabProps {
   setAutoBackup: (enabled: boolean) => void
   backupInterval: number
   setBackupInterval: (minutes: number) => void
+  keepCount: number
+  setKeepCount: (count: number) => void
 }
 
-export function BackupsTab({ autoBackup, setAutoBackup, backupInterval, setBackupInterval }: BackupsTabProps) {
+export function BackupsTab({
+  autoBackup,
+  setAutoBackup,
+  backupInterval,
+  setBackupInterval,
+  keepCount,
+  setKeepCount,
+}: BackupsTabProps) {
   return (
     <>
       <SettingsRow
@@ -19,7 +28,19 @@ export function BackupsTab({ autoBackup, setAutoBackup, backupInterval, setBacku
         <Switch checked={autoBackup} onCheckedChange={setAutoBackup} />
       </SettingsRow>
 
-      <SettingsRow label="Backup interval" description="How often (in minutes) auto backup runs." divider={false}>
+      <SettingsRow label="Backups kept per sandbox" description="Older backups beyond this number are deleted (1–10).">
+        <Input
+          type="number"
+          min={1}
+          max={10}
+          className="max-w-40"
+          value={keepCount}
+          disabled={!autoBackup}
+          onChange={(e) => setKeepCount(Math.min(10, Math.max(1, Number(e.target.value) || 1)))}
+        />
+      </SettingsRow>
+
+      <SettingsRow label="Backup interval" description="Default interval in minutes. Each sandbox can override it." divider={false}>
         <Input
           type="number"
           min={1}

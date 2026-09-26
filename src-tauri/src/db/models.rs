@@ -212,6 +212,10 @@ pub struct Sandbox {
   /// Per-branch outcome of the last Git Sync run. Empty until the first
   /// sync. JSON-TEXT-column pattern, same as `branches`/`worktrees`.
   pub last_git_sync_result: Vec<crate::git::BranchSyncOutcome>,
+  /// Scheduled backups only; manual and pre-stop/pre-delete backups ignore it.
+  pub backup_enabled: bool,
+  /// `None` = use the global interval.
+  pub backup_interval_minutes: Option<i64>,
 }
 
 /// One periodic (or pre-stop/pre-delete) backup of a sandbox's agent home
@@ -240,10 +244,12 @@ pub struct SandboxBackup {
   pub current_branch: Option<String>,
   pub branches: Vec<String>,
   pub plan_file_count: i64,
-  /// Total on-disk size of `host_dir`, computed live rather than stored —
-  /// backups are immutable after creation, but computing this at read time
-  /// means every existing row gets a correct value with no backfill step.
+  /// Total on-disk size of `host_dir`, computed once at backup time (older
+  /// rows are backfilled on first list — see `db::backups`).
   pub size_bytes: i64,
+  /// Problems with this backup: halves that failed to copy (stored), plus
+  /// halves missing on disk now (checked on each read).
+  pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

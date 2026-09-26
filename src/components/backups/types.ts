@@ -18,6 +18,8 @@ export interface SandboxBackup {
   branches: string[]
   plan_file_count: number
   size_bytes: number
+  // Partial copy (found at backup time) or missing parts on disk (found now).
+  warnings: string[]
 }
 
 // A sandbox with a .claude/.git copy currently in flight, from list_active_backups.
@@ -32,6 +34,8 @@ export interface ActiveBackup {
 // list_active_operations. source_sandbox_id/scope are only set for a
 // restore; trigger only for a backup.
 export interface ActiveOperation {
+  // Sandbox id for a backup, operation id for a restore — what cancel expects.
+  id: string
   kind: 'backup' | 'restore'
   sandbox_id: string
   source_sandbox_id: string | null

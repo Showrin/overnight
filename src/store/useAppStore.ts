@@ -41,6 +41,7 @@ interface AppStore {
   hostStatsHistory: HostMetric[]
   backupIntervalMinutes: number
   autoBackupEnabled: boolean
+  backupKeepCount: number
   activeBackups: ActiveBackup[]
   activeOperations: ActiveOperation[]
   sidebarWidth: number
@@ -68,8 +69,11 @@ interface AppStore {
   saveBackupIntervalMinutes: (minutes: number) => Promise<void>
   loadAutoBackupEnabled: () => Promise<void>
   saveAutoBackupEnabled: (enabled: boolean) => Promise<void>
+  loadBackupKeepCount: () => Promise<void>
+  saveBackupKeepCount: (count: number) => Promise<void>
   loadActiveBackups: () => Promise<void>
   loadActiveOperations: () => Promise<void>
+  cancelOperation: (op: ActiveOperation) => Promise<void>
   loadSidebarWidth: () => Promise<void>
   setSidebarWidth: (width: number) => void
   saveSidebarWidth: (width: number) => Promise<void>
@@ -92,6 +96,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   hostStatsHistory: [],
   backupIntervalMinutes: 15,
   autoBackupEnabled: true,
+  backupKeepCount: 10,
   activeBackups: [],
   activeOperations: [],
   sidebarWidth: 208,
@@ -220,6 +225,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ autoBackupEnabled: enabled })
   },
 
+  async loadBackupKeepCount() {
+    const count = await invoke<number>('get_backup_keep_count')
+    set({ backupKeepCount: count })
+  },
+
+  async saveBackupKeepCount(count) {
+    await invoke('save_backup_keep_count', { count })
+    set({ backupKeepCount: count })
+  },
+
   async loadActiveBackups() {
     const activeBackups = await invoke<ActiveBackup[]>('list_active_backups')
     set({ activeBackups })
@@ -228,6 +243,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
   async loadActiveOperations() {
     const activeOperations = await invoke<ActiveOperation[]>('list_active_operations')
     set({ activeOperations })
+  },
+
+  async cancelOperation(op) {
+    if (op.kind === 'backup') await invoke('cancel_backup', { sandboxId: op.sandbox_id })
+    else await invoke('cancel_restore', { id: op.id })
+    await Promise.all([get().loadActiveOperations(), get().loadActiveBackups()])
   },
 
   async loadSidebarWidth() {
@@ -276,6 +297,7 @@ export function initAppStore() {
   useAppStore.getState().loadHostStatsHistory()
   useAppStore.getState().loadBackupIntervalMinutes()
   useAppStore.getState().loadAutoBackupEnabled()
+  useAppStore.getState().loadBackupKeepCount()
   useAppStore.getState().loadActiveBackups()
   useAppStore.getState().loadActiveOperations()
   useAppStore.getState().loadSidebarWidth()

@@ -43,6 +43,10 @@ export interface Sandbox {
   // Per-branch outcome of the last Git Sync run. Empty until the first
   // sync.
   last_git_sync_result: BranchSyncOutcome[]
+  // Scheduled backups only; manual and before-stop/delete backups ignore it.
+  backup_enabled: boolean
+  // null = use the global interval.
+  backup_interval_minutes: number | null
 }
 
 export interface WorktreeInfo {

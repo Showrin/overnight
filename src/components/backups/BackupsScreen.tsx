@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { FolderOpen, Loader2, Trash2 } from 'lucide-react'
+import { FolderOpen, Loader2, Trash2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
@@ -14,6 +14,7 @@ const COLLAPSED_COUNT = 2
 export function BackupsScreen() {
   const sandboxes = useAppStore((s) => s.sandboxes)
   const activeBackups = useAppStore((s) => s.activeBackups)
+  const loadActiveBackups = useAppStore((s) => s.loadActiveBackups)
 
   const [backups, setBackups] = useState<SandboxBackup[]>([])
   const [loading, setLoading] = useState(true)
@@ -107,6 +108,15 @@ export function BackupsScreen() {
                   {TRIGGER_LABELS[active.trigger] ?? active.trigger} — started {formatRelativeTime(active.started_at)}
                 </span>
               </div>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="ml-auto"
+                onClick={() => invoke('cancel_backup', { sandboxId: active.sandbox_id }).then(loadActiveBackups)}
+              >
+                <X className="size-3.5" />
+                Cancel
+              </Button>
             </CardContent>
           </Card>
         )

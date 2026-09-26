@@ -1,7 +1,7 @@
 //! Periodic (and pre-stop/pre-delete) backups of a sandbox's agent home
 //! directory (`~/.claude` or `~/.codex`, per `crate::agents::get`) and
-//! `<workspace>/.git` directory, keeping only the newest
-//! `KEEP_BACKUPS_PER_SANDBOX` per sandbox. See `db::backups` for storage
+//! `<workspace>/.git` directory, keeping only the newest `keep_count`
+//! per sandbox. See `db::backups` for storage
 //! and `run_scheduler` for the interval loop started from `lib.rs::setup`.
 
 use std::collections::HashMap;
@@ -17,17 +17,18 @@ use crate::db::{backups, sandboxes, settings, DbPool};
 /// shared with `commands::open_backups_root_folder` so the global Backups
 /// page can open the same root a backup's `host_dir` is nested inside.
 pub const BACKUPS_ROOT_DIR_NAME: &str = "sandbox-backups";
-const KEEP_BACKUPS_PER_SANDBOX: i64 = 10;
 const SCHEDULER_TICK_SECS: u64 = 60;
 
 pub const BACKUP_INTERVAL_KEY: &str = "backup_interval_minutes";
 pub const DEFAULT_BACKUP_INTERVAL_MINUTES: i64 = 15;
-const BACKUP_LAST_RUN_KEY: &str = "backup_last_run_at";
 /// Gates only `run_scheduler`'s periodic ticking — manual backups and the
 /// pre-stop/pre-delete consent backup are unaffected either way. Absent
 /// (e.g. an existing install that predates this setting) means enabled,
 /// matching the scheduler's behavior before this toggle existed.
 pub const AUTO_BACKUP_ENABLED_KEY: &str = "auto_backup_enabled";
+pub const BACKUP_KEEP_COUNT_KEY: &str = "backup_keep_count";
+pub const MIN_BACKUP_KEEP_COUNT: i64 = 1;
+pub const MAX_BACKUP_KEEP_COUNT: i64 = 10;
 
 /// Which halves of a sandbox a backup (or restore) covers. `Claude`/`Codex`
 /// both mean "this sandbox's own agent home directory" — a sandbox only
@@ -80,6 +81,26 @@ impl BackupScope {
 #[derive(Default)]
 pub struct BackupState {
   active: HashMap<String, ActiveBackup>,
+  cancels: HashMap<String, tokio::sync::watch::Sender<bool>>,
+}
+
+impl BackupState {
+  fn cancel(&self, sandbox_id: &str) -> bool {
+    self.cancels.get(sandbox_id).is_some_and(|tx| tx.send(true).is_ok())
+  }
+}
+
+pub const BACKUP_CANCELLED: &str = "backup cancelled";
+
+/// Asks the running backup of `sandbox_id` to stop. `false` when none is running.
+pub fn cancel_backup(app: &AppHandle, sandbox_id: &str) -> bool {
+  let Some(state) = app.try_state::<Mutex<BackupState>>() else {
+    return false;
+  };
+  let Ok(state) = state.lock() else {
+    return false;
+  };
+  state.cancel(sandbox_id)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -113,6 +134,7 @@ impl Drop for ActiveBackupGuard {
     if let Some(state) = self.app.try_state::<Mutex<BackupState>>() {
       if let Ok(mut state) = state.lock() {
         state.active.remove(&self.sandbox_id);
+        state.cancels.remove(&self.sandbox_id);
       }
     }
   }
@@ -120,7 +142,7 @@ impl Drop for ActiveBackupGuard {
 
 /// Copies `sandbox_id`'s agent home directory and (if it has a git
 /// workspace) `.git` directory to a fresh host folder, records the backup,
-/// and prunes anything beyond the newest `KEEP_BACKUPS_PER_SANDBOX`. A
+/// and prunes anything beyond the newest `keep_count`. A
 /// missing `.git` (or a failed copy of either half) doesn't cancel the
 /// other half — the two must stay independently importable. Every call
 /// site treats this as best-effort and only logs the error.
@@ -147,12 +169,14 @@ pub async fn backup_sandbox(
     }
   }
 
+  let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
   if let Some(state) = app.try_state::<Mutex<BackupState>>() {
     if let Ok(mut state) = state.lock() {
       state.active.insert(
         sandbox_id.to_string(),
         ActiveBackup { sandbox_id: sandbox_id.to_string(), trigger: trigger.to_string(), started_at: now_millis() },
       );
+      state.cancels.insert(sandbox_id.to_string(), cancel_tx);
     }
   }
   let _guard = ActiveBackupGuard { app: app.clone(), sandbox_id: sandbox_id.to_string() };
@@ -167,7 +191,7 @@ pub async fn backup_sandbox(
 
   let agent_dir = root.join(agent_kit.id);
   let has_agent_home = if scope.wants_agent_home() {
-    try_copy(app, &name, agent_kit.home_dir, &agent_dir).await
+    try_copy(app, &name, agent_kit.home_dir, &agent_dir, &cancel_rx).await
   } else {
     false
   };
@@ -179,12 +203,31 @@ pub async fn backup_sandbox(
   let workspace = crate::sbx::workspace_path(app, &name).await.map_err(|e| e.to_string())?;
   let has_git = if scope.wants_git() {
     match &workspace {
-      Some(ws) => try_copy(app, &name, &format!("{ws}/.git"), &root.join("git")).await,
+      Some(ws) => try_copy(app, &name, &format!("{ws}/.git"), &root.join("git"), &cancel_rx).await,
       None => false,
     }
   } else {
     false
   };
+
+  if *cancel_rx.borrow() {
+    if let Err(e) = std::fs::remove_dir_all(&root) {
+      log::warn!("backup_sandbox: failed to remove cancelled backup {}: {e}", root.display());
+    }
+    return Err(BACKUP_CANCELLED.to_string());
+  }
+
+  if !has_agent_home && !has_git {
+    let _ = std::fs::remove_dir_all(&root);
+    return Err("backup failed: nothing could be copied".to_string());
+  }
+  let mut warnings = Vec::new();
+  if scope.wants_agent_home() && !has_agent_home {
+    warnings.push(format!(".{} copy failed", agent_kit.id));
+  }
+  if scope.wants_git() && workspace.is_some() && !has_git {
+    warnings.push(".git copy failed".to_string());
+  }
 
   let agent_basename = agent_kit.home_dir.rsplit('/').next().unwrap_or("");
   let plan_file_count = count_plan_files(&agent_dir, agent_basename);
@@ -204,6 +247,7 @@ pub async fn backup_sandbox(
       sandbox.current_branch.as_deref(),
       &sandbox.branches,
       plan_file_count,
+      &warnings,
     )
     .map_err(|e| e.to_string())?;
     // Best-effort: reflects this snapshot's root (containing <agent>/ and
@@ -215,12 +259,18 @@ pub async fn backup_sandbox(
     inserted
   };
 
-  prune_old_backups(pool, sandbox_id);
+  prune_old_backups(pool, sandbox_id, keep_count(pool));
 
   Ok(row)
 }
 
-async fn try_copy(app: &AppHandle, name: &str, remote_path: &str, host_dest: &std::path::Path) -> bool {
+async fn try_copy(
+  app: &AppHandle,
+  name: &str,
+  remote_path: &str,
+  host_dest: &std::path::Path,
+  cancel: &crate::sbx::CancelRx,
+) -> bool {
   // `host_dest` itself must NOT exist beforehand — sbx cp nests
   // `remote_path`'s basename one level inside an existing destination
   // instead of copying its contents directly (see sbx::cp_from_sandbox).
@@ -233,7 +283,7 @@ async fn try_copy(app: &AppHandle, name: &str, remote_path: &str, host_dest: &st
     log::warn!("backup_sandbox: failed to create {}: {e}", parent.display());
     return false;
   }
-  match crate::sbx::cp_from_sandbox(app, name, remote_path, &host_dest.to_string_lossy()).await {
+  match crate::sbx::cp_from_sandbox(app, name, remote_path, &host_dest.to_string_lossy(), Some(cancel.clone())).await {
     Ok(()) => true,
     Err(e) => {
       log::warn!("backup_sandbox: failed to copy {remote_path} from {name}: {e}");
@@ -262,7 +312,7 @@ fn count_plan_files(agent_dir: &std::path::Path, agent_basename: &str) -> i64 {
     .unwrap_or(0)
 }
 
-fn prune_old_backups(pool: &DbPool, sandbox_id: &str) {
+fn prune_old_backups(pool: &DbPool, sandbox_id: &str, keep: i64) {
   let conn = match pool.get() {
     Ok(conn) => conn,
     Err(e) => {
@@ -270,7 +320,7 @@ fn prune_old_backups(pool: &DbPool, sandbox_id: &str) {
       return;
     }
   };
-  let victims = match backups::beyond_limit(&conn, sandbox_id, KEEP_BACKUPS_PER_SANDBOX) {
+  let victims = match backups::beyond_limit(&conn, sandbox_id, keep) {
     Ok(victims) => victims,
     Err(e) => {
       log::warn!("prune_old_backups: failed to list old backups for {sandbox_id}: {e}");
@@ -290,9 +340,24 @@ fn prune_old_backups(pool: &DbPool, sandbox_id: &str) {
   }
 }
 
+/// Applies a lowered keep count right away instead of waiting for the next backup.
+pub fn prune_all(pool: &DbPool) {
+  let keep = keep_count(pool);
+  let ids = pool.get().ok().and_then(|conn| backups::sandbox_ids(&conn).ok()).unwrap_or_default();
+  for id in ids {
+    prune_old_backups(pool, &id, keep);
+  }
+}
+
 fn read_i64_setting(pool: &DbPool, key: &str) -> Option<i64> {
   let conn = pool.get().ok()?;
   settings::get(&conn, key).ok().flatten()?.parse().ok()
+}
+
+pub fn keep_count(pool: &DbPool) -> i64 {
+  read_i64_setting(pool, BACKUP_KEEP_COUNT_KEY)
+    .unwrap_or(MAX_BACKUP_KEEP_COUNT)
+    .clamp(MIN_BACKUP_KEEP_COUNT, MAX_BACKUP_KEEP_COUNT)
 }
 
 pub fn is_auto_backup_enabled(pool: &DbPool) -> bool {
@@ -303,14 +368,21 @@ pub fn is_auto_backup_enabled(pool: &DbPool) -> bool {
   }
 }
 
-/// Ticks every `SCHEDULER_TICK_SECS`, re-reading the interval (and
-/// enabled/disabled) settings each time so a change in Settings takes
-/// effect on the next tick with no restart. `backup_last_run_at` is a
-/// plain settings key (not a new table) so the interval survives app
-/// restarts without a double-backup burst on launch. Left untouched while
-/// disabled, so re-enabling doesn't itself trigger an immediate backup
-/// unless the interval had already elapsed since the last real one.
+/// A sandbox is due once its interval has passed since the later of its
+/// last backup and the scheduler's last attempt (so a failing sandbox is
+/// retried once per interval, not every tick).
+fn is_due(now: i64, last_backup: i64, last_attempt: Option<i64>, interval_minutes: i64) -> bool {
+  let last = last_attempt.map_or(last_backup, |attempt| attempt.max(last_backup));
+  now - last >= interval_minutes * 60_000
+}
+
+/// Ticks every `SCHEDULER_TICK_SECS`, re-reading the settings each time so
+/// a change takes effect on the next tick with no restart. Each running
+/// sandbox with `backup_enabled` is backed up on its own interval (its
+/// override, else the global one), measured from its `last_backup_at`
+/// (or `created_at`), which survives restarts without a burst on launch.
 pub async fn run_scheduler(app: AppHandle, pool: DbPool) {
+  let mut last_attempt: HashMap<String, i64> = HashMap::new();
   loop {
     tokio::time::sleep(std::time::Duration::from_secs(SCHEDULER_TICK_SECS)).await;
 
@@ -318,15 +390,7 @@ pub async fn run_scheduler(app: AppHandle, pool: DbPool) {
       continue;
     }
 
-    let interval_minutes = read_i64_setting(&pool, BACKUP_INTERVAL_KEY).unwrap_or(DEFAULT_BACKUP_INTERVAL_MINUTES);
-    let last_run_at = read_i64_setting(&pool, BACKUP_LAST_RUN_KEY).unwrap_or(0);
-    let now = now_millis();
-    if now - last_run_at < interval_minutes * 60_000 {
-      continue;
-    }
-    if let Ok(conn) = pool.get() {
-      let _ = settings::set(&conn, BACKUP_LAST_RUN_KEY, &now.to_string());
-    }
+    let global_interval = read_i64_setting(&pool, BACKUP_INTERVAL_KEY).unwrap_or(DEFAULT_BACKUP_INTERVAL_MINUTES);
 
     let running_sandboxes = {
       let conn = match pool.get() {
@@ -337,7 +401,7 @@ pub async fn run_scheduler(app: AppHandle, pool: DbPool) {
         }
       };
       match sandboxes::list(&conn) {
-        Ok(list) => list.into_iter().filter(|s| s.status == "running").collect::<Vec<_>>(),
+        Ok(list) => list.into_iter().filter(|s| s.status == "running" && s.backup_enabled).collect::<Vec<_>>(),
         Err(e) => {
           log::warn!("run_scheduler: failed to list sandboxes: {e}");
           continue;
@@ -346,7 +410,17 @@ pub async fn run_scheduler(app: AppHandle, pool: DbPool) {
     };
 
     for sandbox in running_sandboxes {
+      let interval = sandbox.backup_interval_minutes.unwrap_or(global_interval);
+      let now = now_millis();
+      let last_backup = sandbox.last_backup_at.unwrap_or(sandbox.created_at);
+      if !is_due(now, last_backup, last_attempt.get(&sandbox.id).copied(), interval) {
+        continue;
+      }
+      last_attempt.insert(sandbox.id.clone(), now);
       if let Err(e) = backup_sandbox(&app, &pool, &sandbox.id, "scheduled", BackupScope::All).await {
+        if e == BACKUP_CANCELLED {
+          continue;
+        }
         log::warn!("run_scheduler: backup failed for sandbox {}: {e}", sandbox.id);
         let label = sandbox.name.clone().unwrap_or_else(|| sandbox.id.clone());
         let _ = crate::notifications::notify_plain(&app, "Backup failed", Some(&format!("{label}: {e}")), Some(sandbox.id), false);
@@ -358,6 +432,26 @@ pub async fn run_scheduler(app: AppHandle, pool: DbPool) {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn is_due_uses_latest_of_backup_and_attempt() {
+    let min = 60_000;
+    assert!(!is_due(10 * min, 5 * min, None, 15));
+    assert!(is_due(20 * min, 5 * min, None, 15));
+    assert!(!is_due(20 * min, 5 * min, Some(10 * min), 15));
+    assert!(is_due(25 * min, 5 * min, Some(10 * min), 15));
+  }
+
+  #[test]
+  fn cancel_signals_only_a_running_backup() {
+    let mut state = BackupState::default();
+    assert!(!state.cancel("missing"));
+
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    state.cancels.insert("sbx-1".to_string(), tx);
+    assert!(state.cancel("sbx-1"));
+    assert!(*rx.borrow());
+  }
 
   #[test]
   fn parses_valid_scopes() {
@@ -460,25 +554,44 @@ mod tests {
 
     for (i, dir) in dirs.iter().enumerate() {
       let row =
-        backups::insert(&conn, &sandbox.id, None, "scheduled", &dir.to_string_lossy(), true, false, true, None, None, &[], 0).unwrap();
+        backups::insert(&conn, &sandbox.id, None, "scheduled", &dir.to_string_lossy(), true, false, true, None, None, &[], 0, &[]).unwrap();
       conn
         .execute("UPDATE sandbox_backups SET created_at = ?1 WHERE id = ?2", rusqlite::params![i as i64, row.id])
         .unwrap();
     }
     drop(conn);
 
-    prune_old_backups(&pool, &sandbox.id);
+    prune_old_backups(&pool, &sandbox.id, 10);
 
     let conn = pool.get().unwrap();
     assert_eq!(backups::list_all(&conn).unwrap().len(), 10);
     assert!(!dirs[0].exists());
     assert!(!dirs[1].exists());
     assert!(dirs[2].exists());
+    drop(conn);
 
-    for dir in &dirs[2..] {
+    prune_old_backups(&pool, &sandbox.id, 3);
+    let conn = pool.get().unwrap();
+    assert_eq!(backups::list_all(&conn).unwrap().len(), 3);
+    assert!(!dirs[8].exists());
+    assert!(dirs[9].exists());
+
+    for dir in &dirs[9..] {
       std::fs::remove_dir_all(dir).ok();
     }
     drop(conn);
+    drop(pool);
+    std::fs::remove_file(&db_path).ok();
+  }
+
+  #[test]
+  fn keep_count_defaults_to_ten_and_clamps() {
+    let (pool, db_path) = test_pool();
+    assert_eq!(keep_count(&pool), 10);
+    for (raw, expected) in [("3", 3), ("0", 1), ("99", 10)] {
+      settings::set(&pool.get().unwrap(), BACKUP_KEEP_COUNT_KEY, raw).unwrap();
+      assert_eq!(keep_count(&pool), expected);
+    }
     drop(pool);
     std::fs::remove_file(&db_path).ok();
   }

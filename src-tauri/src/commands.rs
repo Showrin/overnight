@@ -1710,7 +1710,7 @@ async fn sync_host_agent_auth(app: &AppHandle, name: &str, kit: &crate::agents::
     return;
   }
   let remote_path = host_auth_remote_path(kit.home_dir, relative);
-  if let Err(e) = crate::sbx::cp_to_sandbox(app, name, &host_path.to_string_lossy(), &remote_path).await {
+  if let Err(e) = crate::sbx::cp_to_sandbox(app, name, &host_path.to_string_lossy(), &remote_path, None).await {
     log::warn!("sync_host_agent_auth: failed to copy {} into {name}: {e}", host_path.display());
   }
 }
@@ -2228,6 +2228,43 @@ pub fn save_backup_interval_minutes(pool: State<DbPool>, minutes: i64) -> std::r
   settings::set(&conn, crate::backup::BACKUP_INTERVAL_KEY, &minutes.to_string()).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn get_backup_keep_count(pool: State<DbPool>) -> i64 {
+  crate::backup::keep_count(pool.inner())
+}
+
+/// Saves how many backups each sandbox keeps, then prunes any extras now.
+#[tauri::command]
+pub async fn save_backup_keep_count(pool: State<'_, DbPool>, count: i64) -> std::result::Result<(), String> {
+  use crate::backup::{MAX_BACKUP_KEEP_COUNT as MAX, MIN_BACKUP_KEEP_COUNT as MIN};
+  if !(MIN..=MAX).contains(&count) {
+    return Err(format!("backups kept must be between {MIN} and {MAX}"));
+  }
+  let pool = pool.inner().clone();
+  tauri::async_runtime::spawn_blocking(move || {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    settings::set(&conn, crate::backup::BACKUP_KEEP_COUNT_KEY, &count.to_string()).map_err(|e| e.to_string())?;
+    crate::backup::prune_all(&pool);
+    Ok(())
+  })
+  .await
+  .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub fn save_sandbox_backup_settings(
+  pool: State<DbPool>,
+  id: String,
+  enabled: bool,
+  interval_minutes: Option<i64>,
+) -> std::result::Result<Sandbox, String> {
+  if interval_minutes.is_some_and(|m| m < 1) {
+    return Err("backup interval must be at least 1 minute".to_string());
+  }
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  sandboxes::set_backup_settings(&conn, &id, enabled, interval_minutes).map_err(|e| e.to_string())
+}
+
 /// Whether `run_scheduler`'s periodic ticking is active — manual backups
 /// and the pre-stop/pre-delete consent backup always work regardless.
 #[tauri::command]
@@ -2270,9 +2307,14 @@ pub async fn backup_sandbox_now(
 /// resolves display names (grouping headers, etc.) client-side rather than
 /// this command joining them in.
 #[tauri::command]
-pub fn list_backups(pool: State<DbPool>) -> std::result::Result<Vec<SandboxBackup>, String> {
-  let conn = pool.get().map_err(|e| e.to_string())?;
-  backups::list_all(&conn).map_err(|e| e.to_string())
+pub async fn list_backups(pool: State<'_, DbPool>) -> std::result::Result<Vec<SandboxBackup>, String> {
+  let pool = pool.inner().clone();
+  tauri::async_runtime::spawn_blocking(move || {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    backups::list_all(&conn).map_err(|e| e.to_string())
+  })
+  .await
+  .map_err(|e| e.to_string())?
 }
 
 /// One entry in the global "operation in progress" indicator — a backup or
@@ -2280,6 +2322,8 @@ pub fn list_backups(pool: State<DbPool>) -> std::result::Result<Vec<SandboxBacku
 /// meaningful for a restore; `trigger` only for a backup.
 #[derive(Debug, Clone, Serialize)]
 pub struct ActiveOperation {
+  /// What to pass to `cancel_backup` (sandbox id) or `cancel_restore` (operation id).
+  pub id: String,
   pub kind: String,
   pub sandbox_id: String,
   pub source_sandbox_id: Option<String>,
@@ -2291,6 +2335,7 @@ pub struct ActiveOperation {
 #[tauri::command]
 pub fn list_active_operations(app: AppHandle) -> Vec<ActiveOperation> {
   let backups = crate::backup::active_backups(&app).into_iter().map(|b| ActiveOperation {
+    id: b.sandbox_id.clone(),
     kind: "backup".to_string(),
     sandbox_id: b.sandbox_id,
     source_sandbox_id: None,
@@ -2299,6 +2344,7 @@ pub fn list_active_operations(app: AppHandle) -> Vec<ActiveOperation> {
     started_at: b.started_at,
   });
   let restores = crate::restore::active_restores(&app).into_iter().map(|r| ActiveOperation {
+    id: r.id,
     kind: "restore".to_string(),
     sandbox_id: r.target_sandbox_id,
     source_sandbox_id: Some(r.source_sandbox_id),
@@ -2307,6 +2353,16 @@ pub fn list_active_operations(app: AppHandle) -> Vec<ActiveOperation> {
     started_at: r.started_at,
   });
   backups.chain(restores).collect()
+}
+
+#[tauri::command]
+pub fn cancel_backup(app: AppHandle, sandbox_id: String) -> bool {
+  crate::backup::cancel_backup(&app, &sandbox_id)
+}
+
+#[tauri::command]
+pub fn cancel_restore(app: AppHandle, id: String) -> bool {
+  crate::restore::cancel_restore(&app, &id)
 }
 
 /// Deletes one backup: its host directory (best-effort — an orphaned
@@ -2423,7 +2479,7 @@ pub async fn sync_sandbox_plans(app: AppHandle, pool: State<'_, DbPool>, id: Str
   std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
 
   let source_path = plans_source_path(&sandbox.agent);
-  crate::sbx::cp_from_sandbox(&app, &name, &source_path, &dest.to_string_lossy())
+  crate::sbx::cp_from_sandbox(&app, &name, &source_path, &dest.to_string_lossy(), None)
     .await
     .map_err(|e| e.to_string())?;
 

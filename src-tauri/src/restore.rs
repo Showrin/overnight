@@ -14,6 +14,7 @@ use crate::db::{backups, sandboxes, DbPool};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ActiveRestore {
+  pub id: String,
   pub target_sandbox_id: String,
   pub source_sandbox_id: String,
   pub scope: String,
@@ -25,6 +26,33 @@ pub struct ActiveRestore {
 #[derive(Default)]
 pub struct RestoreState {
   active: HashMap<String, ActiveRestore>,
+  cancels: HashMap<String, tokio::sync::watch::Sender<bool>>,
+}
+
+impl RestoreState {
+  fn cancel(&self, id: &str) -> bool {
+    self.cancels.get(id).is_some_and(|tx| tx.send(true).is_ok())
+  }
+}
+
+pub const RESTORE_CANCELLED: &str = "restore cancelled — the sandbox may be partly restored";
+
+/// Asks the running restore `id` to stop. `false` when none is running.
+pub fn cancel_restore(app: &AppHandle, id: &str) -> bool {
+  let Some(state) = app.try_state::<Mutex<RestoreState>>() else {
+    return false;
+  };
+  let Ok(state) = state.lock() else {
+    return false;
+  };
+  state.cancel(id)
+}
+
+fn restore_error(e: crate::sbx::Error) -> String {
+  match e {
+    crate::sbx::Error::Cancelled => RESTORE_CANCELLED.to_string(),
+    other => other.to_string(),
+  }
 }
 
 pub fn active_restores(app: &AppHandle) -> Vec<ActiveRestore> {
@@ -47,6 +75,7 @@ impl Drop for ActiveRestoreGuard {
     if let Some(state) = self.app.try_state::<Mutex<RestoreState>>() {
       if let Ok(mut state) = state.lock() {
         state.active.remove(&self.id);
+        state.cancels.remove(&self.id);
       }
     }
   }
@@ -83,17 +112,20 @@ pub async fn restore_backup(
   let name = target.sbx_name.ok_or_else(|| "target sandbox has no sbx sandbox yet".to_string())?;
 
   let op_id = crate::db::models::new_id();
+  let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
   if let Some(state) = app.try_state::<Mutex<RestoreState>>() {
     if let Ok(mut state) = state.lock() {
       state.active.insert(
         op_id.clone(),
         ActiveRestore {
+          id: op_id.clone(),
           target_sandbox_id: target_sandbox_id.to_string(),
           source_sandbox_id: backup.sandbox_id.clone(),
           scope: scope_label(scope).to_string(),
           started_at: now_millis(),
         },
       );
+      state.cancels.insert(op_id.clone(), cancel_tx);
     }
   }
   let _guard = ActiveRestoreGuard { app: app.clone(), id: op_id };
@@ -117,21 +149,42 @@ pub async fn restore_backup(
       "codex" => crate::sbx::CODEX_HOME_MOUNTED_DIRS,
       _ => crate::sbx::CLAUDE_HOME_MOUNTED_DIRS,
     };
-    crate::sbx::restore_directory(app, &name, &host_src, agent_kit.home_dir, mounted_dirs)
+    crate::sbx::restore_directory(app, &name, &host_src, agent_kit.home_dir, mounted_dirs, Some(cancel_rx.clone()))
       .await
-      .map_err(|e| e.to_string())?;
+      .map_err(restore_error)?;
   }
 
   if scope.wants_git() {
     if !backup.has_git {
       return Err("this backup has no .git copy".to_string());
     }
+    if *cancel_rx.borrow() {
+      return Err(RESTORE_CANCELLED.to_string());
+    }
     let workspace = crate::sbx::workspace_path(app, &name).await.map_err(|e| e.to_string())?;
     let workspace = workspace.ok_or_else(|| "target sandbox has no workspace path".to_string())?;
     let git_path = format!("{workspace}/.git");
     let host_src = format!("{}/git", backup.host_dir);
-    crate::sbx::restore_directory(app, &name, &host_src, &git_path, &[]).await.map_err(|e| e.to_string())?;
+    crate::sbx::restore_directory(app, &name, &host_src, &git_path, &[], Some(cancel_rx.clone()))
+      .await
+      .map_err(restore_error)?;
   }
 
   Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn cancel_signals_only_a_running_restore() {
+    let mut state = RestoreState::default();
+    assert!(!state.cancel("missing"));
+
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    state.cancels.insert("op-1".to_string(), tx);
+    assert!(state.cancel("op-1"));
+    assert!(*rx.borrow());
+  }
 }

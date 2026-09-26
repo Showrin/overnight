@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { FolderOpen, Loader2, RotateCcw, Trash2 } from 'lucide-react'
+import { FolderOpen, Loader2, RotateCcw, Trash2, TriangleAlert } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { formatBytes, formatRelativeTime } from '@/lib/sandboxDisplay'
+import { cn } from '@/lib/utils'
 import { RestoreDialog } from './RestoreDialog'
 import type { SandboxBackup } from './types'
 
@@ -29,6 +30,7 @@ export function BackupCard({
   const [error, setError] = useState<string | null>(null)
   const [restoreOpen, setRestoreOpen] = useState(false)
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
+  const hasWarnings = backup.warnings.length > 0
 
   function openFolder() {
     invoke('open_path_in_explorer', { path: backup.host_dir })
@@ -48,7 +50,7 @@ export function BackupCard({
   }
 
   return (
-    <Card className="w-full">
+    <Card className={cn('w-full', hasWarnings && 'border-amber-500/50')}>
       <CardContent className="flex flex-col gap-2">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
@@ -89,6 +91,17 @@ export function BackupCard({
           <span>.codex {backup.has_codex ? 'included' : 'missing'}</span>
           <span>.git {backup.has_git ? 'included' : 'missing'}</span>
         </div>
+        {hasWarnings && (
+          <div className="flex items-start gap-2 rounded-md bg-amber-500/10 px-2 py-1.5 text-xs text-amber-700 dark:text-amber-400">
+            <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
+            <div className="flex flex-col">
+              <span className="font-medium">Partial or damaged backup</span>
+              {backup.warnings.map((warning) => (
+                <span key={warning}>{warning}</span>
+              ))}
+            </div>
+          </div>
+        )}
       </CardContent>
 
       <RestoreDialog open={restoreOpen} onOpenChange={setRestoreOpen} allBackups={allBackups} fixedBackup={backup} />

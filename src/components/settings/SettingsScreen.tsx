@@ -32,6 +32,8 @@ export function SettingsScreen({ section }: { section: SettingsTab }) {
   const saveBackupIntervalMinutes = useAppStore((s) => s.saveBackupIntervalMinutes)
   const autoBackupEnabled = useAppStore((s) => s.autoBackupEnabled)
   const saveAutoBackupEnabled = useAppStore((s) => s.saveAutoBackupEnabled)
+  const backupKeepCount = useAppStore((s) => s.backupKeepCount)
+  const saveBackupKeepCount = useAppStore((s) => s.saveBackupKeepCount)
   const loadNetworkPolicyPreset = useAppStore((s) => s.loadNetworkPolicyPreset)
   const highlightNetworkPreset = useAppStore((s) => s.highlightNetworkPreset)
   const setHighlightNetworkPreset = useAppStore((s) => s.setHighlightNetworkPreset)
@@ -48,6 +50,7 @@ export function SettingsScreen({ section }: { section: SettingsTab }) {
 
   const [autoBackup, setAutoBackup] = useState(true)
   const [backupInterval, setBackupInterval] = useState<number>(15)
+  const [keepCount, setKeepCount] = useState<number>(10)
   const [savingBackups, setSavingBackups] = useState(false)
   const [backupsError, setBackupsError] = useState<string | null>(null)
 
@@ -106,6 +109,10 @@ export function SettingsScreen({ section }: { section: SettingsTab }) {
   useEffect(() => {
     setBackupInterval(backupIntervalMinutes)
   }, [backupIntervalMinutes])
+
+  useEffect(() => {
+    setKeepCount(backupKeepCount)
+  }, [backupKeepCount])
 
   useEffect(() => {
     setAutoBackup(autoBackupEnabled)
@@ -232,7 +239,8 @@ export function SettingsScreen({ section }: { section: SettingsTab }) {
     setGeneralError(null)
   }
 
-  const backupsDirty = autoBackup !== autoBackupEnabled || backupInterval !== backupIntervalMinutes
+  const backupsDirty =
+    autoBackup !== autoBackupEnabled || backupInterval !== backupIntervalMinutes || keepCount !== backupKeepCount
 
   async function saveBackups() {
     setSavingBackups(true)
@@ -240,6 +248,7 @@ export function SettingsScreen({ section }: { section: SettingsTab }) {
     try {
       if (autoBackup !== autoBackupEnabled) await saveAutoBackupEnabled(autoBackup)
       if (backupInterval !== backupIntervalMinutes) await saveBackupIntervalMinutes(backupInterval)
+      if (keepCount !== backupKeepCount) await saveBackupKeepCount(keepCount)
     } catch (e) {
       setBackupsError(String(e))
     } finally {
@@ -250,6 +259,7 @@ export function SettingsScreen({ section }: { section: SettingsTab }) {
   function resetBackups() {
     setAutoBackup(autoBackupEnabled)
     setBackupInterval(backupIntervalMinutes)
+    setKeepCount(backupKeepCount)
     setBackupsError(null)
   }
 
@@ -476,6 +486,8 @@ export function SettingsScreen({ section }: { section: SettingsTab }) {
             setAutoBackup={setAutoBackup}
             backupInterval={backupInterval}
             setBackupInterval={setBackupInterval}
+            keepCount={keepCount}
+            setKeepCount={setKeepCount}
           />
         )}
 

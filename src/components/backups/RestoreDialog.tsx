@@ -94,7 +94,8 @@ export function RestoreDialog({
         // notify() depends on OS notification permission being granted —
         // don't let a denied/unset permission make a failure invisible.
         console.error('restore_backup failed:', e)
-        notify('Restore failed', String(e))
+        const message = String(e)
+        notify(message.startsWith('restore cancelled') ? 'Restore cancelled' : 'Restore failed', message)
       })
       .finally(() => {
         useAppStore.getState().loadActiveOperations()

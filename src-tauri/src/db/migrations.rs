@@ -369,6 +369,22 @@ pub fn migrations() -> Migrations<'static> {
     -- one agent — never both.
     ALTER TABLE sandbox_backups ADD COLUMN has_codex INTEGER NOT NULL DEFAULT 0;
     ",
+  ), M::up(
+    "
+    -- Size computed once at backup time; NULL for rows made before this column.
+    ALTER TABLE sandbox_backups ADD COLUMN size_bytes INTEGER;
+    ",
+  ), M::up(
+    "
+    -- Per-sandbox scheduled backup control. NULL interval = use the global one.
+    ALTER TABLE sandboxes ADD COLUMN backup_enabled INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE sandboxes ADD COLUMN backup_interval_minutes INTEGER;
+    ",
+  ), M::up(
+    "
+    -- JSON array of problems found while the backup was made.
+    ALTER TABLE sandbox_backups ADD COLUMN warnings TEXT NOT NULL DEFAULT '[]';
+    ",
   )])
 }
 
