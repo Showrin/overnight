@@ -32,6 +32,7 @@ interface AppStore {
   settings: AppSettings | null
   platform: string | null
   defaultTerminalHost: string
+  imagePasteEnabled: boolean
   layoutExpanded: boolean
   defaultAgent: string
   networkPolicyPreset: string | null
@@ -55,6 +56,8 @@ interface AppStore {
   loadPlatform: () => Promise<void>
   loadDefaultTerminalHost: () => Promise<void>
   saveDefaultTerminalHost: (terminalHost: string) => Promise<void>
+  loadImagePasteEnabled: () => Promise<void>
+  saveImagePasteEnabled: (enabled: boolean) => Promise<void>
   loadLayoutExpanded: () => Promise<void>
   saveLayoutExpanded: (expanded: boolean) => Promise<void>
   loadDefaultAgent: () => Promise<void>
@@ -87,6 +90,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   settings: null,
   platform: null,
   defaultTerminalHost: 'cmd',
+  imagePasteEnabled: false,
   layoutExpanded: false,
   defaultAgent: 'claude',
   networkPolicyPreset: null,
@@ -150,6 +154,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
   async saveDefaultTerminalHost(terminalHost) {
     await invoke('save_default_terminal_host', { terminalHost })
     set({ defaultTerminalHost: terminalHost })
+  },
+
+  async loadImagePasteEnabled() {
+    const enabled = await invoke<boolean>('get_image_paste_enabled')
+    set({ imagePasteEnabled: enabled })
+  },
+
+  async saveImagePasteEnabled(enabled) {
+    await invoke('save_image_paste_enabled', { enabled })
+    set({ imagePasteEnabled: enabled })
   },
 
   async loadLayoutExpanded() {
@@ -291,6 +305,7 @@ export function initAppStore() {
   useAppStore.getState().loadSettings()
   useAppStore.getState().loadPlatform()
   useAppStore.getState().loadDefaultTerminalHost()
+  useAppStore.getState().loadImagePasteEnabled()
   useAppStore.getState().loadLayoutExpanded()
   useAppStore.getState().loadDefaultAgent()
   useAppStore.getState().loadNetworkPolicyPreset()

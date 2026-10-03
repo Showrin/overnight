@@ -782,6 +782,25 @@ pub fn save_default_terminal_host(pool: State<DbPool>, terminal_host: String) ->
   settings::set(&conn, SANDBOX_TERMINAL_HOST_KEY, &terminal_host).map_err(|e| e.to_string())
 }
 
+const IMAGE_PASTE_KEY: &str = "image_paste_enabled";
+
+#[tauri::command]
+pub fn get_image_paste_enabled(pool: State<DbPool>) -> std::result::Result<bool, String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  Ok(settings::get(&conn, IMAGE_PASTE_KEY).map_err(|e| e.to_string())?.as_deref() == Some("true"))
+}
+
+#[tauri::command]
+pub async fn save_image_paste_enabled(
+  app: AppHandle,
+  pool: State<'_, DbPool>,
+  enabled: bool,
+) -> std::result::Result<(), String> {
+  crate::sbx::set_image_paste(&app, enabled).await.map_err(|e| e.to_string())?;
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  settings::set(&conn, IMAGE_PASTE_KEY, if enabled { "true" } else { "false" }).map_err(|e| e.to_string())
+}
+
 const LAYOUT_EXPANDED_KEY: &str = "layout_expanded";
 
 #[tauri::command]
@@ -1639,7 +1658,7 @@ async fn provision_sandbox(
   // Independent once the sandbox is ready: git identity, the
   // permission-mode alias, env vars, secrets, port publishing/lookup, and
   // (best-effort) syncing this agent's host auth file in. Run concurrently.
-  let (permission_result, host_port_result, env_result, secret_result, (), ()) = tokio::join!(
+  let (permission_result, host_port_result, env_result, secret_result, (), (), ()) = tokio::join!(
     crate::sbx::set_default_permission_mode(app, &name, agent_kit.cli_token, agent_kit.permission_flag, &sandbox.permission_mode),
     async {
       crate::sbx::publish_port(app, &name, SANDBOX_PORT).await?;
@@ -1659,6 +1678,7 @@ async fn provision_sandbox(
     },
     sync_git_identity(app, &name),
     sync_host_agent_auth(app, &name, agent_kit),
+    sync_paste_keybinding(app, &name, agent_kit),
   );
   permission_result.map_err(|e| e.to_string())?;
   let host_port = host_port_result.map_err(|e| e.to_string())?;
@@ -1712,6 +1732,16 @@ async fn sync_host_agent_auth(app: &AppHandle, name: &str, kit: &crate::agents::
   let remote_path = host_auth_remote_path(kit.home_dir, relative);
   if let Err(e) = crate::sbx::cp_to_sandbox(app, name, &host_path.to_string_lossy(), &remote_path, None).await {
     log::warn!("sync_host_agent_auth: failed to copy {} into {name}: {e}", host_path.display());
+  }
+}
+
+/// Best-effort, Claude only: see `sbx::install_paste_keybinding`.
+async fn sync_paste_keybinding(app: &AppHandle, name: &str, kit: &crate::agents::AgentKit) {
+  if kit.id != crate::agents::CLAUDE.id {
+    return;
+  }
+  if let Err(e) = crate::sbx::install_paste_keybinding(app, name).await {
+    log::warn!("sync_paste_keybinding: failed for {name}: {e}");
   }
 }
 
@@ -2108,6 +2138,10 @@ pub async fn start_sandbox(app: AppHandle, pool: State<'_, DbPool>, id: String) 
       }
     }
     Err(e) => log::warn!("start_sandbox: failed to compute merged env vars for {name}: {e}"),
+  }
+
+  if let Some(kit) = crate::agents::get(&sandbox.agent) {
+    sync_paste_keybinding(&app, &name, kit).await;
   }
 
   let conn = pool.get().map_err(|e| e.to_string())?;

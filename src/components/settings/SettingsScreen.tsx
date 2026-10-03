@@ -26,6 +26,8 @@ export function SettingsScreen({ section }: { section: SettingsTab }) {
   const saveSkillFolders = useAppStore((s) => s.saveSkillFolders)
   const defaultTerminalHost = useAppStore((s) => s.defaultTerminalHost)
   const saveDefaultTerminalHost = useAppStore((s) => s.saveDefaultTerminalHost)
+  const imagePasteEnabled = useAppStore((s) => s.imagePasteEnabled)
+  const saveImagePasteEnabled = useAppStore((s) => s.saveImagePasteEnabled)
   const defaultAgent = useAppStore((s) => s.defaultAgent)
   const saveDefaultAgent = useAppStore((s) => s.saveDefaultAgent)
   const backupIntervalMinutes = useAppStore((s) => s.backupIntervalMinutes)
@@ -44,6 +46,7 @@ export function SettingsScreen({ section }: { section: SettingsTab }) {
   const [permissionMode, setPermissionMode] = useState<string>('never')
   const [localDefaultAgent, setLocalDefaultAgent] = useState<string>('claude')
   const [terminalHost, setTerminalHost] = useState<string>('cmd')
+  const [imagePaste, setImagePaste] = useState(false)
   const [skillFolders, setSkillFolders] = useState<string[]>([])
   const [savingGeneral, setSavingGeneral] = useState(false)
   const [generalError, setGeneralError] = useState<string | null>(null)
@@ -101,6 +104,10 @@ export function SettingsScreen({ section }: { section: SettingsTab }) {
   useEffect(() => {
     setTerminalHost(defaultTerminalHost)
   }, [defaultTerminalHost])
+
+  useEffect(() => {
+    setImagePaste(imagePasteEnabled)
+  }, [imagePasteEnabled])
 
   useEffect(() => {
     setLocalDefaultAgent(defaultAgent)
@@ -209,6 +216,7 @@ export function SettingsScreen({ section }: { section: SettingsTab }) {
     permissionMode !== savedPermissionMode ||
     localDefaultAgent !== defaultAgent ||
     terminalHost !== defaultTerminalHost ||
+    imagePaste !== imagePasteEnabled ||
     !sameFolders(skillFolders, savedSkillFolders)
 
   async function saveGeneral() {
@@ -224,6 +232,7 @@ export function SettingsScreen({ section }: { section: SettingsTab }) {
       if (localDefaultAgent !== defaultAgent) await saveDefaultAgent(localDefaultAgent)
       if (!sameFolders(skillFolders, savedSkillFolders)) await saveSkillFolders(skillFolders)
       if (terminalHost !== defaultTerminalHost) await saveDefaultTerminalHost(terminalHost)
+      if (imagePaste !== imagePasteEnabled) await saveImagePasteEnabled(imagePaste)
     } catch (e) {
       setGeneralError(String(e))
     } finally {
@@ -235,6 +244,7 @@ export function SettingsScreen({ section }: { section: SettingsTab }) {
     setPermissionMode(savedPermissionMode)
     setLocalDefaultAgent(defaultAgent)
     setTerminalHost(defaultTerminalHost)
+    setImagePaste(imagePasteEnabled)
     setSkillFolders(savedSkillFolders)
     setGeneralError(null)
   }
@@ -474,6 +484,8 @@ export function SettingsScreen({ section }: { section: SettingsTab }) {
             setPermissionMode={setPermissionMode}
             terminalHost={terminalHost}
             setTerminalHost={setTerminalHost}
+            imagePaste={imagePaste}
+            setImagePaste={setImagePaste}
             skillFolders={skillFolders}
             onAddSkillFolders={addSkillFolders}
             onRemoveSkillFolder={removeSkillFolder}

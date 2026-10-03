@@ -3,6 +3,7 @@ import { Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import { AGENTS, AGENT_LABELS, type Agent } from '@/lib/agentHost'
 import { DEFAULT_PERMISSION_MODE, PERMISSION_MODES } from '@/lib/permissionModes'
 import { TERMINAL_HOSTS, TERMINAL_HOST_LABELS } from '@/lib/terminalHost'
@@ -22,6 +23,8 @@ interface GeneralTabProps {
   setPermissionMode: (mode: string) => void
   terminalHost: string
   setTerminalHost: (host: string) => void
+  imagePaste: boolean
+  setImagePaste: (enabled: boolean) => void
   skillFolders: string[]
   onAddSkillFolders: () => void
   onRemoveSkillFolder: (path: string) => void
@@ -34,6 +37,8 @@ export function GeneralTab({
   setPermissionMode,
   terminalHost,
   setTerminalHost,
+  imagePaste,
+  setImagePaste,
   skillFolders,
   onAddSkillFolders,
   onRemoveSkillFolder,
@@ -106,6 +111,13 @@ export function GeneralTab({
             ))}
           </SelectContent>
         </Select>
+      </SettingsRow>
+
+      <SettingsRow
+        label="Image paste"
+        description="Lets sandboxes read an image from your clipboard when you paste (Alt+V in Claude). Images only. Applies to all sandboxes."
+      >
+        <Switch checked={imagePaste} onCheckedChange={setImagePaste} />
       </SettingsRow>
 
       <SettingsRow label="Skill folders" description="Folders scanned for Claude skills." divider={false}>

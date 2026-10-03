@@ -777,6 +777,41 @@ fn git_config_exec_args(name: &str, key: &str, value: &str) -> Vec<String> {
   ["exec", "-d", name, "git", "config", "--global", key, value].map(String::from).to_vec()
 }
 
+/// `sbx settings set clipboard.imagePaste <bool>`: host-wide opt-in that
+/// lets sandboxes read clipboard images (image/png only) on paste.
+pub async fn set_image_paste<R: Runtime>(app: &AppHandle<R>, enabled: bool) -> Result<()> {
+  run(app, "Set image paste", &image_paste_args(enabled)).await?;
+  Ok(())
+}
+
+fn image_paste_args(enabled: bool) -> Vec<&'static str> {
+  vec!["settings", "set", "clipboard.imagePaste", if enabled { "true" } else { "false" }]
+}
+
+const CLAUDE_KEYBINDINGS_PATH: &str = "/home/agent/.claude/keybindings.json";
+
+// Windows Terminal / VS Code eat Ctrl+V when the clipboard holds only an
+// image, so Linux Claude never sees it. Alt+V passes through.
+const PASTE_KEYBINDING_FILTER: &str = r#".bindings |= (if any(.[]?; .context == "Chat" and ((.bindings // {}) | has("alt+v"))) then . else (. // []) + [{"context":"Chat","bindings":{"alt+v":"chat:imagePaste"}}] end)"#;
+
+fn build_paste_keybinding_script(file_path: &str) -> String {
+  let f = shell_quote(file_path);
+  format!(
+    "mkdir -p \"$(dirname {f})\"\n\
+     [ -s {f} ] || printf '%s\\n' '{{\"bindings\":[]}}' > {f}\n\
+     out=$(jq {filter} {f}) && printf '%s\\n' \"$out\" > {f}",
+    filter = shell_quote(PASTE_KEYBINDING_FILTER),
+  )
+}
+
+/// Merges an `alt+v -> chat:imagePaste` binding into Claude's
+/// keybindings.json inside the sandbox. Idempotent.
+pub async fn install_paste_keybinding<R: Runtime>(app: &AppHandle<R>, name: &str) -> Result<()> {
+  let script = build_paste_keybinding_script(CLAUDE_KEYBINDINGS_PATH);
+  run(app, "Install image paste keybinding", &["exec", name, "bash", "-c", &script]).await?;
+  Ok(())
+}
+
 const ENV_BLOCK_START: &str = "# overnight-env-start";
 const ENV_BLOCK_END: &str = "# overnight-env-end";
 
@@ -2082,6 +2117,12 @@ mod tests {
   }
 
   #[test]
+  fn builds_image_paste_args() {
+    assert_eq!(image_paste_args(true), vec!["settings", "set", "clipboard.imagePaste", "true"]);
+    assert_eq!(image_paste_args(false), vec!["settings", "set", "clipboard.imagePaste", "false"]);
+  }
+
+  #[test]
   fn restore_directory_script_quotes_both_paths() {
     let script = restore_directory_script("/tmp/overnight-restore-abc", "/home/agent/.claude", &[]);
     assert!(script.contains("src='/tmp/overnight-restore-abc'"));
@@ -2543,6 +2584,82 @@ mod env_persist_tests {
   fn redact_value_arg_leaves_a_reference_or_command_source_untouched() {
     let args = vec!["secret".to_string(), "set".to_string(), "anthropic".to_string(), "--ref".to_string(), "op://Work/x".to_string()];
     assert_eq!(redact_value_arg(&args), args);
+  }
+}
+
+#[cfg(test)]
+mod paste_keybinding_tests {
+  use super::*;
+  use std::process::Command;
+
+  fn temp_keybindings_file() -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("overnight-kb-test-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir.join("keybindings.json")
+  }
+
+  fn jq_available() -> bool {
+    Command::new("jq").arg("--version").output().is_ok()
+  }
+
+  fn run_script(path: &std::path::Path) -> serde_json::Value {
+    let script = build_paste_keybinding_script(path.to_str().unwrap());
+    assert!(Command::new("bash").arg("-c").arg(&script).status().unwrap().success());
+    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+  }
+
+  fn alt_v_entries(json: &serde_json::Value) -> Vec<serde_json::Value> {
+    json["bindings"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .filter(|b| b["context"] == "Chat" && b["bindings"].get("alt+v").is_some())
+      .map(|b| b["bindings"]["alt+v"].clone())
+      .collect()
+  }
+
+  #[test]
+  fn creates_missing_file() {
+    if !jq_available() {
+      return;
+    }
+    let path = temp_keybindings_file();
+    assert_eq!(alt_v_entries(&run_script(&path)), vec![serde_json::json!("chat:imagePaste")]);
+  }
+
+  #[test]
+  fn keeps_existing_bindings_and_is_idempotent() {
+    if !jq_available() {
+      return;
+    }
+    let path = temp_keybindings_file();
+    std::fs::write(&path, r#"{"bindings":[{"context":"Global","bindings":{"ctrl+t":"app:toggleTodos"}}]}"#).unwrap();
+    run_script(&path);
+    let json = run_script(&path);
+    assert_eq!(json["bindings"][0]["bindings"]["ctrl+t"], "app:toggleTodos");
+    assert_eq!(alt_v_entries(&json).len(), 1);
+  }
+
+  #[test]
+  fn keeps_user_alt_v() {
+    if !jq_available() {
+      return;
+    }
+    let path = temp_keybindings_file();
+    std::fs::write(&path, r#"{"bindings":[{"context":"Chat","bindings":{"alt+v":"chat:stash"}}]}"#).unwrap();
+    assert_eq!(alt_v_entries(&run_script(&path)), vec![serde_json::json!("chat:stash")]);
+  }
+
+  #[test]
+  fn leaves_invalid_json_untouched() {
+    if !jq_available() {
+      return;
+    }
+    let path = temp_keybindings_file();
+    std::fs::write(&path, "not json").unwrap();
+    let script = build_paste_keybinding_script(path.to_str().unwrap());
+    let _ = Command::new("bash").arg("-c").arg(&script).status();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "not json");
   }
 }
 
