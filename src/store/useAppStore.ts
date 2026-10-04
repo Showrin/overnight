@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import type { Project } from '@/components/projects/types'
 import type { BranchSyncOutcome, HostMetric, Sandbox } from '@/components/sandboxes/types'
 import type { ActiveBackup, ActiveOperation } from '@/components/backups/types'
+import { starterSpec, type Kit } from '@/lib/kits'
 import type { NetworkPolicySettings } from '@/lib/networkPolicy'
 import type { SettingsSection } from '@/components/settings/sections'
 
@@ -28,6 +29,7 @@ export interface GitSyncToastState {
 
 interface AppStore {
   projects: Project[]
+  kits: Kit[]
   sandboxes: Sandbox[]
   settings: AppSettings | null
   platform: string | null
@@ -49,6 +51,11 @@ interface AppStore {
   gitSyncToast: GitSyncToastState | null
 
   loadProjects: () => Promise<void>
+  loadKits: () => Promise<void>
+  createKit: (name: string) => Promise<Kit>
+  updateKit: (id: string, name: string, spec: string) => Promise<void>
+  deleteKit: (id: string) => Promise<void>
+  setKitScope: (id: string, global: boolean, projectIds: string[]) => Promise<void>
   loadSandboxes: () => Promise<void>
   loadSettings: () => Promise<void>
   saveSettings: (agent: string, defaultPermissionMode: string) => Promise<void>
@@ -86,6 +93,7 @@ interface AppStore {
 
 export const useAppStore = create<AppStore>((set, get) => ({
   projects: [],
+  kits: [],
   sandboxes: [],
   settings: null,
   platform: null,
@@ -109,6 +117,34 @@ export const useAppStore = create<AppStore>((set, get) => ({
   async loadProjects() {
     const projects = await invoke<Project[]>('list_projects')
     set({ projects })
+  },
+
+  async loadKits() {
+    const kits = await invoke<Kit[]>('list_kits')
+    set({ kits })
+  },
+
+  async createKit(name) {
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'kit'
+    const kit = await invoke<Kit>('create_kit', { name, spec: starterSpec(slug) })
+    set((state) => ({ kits: [...state.kits, kit] }))
+    return kit
+  },
+
+  async updateKit(id, name, spec) {
+    const kit = await invoke<Kit>('update_kit', { id, name, spec })
+    set((state) => ({ kits: state.kits.map((k) => (k.id === id ? kit : k)) }))
+  },
+
+  async deleteKit(id) {
+    await invoke('delete_kit', { id })
+    set((state) => ({ kits: state.kits.filter((k) => k.id !== id) }))
+    await get().loadProjects()
+  },
+
+  async setKitScope(id, global, projectIds) {
+    await invoke('set_kit_scope', { id, global, projectIds })
+    await Promise.all([get().loadKits(), get().loadProjects()])
   },
 
   async loadSandboxes() {
@@ -301,6 +337,7 @@ export function initAppStore() {
   if (initialized) return
   initialized = true
   useAppStore.getState().loadProjects()
+  useAppStore.getState().loadKits()
   useAppStore.getState().loadSandboxes()
   useAppStore.getState().loadSettings()
   useAppStore.getState().loadPlatform()

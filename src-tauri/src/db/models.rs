@@ -278,6 +278,18 @@ pub struct Project {
   pub extra_clone_paths: Vec<String>,
   pub env_vars: Vec<EnvVar>,
   pub secrets: Vec<Secret>,
+  pub kit_id: Option<String>,
+  pub created_at: i64,
+  pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Kit {
+  pub id: String,
+  pub name: String,
+  pub spec: String,
+  pub is_global: bool,
+  pub project_ids: Vec<String>,
   pub created_at: i64,
   pub updated_at: i64,
 }

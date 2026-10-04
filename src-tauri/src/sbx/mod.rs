@@ -696,7 +696,7 @@ pub async fn health_check<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
   Ok(())
 }
 
-/// `sbx create --name <name> [--clone] <agent> <workspace>` — creates a
+/// `sbx create --name <name> [--clone] [--kit <dir>] <agent> <workspace>` — creates a
 /// sandbox in the background without attaching. `workspace` is the host
 /// repo path; in clone mode `sbx` clones it into an isolated copy inside
 /// the sandbox VM itself rather than us managing a host-side clone folder.
@@ -704,15 +704,31 @@ pub async fn health_check<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
 /// If this machine's global network policy has never been set, this
 /// returns `Error::PolicyNotInitialized` — callers should prompt for a
 /// preset and call `policy_init` before retrying.
-pub async fn create<R: Runtime>(app: &AppHandle<R>, name: &str, clone: bool, workspace: &str, agent_token: &str) -> Result<()> {
-  let mut args = vec!["create", "--name", name];
-  if clone {
-    args.push("--clone");
-  }
-  args.push(agent_token);
-  args.push(workspace);
-  run(app, "Create sandbox", &args).await?;
+pub async fn create<R: Runtime>(
+  app: &AppHandle<R>,
+  name: &str,
+  clone: bool,
+  workspace: &str,
+  agent_token: &str,
+  kit_dir: Option<&str>,
+) -> Result<()> {
+  let args = create_args(name, clone, kit_dir, agent_token, workspace);
+  run(app, "Create sandbox", &args.iter().map(String::as_str).collect::<Vec<_>>()).await?;
   Ok(())
+}
+
+fn create_args(name: &str, clone: bool, kit_dir: Option<&str>, agent_token: &str, workspace: &str) -> Vec<String> {
+  let mut args = vec!["create".to_string(), "--name".to_string(), name.to_string()];
+  if clone {
+    args.push("--clone".to_string());
+  }
+  if let Some(dir) = kit_dir {
+    args.push("--kit".to_string());
+    args.push(dir.to_string());
+  }
+  args.push(agent_token.to_string());
+  args.push(workspace.to_string());
+  args
 }
 
 /// Makes a bare `<cli_token>` typed inside a manually-opened terminal
@@ -1837,6 +1853,22 @@ pub async fn sample_resource_usage<R: Runtime>(
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn create_args_without_kit() {
+    assert_eq!(
+      create_args("n", false, None, "claude", "/repo"),
+      ["create", "--name", "n", "claude", "/repo"].map(String::from).to_vec()
+    );
+  }
+
+  #[test]
+  fn create_args_with_clone_and_kit() {
+    assert_eq!(
+      create_args("n", true, Some("/k"), "claude", "/repo"),
+      ["create", "--name", "n", "--clone", "--kit", "/k", "claude", "/repo"].map(String::from).to_vec()
+    );
+  }
 
   #[test]
   fn reports_free_memory() {

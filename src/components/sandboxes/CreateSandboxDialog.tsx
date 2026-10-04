@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { AGENTS, AGENT_LABELS, type Agent } from '@/lib/agentHost'
+import { defaultKitId } from '@/lib/kits'
 import type { NetworkRuleDecision } from '@/lib/networkPolicy'
 import { SANDBOX_NETWORK_PRESET_OVERRIDE_LABELS, SANDBOX_NETWORK_PRESET_OVERRIDES } from '@/lib/networkPolicy'
 import { notify } from '@/lib/notify'
@@ -16,6 +17,7 @@ import type { Sandbox, SandboxMode } from './types'
 
 const DEFAULT_PERMISSION_MODE = '__settings_default__'
 const DEFAULT_NETWORK_OVERRIDE = '__global_default__'
+const NO_KIT = '__no_kit__'
 
 function ErrorDetails({ message }: { message: string }) {
   const [copied, setCopied] = useState(false)
@@ -59,7 +61,12 @@ export function CreateSandboxDialog({
   const sandboxes = useAppStore((s) => s.sandboxes)
   const loadNetworkPolicyPreset = useAppStore((s) => s.loadNetworkPolicyPreset)
   const defaultAgent = useAppStore((s) => s.defaultAgent)
+  const kits = useAppStore((s) => s.kits)
   const [projectId, setProjectId] = useState(defaultProjectId ?? projects[0]?.id ?? '')
+  const [kitId, setKitId] = useState<string | null>(() =>
+    defaultKitId(kits, projects.find((p) => p.id === (defaultProjectId ?? projects[0]?.id)))
+  )
+  const projectDefaultKitId = defaultKitId(kits, projects.find((p) => p.id === projectId))
   const [name, setName] = useState('')
   const [agent, setAgent] = useState(defaultAgent)
   const [permissionMode, setPermissionMode] = useState('')
@@ -121,6 +128,7 @@ export function CreateSandboxDialog({
         name: name.trim() || null,
         permissionMode: permissionMode || null,
         agent,
+        kitId,
       })
       notify('Sandbox started', 'Your sandbox is up and running.', sandbox.id)
       try {
@@ -165,7 +173,13 @@ export function CreateSandboxDialog({
       <CardContent className="flex flex-col gap-3">
         <div className="flex flex-col gap-1">
           <Label htmlFor="sandbox-project">Project</Label>
-          <Select value={projectId} onValueChange={setProjectId}>
+          <Select
+            value={projectId}
+            onValueChange={(value) => {
+              setProjectId(value)
+              setKitId(defaultKitId(kits, projects.find((p) => p.id === value)))
+            }}
+          >
             <SelectTrigger id="sandbox-project">
               <SelectValue placeholder="Select a project" />
             </SelectTrigger>
@@ -212,6 +226,24 @@ export function CreateSandboxDialog({
               ))}
             </SelectContent>
           </Select>
+        </div>
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="sandbox-kit">Kit</Label>
+          <Select value={kitId ?? NO_KIT} onValueChange={(value) => setKitId(value === NO_KIT ? null : value)}>
+            <SelectTrigger id="sandbox-kit">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NO_KIT}>No kit</SelectItem>
+              {kits.map((k) => (
+                <SelectItem key={k.id} value={k.id}>
+                  {k.name}
+                  {k.id === projectDefaultKitId ? ' (default)' : ''}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">Kit install commands run once while the sandbox is created.</p>
         </div>
         <div className="flex flex-col gap-1">
           <Label htmlFor="sandbox-permission-mode">Permission mode</Label>

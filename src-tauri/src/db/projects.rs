@@ -16,6 +16,7 @@ fn row_to_project(row: &rusqlite::Row) -> rusqlite::Result<Project> {
     extra_clone_paths: serde_json::from_str(&extra_clone_paths_raw).unwrap_or_default(),
     env_vars: serde_json::from_str(&env_vars_raw).unwrap_or_default(),
     secrets: serde_json::from_str(&secrets_raw).unwrap_or_default(),
+    kit_id: row.get("kit_id")?,
     created_at: row.get("created_at")?,
     updated_at: row.get("updated_at")?,
   })

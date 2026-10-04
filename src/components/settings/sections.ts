@@ -1,6 +1,7 @@
 import {
   Activity,
   Archive,
+  Boxes,
   KeyRound,
   Network,
   Plug,
@@ -13,7 +14,7 @@ import {
 export const SHOW_JIRA_SETTINGS = false
 export const SHOW_PERFORMANCE_MONITOR = false
 
-export type SettingsTab = 'general' | 'backups' | 'network' | 'credentials' | 'integrations'
+export type SettingsTab = 'general' | 'backups' | 'network' | 'credentials' | 'kits' | 'integrations'
 export type SettingsSection = SettingsTab | 'performance-monitor' | 'daemon-logs' | 'command-logs'
 
 export interface SectionItem {
@@ -30,6 +31,7 @@ export const SECTION_GROUPS: { label: string; items: SectionItem[] }[] = [
       { id: 'backups', label: 'Backups', icon: Archive },
       { id: 'network', label: 'Network', icon: Network },
       { id: 'credentials', label: 'Credentials', icon: KeyRound },
+      { id: 'kits', label: 'Kits', icon: Boxes },
       ...(SHOW_JIRA_SETTINGS ? [{ id: 'integrations' as const, label: 'Integrations', icon: Plug }] : []),
     ],
   },
@@ -45,7 +47,7 @@ export const SECTION_GROUPS: { label: string; items: SectionItem[] }[] = [
   },
 ]
 
-const SETTINGS_TABS: readonly string[] = ['general', 'backups', 'network', 'credentials', 'integrations']
+const SETTINGS_TABS: readonly string[] = ['general', 'backups', 'network', 'credentials', 'kits', 'integrations']
 
 export function isSettingsTab(section: SettingsSection): section is SettingsTab {
   return SETTINGS_TABS.includes(section)

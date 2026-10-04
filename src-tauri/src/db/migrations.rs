@@ -385,6 +385,18 @@ pub fn migrations() -> Migrations<'static> {
     -- JSON array of problems found while the backup was made.
     ALTER TABLE sandbox_backups ADD COLUMN warnings TEXT NOT NULL DEFAULT '[]';
     ",
+  ), M::up(
+    "
+    CREATE TABLE kits (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      spec TEXT NOT NULL,
+      is_global INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    ALTER TABLE projects ADD COLUMN kit_id TEXT REFERENCES kits(id) ON DELETE SET NULL;
+    ",
   )])
 }
 
@@ -410,6 +422,6 @@ mod tests {
         |row| row.get(0),
       )
       .unwrap();
-    assert_eq!(table_count, 12);
+    assert_eq!(table_count, 13);
   }
 }

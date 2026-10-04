@@ -6,11 +6,11 @@ use tauri::{AppHandle, Manager, State};
 use crate::daemon_log;
 use crate::db::error::{Error, Result};
 use crate::db::models::{
-  CommandLogEntry, ContainerMetric, EnvVar, HostMetric, JiraIssue, Project, Sandbox, SandboxBackup, Secret, SecretSource,
+  CommandLogEntry, ContainerMetric, EnvVar, HostMetric, JiraIssue, Kit, Project, Sandbox, SandboxBackup, Secret, SecretSource,
   SecretTarget, Session, Task,
 };
 use crate::db::{
-  backups, command_log, container_metrics, host_metrics, jira_issues, metrics, projects, sandboxes, sessions,
+  backups, command_log, container_metrics, host_metrics, jira_issues, kits, metrics, projects, sandboxes, sessions,
   settings, tasks, DbPool,
 };
 use crate::jira::{self, JiraClient};
@@ -276,6 +276,36 @@ pub async fn save_global_env_vars(app: AppHandle, pool: State<'_, DbPool>, vars:
   };
   push_env_vars_to_running_sandboxes(&app, &pool, &all_sandboxes).await;
   Ok(())
+}
+
+#[tauri::command]
+pub fn list_kits(pool: State<DbPool>) -> Result<Vec<Kit>> {
+  let conn = pool.get()?;
+  kits::list(&conn)
+}
+
+#[tauri::command]
+pub fn create_kit(pool: State<DbPool>, name: String, spec: String) -> Result<Kit> {
+  let conn = pool.get()?;
+  kits::create(&conn, &name, &spec)
+}
+
+#[tauri::command]
+pub fn update_kit(pool: State<DbPool>, id: String, name: String, spec: String) -> Result<Kit> {
+  let conn = pool.get()?;
+  kits::update(&conn, &id, &name, &spec)
+}
+
+#[tauri::command]
+pub fn delete_kit(pool: State<DbPool>, id: String) -> Result<()> {
+  let conn = pool.get()?;
+  kits::delete(&conn, &id)
+}
+
+#[tauri::command]
+pub fn set_kit_scope(pool: State<DbPool>, id: String, global: bool, project_ids: Vec<String>) -> Result<Kit> {
+  let conn = pool.get()?;
+  kits::set_scope(&conn, &id, global, &project_ids)
 }
 
 #[tauri::command]
@@ -1540,6 +1570,7 @@ mod adopt_orphan_sandboxes_tests {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn create_sandbox(
   app: AppHandle,
   pool: State<'_, DbPool>,
@@ -1548,6 +1579,7 @@ pub async fn create_sandbox(
   name: Option<String>,
   permission_mode: Option<String>,
   agent: Option<String>,
+  kit_id: Option<String>,
 ) -> std::result::Result<Sandbox, String> {
   if mode != "mount" && mode != "clone" {
     return Err(format!("invalid sandbox mode: {mode} (expected \"mount\" or \"clone\")"));
@@ -1604,6 +1636,18 @@ pub async fn create_sandbox(
 
   check_free_memory()?;
 
+  let kit_dir = match kit_id.filter(|k| !k.trim().is_empty()) {
+    Some(id) => {
+      let kit = {
+        let conn = pool.get().map_err(|e| e.to_string())?;
+        kits::get(&conn, &id).map_err(|e| e.to_string())?
+      };
+      let base = app.path().app_data_dir().map_err(|e| e.to_string())?;
+      Some(write_kit_dir(&base, &kit).map_err(|e| format!("failed to write kit: {e}"))?)
+    }
+    None => None,
+  };
+
   // Snapshotted once, up front, the same way permission_mode/mode already
   // are — `None` on detached HEAD or a non-git repo_path, surfaced by the
   // Branch tab as "created before branch tracking was added" rather than a
@@ -1624,7 +1668,7 @@ pub async fn create_sandbox(
   // machine hanging on an unanswered interactive network-policy prompt —
   // mark the row "error" instead of leaving it stuck at "starting" forever
   // with no signal that it didn't work.
-  match provision_sandbox(&app, &pool, &project, &sandbox, &mode).await {
+  match provision_sandbox(&app, &pool, &project, &sandbox, &mode, kit_dir.as_deref()).await {
     Ok(result) => Ok(result),
     Err(e) => {
       if let Ok(conn) = pool.get() {
@@ -1641,12 +1685,15 @@ async fn provision_sandbox(
   project: &Project,
   sandbox: &Sandbox,
   mode: &str,
+  kit_dir: Option<&std::path::Path>,
 ) -> std::result::Result<Sandbox, String> {
   let agent_kit = crate::agents::get(&sandbox.agent).ok_or_else(|| format!("unknown agent: {}", sandbox.agent))?;
   let base_name = base_sbx_name(sandbox.name.as_deref(), &project.name, &sandbox.id);
   let clone = mode == "clone";
+  let kit_dir = kit_dir.map(|d| d.to_string_lossy().into_owned());
+  let kit_dir = kit_dir.as_deref();
   let name = resolve_unique_sbx_name(&base_name, |candidate| async move {
-    crate::sbx::create(app, &candidate, clone, &project.repo_path, agent_kit.cli_token).await.map_err(|e| e.to_string())
+    crate::sbx::create(app, &candidate, clone, &project.repo_path, agent_kit.cli_token, kit_dir).await.map_err(|e| e.to_string())
   })
   .await?;
   // `create` returning doesn't guarantee the VM is actually up for `exec`
@@ -1765,6 +1812,35 @@ fn host_home_dir() -> Option<String> {
   #[cfg(not(target_os = "windows"))]
   {
     std::env::var("HOME").ok()
+  }
+}
+
+fn write_kit_dir(base: &std::path::Path, kit: &Kit) -> std::io::Result<std::path::PathBuf> {
+  let dir = base.join("kits").join(&kit.id);
+  std::fs::create_dir_all(&dir)?;
+  std::fs::write(dir.join("spec.yaml"), &kit.spec)?;
+  Ok(dir)
+}
+
+#[cfg(test)]
+mod kit_dir_tests {
+  use super::*;
+
+  #[test]
+  fn write_kit_dir_writes_spec() {
+    let base = std::env::temp_dir().join(format!("overnight-kit-test-{}", uuid::Uuid::new_v4()));
+    let kit = Kit {
+      id: "k1".into(),
+      name: "n".into(),
+      spec: "kind: mixin".into(),
+      is_global: false,
+      project_ids: vec![],
+      created_at: 0,
+      updated_at: 0,
+    };
+    let dir = write_kit_dir(&base, &kit).unwrap();
+    assert_eq!(std::fs::read_to_string(dir.join("spec.yaml")).unwrap(), "kind: mixin");
+    std::fs::remove_dir_all(base).unwrap();
   }
 }
 

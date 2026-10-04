@@ -4,6 +4,7 @@ export interface Project {
   repo_path: string
   plans_path: string | null
   dev_server_port: number | null
+  kit_id: string | null
   created_at: number
   updated_at: number
 }

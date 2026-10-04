@@ -13,6 +13,7 @@ pub mod container_metrics;
 pub mod error;
 pub mod host_metrics;
 pub mod jira_issues;
+pub mod kits;
 pub mod metrics;
 pub mod migrations;
 pub mod models;
