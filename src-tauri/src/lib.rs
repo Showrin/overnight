@@ -1,5 +1,6 @@
 mod agents;
 mod backup;
+mod browser_tests;
 mod commands;
 mod daemon_log;
 mod db;
@@ -14,7 +15,7 @@ mod skills;
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
-use tauri::{Manager, WindowEvent};
+use tauri::{Emitter, Manager, WindowEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -169,6 +170,21 @@ pub fn run() {
       app.manage(std::sync::Mutex::new(backup::BackupState::default()));
       app.manage(std::sync::Mutex::new(restore::RestoreState::default()));
       tauri::async_runtime::spawn(backup::run_scheduler(app.handle().clone(), pool.clone()));
+      let hub = {
+        let app_handle = app.handle().clone();
+        browser_tests::Hub::new(pool.clone(), move |test| {
+          let _ = app_handle.emit(browser_tests::CHANGED_EVENT, test);
+        })
+      };
+      tauri::async_runtime::spawn({
+        let hub = hub.clone();
+        async move {
+          if let Err(e) = browser_tests::server::serve(hub).await {
+            log::error!("browser test server stopped: {e}");
+          }
+        }
+      });
+      app.manage(hub);
       app.manage(pool);
       app.manage(std::sync::Mutex::new(sbx::HostMonitor::new()));
       app.manage(std::sync::Mutex::new(sbx::SandboxMonitor::new()));
