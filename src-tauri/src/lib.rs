@@ -131,6 +131,7 @@ pub fn run() {
       commands::get_daemon_log_path,
       commands::save_daemon_log_path,
       commands::read_daemon_log,
+      commands::save_sandbox_chrome_settings,
       commands::list_browser_tests,
       commands::start_browser_test,
       commands::cancel_browser_test,

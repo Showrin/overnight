@@ -828,6 +828,43 @@ pub async fn install_paste_keybinding<R: Runtime>(app: &AppHandle<R>, name: &str
   Ok(())
 }
 
+/// A file `write_files` creates inside a sandbox.
+pub struct SandboxFile<'a> {
+  pub path: &'a str,
+  pub content: &'a str,
+  pub executable: bool,
+}
+
+fn build_write_files_script(files: &[SandboxFile]) -> String {
+  files
+    .iter()
+    .map(|file| {
+      let path = shell_quote(file.path);
+      let mut line = format!("mkdir -p \"$(dirname {path})\" && printf '%s' {} > {path}", shell_quote(file.content));
+      if file.executable {
+        line.push_str(&format!(" && chmod +x {path}"));
+      }
+      line
+    })
+    .collect::<Vec<_>>()
+    .join(" && ")
+}
+
+/// Writes (overwriting) each file inside the sandbox as the sandbox user.
+pub async fn write_files<R: Runtime>(app: &AppHandle<R>, name: &str, operation: &str, files: &[SandboxFile<'_>]) -> Result<()> {
+  let script = build_write_files_script(files);
+  run(app, operation, &["exec", name, "bash", "-c", &script]).await?;
+  Ok(())
+}
+
+/// `rm -rf`s each path inside the sandbox. Missing paths are fine.
+pub async fn remove_paths<R: Runtime>(app: &AppHandle<R>, name: &str, operation: &str, paths: &[&str]) -> Result<()> {
+  let quoted: Vec<String> = paths.iter().map(|p| shell_quote(p)).collect();
+  let script = format!("rm -rf {}", quoted.join(" "));
+  run(app, operation, &["exec", name, "bash", "-c", &script]).await?;
+  Ok(())
+}
+
 const ENV_BLOCK_START: &str = "# overnight-env-start";
 const ENV_BLOCK_END: &str = "# overnight-env-end";
 
@@ -2697,3 +2734,26 @@ mod paste_keybinding_tests {
 
 
 
+
+// Unix only: on Windows, `bash` resolves to WSL's bash.exe, which re-parses
+// its command line and mangles the quoting this test exists to check.
+#[cfg(all(test, unix))]
+mod write_files_tests {
+  use super::*;
+  use std::process::Command;
+
+  #[test]
+  fn writes_content_verbatim_and_creates_parent_dirs() {
+    let dir = std::env::temp_dir().join(format!("overnight-wf-test-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let tricky = "#!/bin/bash\necho \"it's $HOME\" `date` \n %s\n";
+    let script = build_write_files_script(&[
+      SandboxFile { path: "bin/tool.sh", content: tricky, executable: true },
+      SandboxFile { path: "skills/x/SKILL.md", content: "# hi\n", executable: false },
+    ]);
+    assert!(Command::new("bash").current_dir(&dir).arg("-c").arg(&script).status().unwrap().success());
+    assert_eq!(std::fs::read_to_string(dir.join("bin/tool.sh")).unwrap(), tricky);
+    assert_eq!(std::fs::read_to_string(dir.join("skills/x/SKILL.md")).unwrap(), "# hi\n");
+    let _ = std::fs::remove_dir_all(&dir);
+  }
+}

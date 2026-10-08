@@ -9,6 +9,7 @@
 //! sandbox polls the same server for the report.
 
 pub mod runner;
+pub mod sandbox_setup;
 pub mod server;
 
 use std::sync::{Arc, Mutex};
