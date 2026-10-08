@@ -8,6 +8,7 @@ use crate::db::error::Result;
 
 pub mod activity;
 pub mod backups;
+pub mod browser_tests;
 pub mod command_log;
 pub mod container_metrics;
 pub mod error;

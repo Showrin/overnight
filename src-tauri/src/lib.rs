@@ -157,6 +157,7 @@ pub fn run() {
           "host_metrics",
           "command_log",
           "sandbox_backups",
+          "browser_tests",
         ];
         for table in table_names {
           match conn.query_row(&format!("SELECT count(*) FROM {table}"), [], |row| row.get::<_, i64>(0)) {

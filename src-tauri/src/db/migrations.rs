@@ -397,6 +397,35 @@ pub fn migrations() -> Migrations<'static> {
     );
     ALTER TABLE projects ADD COLUMN kit_id TEXT REFERENCES kits(id) ON DELETE SET NULL;
     ",
+  ), M::up(
+    "
+    -- Claude in Chrome browser testing (see src-tauri/src/browser_tests.rs).
+    -- Off by default; chrome_token is minted on first enable.
+    ALTER TABLE sandboxes ADD COLUMN chrome_enabled INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE sandboxes ADD COLUMN chrome_target TEXT NOT NULL DEFAULT 'sandbox';
+    ALTER TABLE sandboxes ADD COLUMN chrome_sandbox_port INTEGER;
+    ALTER TABLE sandboxes ADD COLUMN chrome_external_url TEXT;
+    ALTER TABLE sandboxes ADD COLUMN chrome_token TEXT;
+    CREATE UNIQUE INDEX ux_sandboxes_chrome_token ON sandboxes(chrome_token) WHERE chrome_token IS NOT NULL;
+
+    CREATE TABLE browser_tests (
+      id TEXT PRIMARY KEY,
+      sandbox_id TEXT NOT NULL REFERENCES sandboxes(id) ON DELETE CASCADE,
+      status TEXT NOT NULL,
+      doc TEXT NOT NULL,
+      branch TEXT,
+      sandbox_port INTEGER,
+      target_url TEXT,
+      verdict TEXT,
+      report TEXT,
+      error TEXT,
+      created_at INTEGER NOT NULL,
+      started_at INTEGER,
+      finished_at INTEGER
+    );
+    CREATE INDEX ix_browser_tests_sandbox_created ON browser_tests(sandbox_id, created_at DESC);
+    CREATE INDEX ix_browser_tests_status ON browser_tests(status, created_at);
+    ",
   )])
 }
 
@@ -422,6 +451,6 @@ mod tests {
         |row| row.get(0),
       )
       .unwrap();
-    assert_eq!(table_count, 13);
+    assert_eq!(table_count, 14);
   }
 }

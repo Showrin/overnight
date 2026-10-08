@@ -36,6 +36,11 @@ fn row_to_sandbox(row: &rusqlite::Row) -> rusqlite::Result<Sandbox> {
     last_git_sync_result: serde_json::from_str(&last_git_sync_result_raw).unwrap_or_default(),
     backup_enabled: row.get("backup_enabled")?,
     backup_interval_minutes: row.get("backup_interval_minutes")?,
+    chrome_enabled: row.get("chrome_enabled")?,
+    chrome_target: row.get("chrome_target")?,
+    chrome_sandbox_port: row.get("chrome_sandbox_port")?,
+    chrome_external_url: row.get("chrome_external_url")?,
+    chrome_token: row.get("chrome_token")?,
   })
 }
 
@@ -213,6 +218,59 @@ pub fn set_backup_settings(conn: &Connection, id: &str, enabled: bool, interval_
   get(conn, id)
 }
 
+/// Persists this sandbox's Claude in Chrome settings. Mints the sandbox's
+/// browser-test token the first time it's enabled and keeps it afterwards,
+/// so a sandbox that already has it exported keeps working across toggles.
+/// Callers push the sandbox-side effects (network rule, env vars, helper
+/// script) separately, same split as `set_network_preset_override`.
+pub fn set_chrome_settings(
+  conn: &Connection,
+  id: &str,
+  enabled: bool,
+  target: &str,
+  sandbox_port: Option<i64>,
+  external_url: Option<&str>,
+) -> Result<Sandbox> {
+  if !matches!(target, "sandbox" | "external") {
+    return Err(Error::InvalidValue(format!("unknown Chrome target: {target}")));
+  }
+  if let Some(port) = sandbox_port {
+    if !(1..=65535).contains(&port) {
+      return Err(Error::InvalidValue(format!("port out of range: {port}")));
+    }
+  }
+  let external_url = external_url.map(str::trim).filter(|u| !u.is_empty());
+  if let Some(url) = external_url {
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+      return Err(Error::InvalidValue("external URL must start with http:// or https://".to_string()));
+    }
+  }
+  if enabled && target == "external" && external_url.is_none() {
+    return Err(Error::InvalidValue("an external URL is required to browse an external server".to_string()));
+  }
+  let new_token = format!("ovn-{}", uuid::Uuid::new_v4().simple());
+  let changed = conn.execute(
+    "UPDATE sandboxes
+     SET chrome_enabled = ?1, chrome_target = ?2, chrome_sandbox_port = ?3, chrome_external_url = ?4,
+         chrome_token = CASE WHEN ?1 AND chrome_token IS NULL THEN ?5 ELSE chrome_token END
+     WHERE id = ?6",
+    params![enabled, target, sandbox_port, external_url, new_token, id],
+  )?;
+  if changed == 0 {
+    return Err(Error::NotFound);
+  }
+  get(conn, id)
+}
+
+/// The sandbox a browser-test request's bearer token belongs to.
+pub fn find_by_chrome_token(conn: &Connection, token: &str) -> Result<Option<Sandbox>> {
+  match conn.query_row("SELECT * FROM sandboxes WHERE chrome_token = ?1", params![token], row_to_sandbox) {
+    Ok(sandbox) => Ok(Some(sandbox)),
+    Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+    Err(e) => Err(Error::Sqlite(e)),
+  }
+}
+
 /// Persists one "branch snapshot" — current branch, local branch list, and
 /// worktree list, all captured together in a single `sbx exec` round trip
 /// (see `sbx::read_branch_snapshot`) — as of `at`. `branches`/`worktrees`
@@ -275,6 +333,41 @@ mod tests {
 
   fn make_project(conn: &Connection) -> String {
     crate::db::projects::create(conn, "Overnight", "/repo/overnight", None, None).unwrap().id
+  }
+
+  #[test]
+  fn chrome_settings_default_off_and_mint_a_stable_token() {
+    let conn = test_conn();
+    let project_id = make_project(&conn);
+    let sandbox = create(&conn, &project_id, "mount", None, None, "default", None, "claude").unwrap();
+    assert!(!sandbox.chrome_enabled);
+    assert_eq!(sandbox.chrome_target, "sandbox");
+    assert_eq!(sandbox.chrome_token, None);
+
+    let enabled = set_chrome_settings(&conn, &sandbox.id, true, "sandbox", Some(5173), None).unwrap();
+    assert!(enabled.chrome_enabled);
+    assert_eq!(enabled.chrome_sandbox_port, Some(5173));
+    let token = enabled.chrome_token.clone().unwrap();
+
+    let toggled = set_chrome_settings(&conn, &sandbox.id, false, "sandbox", Some(5173), None).unwrap();
+    let toggled = set_chrome_settings(&conn, &toggled.id, true, "external", None, Some(" http://localhost:3000 ")).unwrap();
+    assert_eq!(toggled.chrome_token.as_deref(), Some(token.as_str()));
+    assert_eq!(toggled.chrome_external_url.as_deref(), Some("http://localhost:3000"));
+
+    assert_eq!(find_by_chrome_token(&conn, &token).unwrap().unwrap().id, sandbox.id);
+    assert!(find_by_chrome_token(&conn, "nope").unwrap().is_none());
+  }
+
+  #[test]
+  fn chrome_settings_reject_bad_values() {
+    let conn = test_conn();
+    let project_id = make_project(&conn);
+    let sandbox = create(&conn, &project_id, "mount", None, None, "default", None, "claude").unwrap();
+    assert!(set_chrome_settings(&conn, &sandbox.id, true, "nowhere", None, None).is_err());
+    assert!(set_chrome_settings(&conn, &sandbox.id, true, "sandbox", Some(70000), None).is_err());
+    assert!(set_chrome_settings(&conn, &sandbox.id, true, "external", None, None).is_err());
+    assert!(set_chrome_settings(&conn, &sandbox.id, true, "external", None, Some("localhost:3000")).is_err());
+    assert!(matches!(set_chrome_settings(&conn, "missing", false, "sandbox", None, None), Err(Error::NotFound)));
   }
 
   #[test]
