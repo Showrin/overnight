@@ -21,9 +21,13 @@ pub fn network_rule() -> String {
 
 /// Installs (or refreshes) the helper, plus the skill for Claude sandboxes.
 pub async fn install<R: Runtime>(app: &AppHandle<R>, name: &str, agent: &str) -> crate::sbx::Result<()> {
-  let mut files = vec![SandboxFile { path: HELPER_PATH, content: HELPER, executable: true }];
+  // A CRLF checkout would break the script under bash; .gitattributes
+  // prevents that, this is the backstop.
+  let helper = HELPER.replace("\r\n", "\n");
+  let skill = SKILL.replace("\r\n", "\n");
+  let mut files = vec![SandboxFile { path: HELPER_PATH, content: &helper, executable: true }];
   if agent == crate::agents::CLAUDE.id {
-    files.push(SandboxFile { path: SKILL_PATH, content: SKILL, executable: false });
+    files.push(SandboxFile { path: SKILL_PATH, content: &skill, executable: false });
   }
   crate::sbx::write_files(app, name, "Install browser test helper", &files).await
 }
@@ -38,7 +42,7 @@ mod tests {
 
   #[test]
   fn skill_has_frontmatter_claude_can_load() {
-    assert!(SKILL.starts_with("---\nname: browser-test\ndescription: "));
+    assert!(SKILL.replace("\r\n", "\n").starts_with("---\nname: browser-test\ndescription: "));
   }
 
   #[test]
