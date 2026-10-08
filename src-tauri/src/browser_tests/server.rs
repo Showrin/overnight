@@ -93,11 +93,14 @@ fn authorize(hub: &Hub, headers: &HeaderMap) -> Result<Sandbox, ApiError> {
 struct Health {
   ok: bool,
   target: String,
+  /// Whether Overnight checks the branch out and starts the servers on the
+  /// host itself (external target only).
+  host_prep: bool,
 }
 
 async fn health(State(hub): State<Hub>, headers: HeaderMap) -> Result<Json<Health>, ApiError> {
   let sandbox = authorize(&hub, &headers)?;
-  Ok(Json(Health { ok: true, target: sandbox.chrome_target }))
+  Ok(Json(Health { ok: true, target: sandbox.chrome_target, host_prep: sandbox.chrome_host_prep }))
 }
 
 #[derive(Deserialize)]
@@ -115,11 +118,12 @@ struct TestView {
   verdict: Option<String>,
   report: Option<String>,
   error: Option<String>,
+  progress: Option<String>,
 }
 
 impl From<BrowserTest> for TestView {
   fn from(t: BrowserTest) -> Self {
-    Self { id: t.id, status: t.status, verdict: t.verdict, report: t.report, error: t.error }
+    Self { id: t.id, status: t.status, verdict: t.verdict, report: t.report, error: t.error, progress: t.progress }
   }
 }
 
@@ -134,7 +138,9 @@ async fn create_test(
       return Err(ApiError(StatusCode::BAD_REQUEST, format!("port out of range: {port}")));
     }
   }
-  let status = if sandbox.chrome_target == "external" { "awaiting_host" } else { "queued" };
+  // Without host prep, an external target waits for the user to start the
+  // servers by hand and press Start.
+  let status = if sandbox.chrome_target == "external" && !sandbox.chrome_host_prep { "awaiting_host" } else { "queued" };
   let branch = body.branch.as_deref().map(str::trim).filter(|b| !b.is_empty());
   let conn = hub.pool.get().map_err(internal)?;
   let test = browser_tests::create(&conn, &sandbox.id, &body.doc, branch, body.port, status)
@@ -235,6 +241,16 @@ mod tests {
     let (_, body) =
       call(&f.hub, "POST", "/v1/browser-tests", Some(&f.token), Some(serde_json::json!({ "doc": "x", "branch": "feat/a" }))).await;
     assert_eq!(body["status"], "awaiting_host");
+  }
+
+  #[tokio::test]
+  async fn external_target_with_host_prep_queues_immediately() {
+    let f = fixture("external");
+    let conn = f.hub.pool.get().unwrap();
+    sandboxes::set_chrome_host_prep(&conn, &f.sandbox_id, true, &["pnpm dev".to_string()]).unwrap();
+    drop(conn);
+    let (_, body) = call(&f.hub, "POST", "/v1/browser-tests", Some(&f.token), Some(serde_json::json!({ "doc": "x", "branch": "feat/a" }))).await;
+    assert_eq!(body["status"], "queued");
   }
 
   #[tokio::test]

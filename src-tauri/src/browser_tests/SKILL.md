@@ -12,7 +12,7 @@ You can't run a browser in this sandbox. Overnight, the app on the user's machin
 Run `overnight-browser-test check` (it's in `~/.local/bin`). It prints the `target`:
 
 - `sandbox`: the host browser opens the app running **in this sandbox**. Start the dev server listening on all interfaces (`0.0.0.0`, not `127.0.0.1`) on port `$OVERNIGHT_BROWSER_PORT` (pass `--port` if you use another one), and leave it running.
-- `external`: the user runs the app on their own machine from your branch. Commit your work to the branch first (Overnight's Git Sync brings it to the host), and tell the user which branch to check out. The test waits until they press Start in Overnight.
+- `external`: the app runs on the user's own machine from your branch. **Commit your work to the branch first.** If `check` shows `"host_prep": true`, Overnight checks the branch out on the host and starts the servers itself. Otherwise tell the user which branch to check out; the test waits until they start the servers and press Start in Overnight.
 
 ## 2. Write the test plan
 

@@ -10,12 +10,14 @@ use serde::Deserialize;
 use tauri::{AppHandle, Manager};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+use super::host_servers::HostServers;
 use super::{Hub, DEFAULT_SANDBOX_APP_PORT};
 use crate::db::browser_tests;
 use crate::db::models::{BrowserTest, Sandbox};
 
 const CLAUDE_BIN: &str = "claude";
 const RUN_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+const SERVER_READY_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const CHROME_TOOLS: &str = "mcp__claude-in-chrome__*";
 
 const REPORT_SCHEMA: &str = r#"{
@@ -105,6 +107,27 @@ enum Outcome {
 }
 
 async fn execute(app: &AppHandle, hub: &Hub, test: &BrowserTest) -> Outcome {
+  let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel();
+  hub.set_running(&test.id, cancel_tx);
+  let work_dir = work_dir(app, &test.id);
+  let outcome = match &work_dir {
+    Ok(dir) => execute_in(app, hub, test, dir, &mut cancel_rx).await,
+    Err(e) => Outcome::Failed(e.clone()),
+  };
+  hub.clear_running(&test.id);
+  if let Ok(dir) = work_dir {
+    let _ = std::fs::remove_dir_all(dir);
+  }
+  outcome
+}
+
+async fn execute_in(
+  app: &AppHandle,
+  hub: &Hub,
+  test: &BrowserTest,
+  work_dir: &Path,
+  cancel: &mut tokio::sync::oneshot::Receiver<()>,
+) -> Outcome {
   let sandbox = match hub.pool.get().map_err(|e| e.to_string()).and_then(|c| crate::db::sandboxes::get(&c, &test.sandbox_id).map_err(|e| e.to_string())) {
     Ok(sandbox) => sandbox,
     Err(e) => return Outcome::Failed(format!("couldn't load sandbox: {e}")),
@@ -115,24 +138,30 @@ async fn execute(app: &AppHandle, hub: &Hub, test: &BrowserTest) -> Outcome {
   };
   if let Ok(conn) = hub.pool.get() {
     let _ = browser_tests::set_target_url(&conn, &test.id, &url);
-    if let Ok(updated) = browser_tests::get(&conn, &test.id) {
-      hub.changed(&updated);
-    }
   }
+
+  // Dropped (stopping the servers, then restoring the branch) whichever
+  // way this function returns.
+  let _host = if sandbox.chrome_target == "external" && sandbox.chrome_host_prep {
+    let prepare = prepare_host(hub, test, &sandbox, &url, work_dir);
+    tokio::select! {
+      prepared = prepare => match prepared {
+        Ok(host) => Some(host),
+        Err(e) => return Outcome::Failed(e),
+      },
+      _ = &mut *cancel => return Outcome::Cancelled,
+    }
+  } else {
+    None
+  };
+
+  set_progress(hub, &test.id, "Opening the testing browser");
   if let Err(e) = super::chrome::ensure_running(app, &hub.pool).await {
     return Outcome::Failed(e);
   }
-  let work_dir = match work_dir(app, &test.id) {
-    Ok(dir) => dir,
-    Err(e) => return Outcome::Failed(e),
-  };
+  set_progress(hub, &test.id, "Testing in Chrome");
   let prompt = build_prompt(test, &sandbox, &url);
-  let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
-  hub.set_running(&test.id, cancel_tx);
-  let result = run_agent(&work_dir, &prompt, cancel_rx).await;
-  hub.clear_running(&test.id);
-  let _ = std::fs::remove_dir_all(&work_dir);
-  match result {
+  match run_agent(work_dir, &prompt, cancel).await {
     AgentResult::Output(stdout) => match parse_agent_output(&stdout) {
       Ok(report) => Outcome::Report(report),
       Err(e) => Outcome::Failed(e),
@@ -140,6 +169,69 @@ async fn execute(app: &AppHandle, hub: &Hub, test: &BrowserTest) -> Outcome {
     AgentResult::Failed(e) => Outcome::Failed(e),
     AgentResult::Cancelled => Outcome::Cancelled,
   }
+}
+
+fn set_progress(hub: &Hub, id: &str, progress: &str) {
+  if let Ok(updated) = hub.pool.get().map_err(|e| e.to_string()).and_then(|c| browser_tests::set_progress(&c, id, progress).map_err(|e| e.to_string())) {
+    hub.changed(&updated);
+  }
+}
+
+/// The host made ready for an external-target test. Field order matters:
+/// the servers stop before the branch is switched back.
+struct PreparedHost {
+  _servers: HostServers,
+  _restore: RestoreBranch,
+}
+
+/// Switches the host repo back to the branch it was on before the test.
+struct RestoreBranch {
+  repo_path: String,
+  previous: Option<String>,
+}
+
+impl Drop for RestoreBranch {
+  fn drop(&mut self) {
+    let Some(previous) = &self.previous else { return };
+    if crate::git::current_branch(&self.repo_path).as_deref() == Some(previous) {
+      return;
+    }
+    if let Err(e) = crate::git::checkout(&self.repo_path, previous) {
+      log::warn!("browser tests: couldn't switch {} back to {previous}: {e}", self.repo_path);
+    }
+  }
+}
+
+/// Checks the test's branch out on the host (clone mode; a mount-mode
+/// sandbox already shares the host's working tree), starts the configured
+/// servers, and waits for `url` to answer.
+async fn prepare_host(hub: &Hub, test: &BrowserTest, sandbox: &Sandbox, url: &str, work_dir: &Path) -> Result<PreparedHost, String> {
+  let project = hub
+    .pool
+    .get()
+    .map_err(|e| e.to_string())
+    .and_then(|c| crate::db::projects::get(&c, &sandbox.project_id).map_err(|e| e.to_string()))?;
+  let repo_path = project.repo_path.clone();
+
+  let previous = if sandbox.mode == "clone" {
+    let branch = test.branch.clone().ok_or("the test didn't say which branch to check out")?;
+    let name = sandbox.sbx_name.clone().ok_or("sandbox has no sbx sandbox")?;
+    set_progress(hub, &test.id, &format!("Checking out {branch} on this machine"));
+    let repo = repo_path.clone();
+    tokio::task::spawn_blocking(move || crate::git::checkout_sandbox_branch(&repo, &name, &branch))
+      .await
+      .map_err(|e| e.to_string())?
+      .map_err(|e| e.to_string())?
+  } else {
+    None
+  };
+  let restore = RestoreBranch { repo_path: repo_path.clone(), previous };
+
+  set_progress(hub, &test.id, "Starting servers");
+  let mut servers = HostServers::start(&sandbox.chrome_host_commands, Path::new(&repo_path), work_dir)?;
+  set_progress(hub, &test.id, &format!("Waiting for {url}"));
+  servers.wait_until_up(url, SERVER_READY_TIMEOUT).await?;
+  Ok(PreparedHost { _servers: servers, _restore: restore })
 }
 
 /// The URL the host Chrome should open: the external URL as configured,
@@ -201,7 +293,7 @@ enum AgentResult {
 
 /// Runs the host agent with `prompt` on stdin (a test doc can exceed
 /// Windows' command-line limit) and returns its stdout.
-async fn run_agent(work_dir: &Path, prompt: &str, cancel: tokio::sync::oneshot::Receiver<()>) -> AgentResult {
+async fn run_agent(work_dir: &Path, prompt: &str, cancel: &mut tokio::sync::oneshot::Receiver<()>) -> AgentResult {
   let mut cmd = std::process::Command::new(CLAUDE_BIN);
   cmd.args(agent_args()).current_dir(work_dir).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
   crate::git::hide_console(&mut cmd);

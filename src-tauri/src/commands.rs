@@ -3257,11 +3257,17 @@ pub async fn save_sandbox_chrome_settings(
   target: String,
   sandbox_port: Option<i64>,
   external_url: Option<String>,
+  host_prep: bool,
+  host_commands: Vec<String>,
 ) -> std::result::Result<Sandbox, String> {
   let pool = pool.inner().clone();
   let sandbox = {
-    let conn = pool.get().map_err(|e| e.to_string())?;
-    sandboxes::set_chrome_settings(&conn, &id, enabled, &target, sandbox_port, external_url.as_deref()).map_err(|e| e.to_string())?
+    let mut conn = pool.get().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    sandboxes::set_chrome_settings(&tx, &id, enabled, &target, sandbox_port, external_url.as_deref()).map_err(|e| e.to_string())?;
+    let sandbox = sandboxes::set_chrome_host_prep(&tx, &id, host_prep, &host_commands).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    sandbox
   };
   let Some(name) = sandbox.sbx_name.clone() else { return Ok(sandbox) };
   let rule = crate::browser_tests::sandbox_setup::network_rule();

@@ -59,18 +59,22 @@ submit() {
 
 wait_for() {
   local id=$1 timeout_min=$2
-  local deadline=$(( $(date +%s) + timeout_min * 60 )) last=""
+  local deadline=$(( $(date +%s) + timeout_min * 60 )) last="" last_progress=""
   while :; do
-    local json status
+    local json status progress
     json=$(api GET "/v1/browser-tests/$id")
     status=$(printf '%s' "$json" | jq -r '.status')
+    progress=$(printf '%s' "$json" | jq -r '.progress // empty')
     if [ "$status" != "$last" ]; then
       case $status in
         awaiting_host) echo "Waiting for the user to start the app on the host and press Start in Overnight..." >&2 ;;
         queued) echo "Queued for the host browser..." >&2 ;;
-        running) echo "The host agent is testing in Chrome..." >&2 ;;
       esac
       last=$status
+    fi
+    if [ "$status" = running ] && [ -n "$progress" ] && [ "$progress" != "$last_progress" ]; then
+      echo "Host: $progress..." >&2
+      last_progress=$progress
     fi
     case $status in
       done) printf '%s\n' "$json" | jq -r '.report'; return 0 ;;

@@ -137,6 +137,53 @@ pub fn sync_from_sandbox(repo_path: &str, sbx_name: &str) -> Result<Vec<BranchSy
   })
 }
 
+/// Whether tracked files have uncommitted changes. Untracked files are
+/// ignored: they don't block a checkout unless they'd be overwritten, and
+/// git refuses that case itself.
+pub fn has_tracked_changes(repo_path: &str) -> Result<bool> {
+  Ok(!run(repo_path, &["status", "--porcelain", "--untracked-files=no"])?.is_empty())
+}
+
+pub fn checkout(repo_path: &str, branch: &str) -> Result<()> {
+  run(repo_path, &["checkout", "-q", branch])?;
+  Ok(())
+}
+
+/// Brings `branch` from a clone-mode sandbox's `sandbox-<sbx_name>` remote
+/// into the host repo and checks it out, for browser testing on the host.
+/// Same safety rules as Git Sync: refuses with uncommitted changes, and
+/// only creates or fast-forwards the local branch, never force-updates it.
+/// Returns the branch that was checked out before, to switch back to.
+pub fn checkout_sandbox_branch(repo_path: &str, sbx_name: &str, branch: &str) -> Result<Option<String>> {
+  if has_tracked_changes(repo_path)? {
+    return Err(Error::CommandFailed(format!(
+      "{repo_path} has uncommitted changes — commit or stash them so Overnight can check out {branch}"
+    )));
+  }
+  let remote = format!("sandbox-{sbx_name}");
+  run(repo_path, &["fetch", &remote])?;
+  let target_ref = format!("refs/remotes/{remote}/{branch}");
+  if !ref_exists(repo_path, &target_ref) {
+    return Err(Error::CommandFailed(format!("the sandbox has no branch named {branch} — has it been committed?")));
+  }
+  let previous = current_branch(repo_path);
+  match sync_branch(repo_path, branch, &target_ref)?.status {
+    BranchSyncStatus::NeedsManualMerge => {
+      return Err(Error::CommandFailed(format!(
+        "your local {branch} has diverged from the sandbox's — merge them by hand, then test again"
+      )));
+    }
+    BranchSyncStatus::NewBranch => {
+      run(repo_path, &["branch", branch, &target_ref])?;
+    }
+    BranchSyncStatus::FastForwarded => {}
+  }
+  if previous.as_deref() != Some(branch) {
+    checkout(repo_path, branch)?;
+  }
+  Ok(previous)
+}
+
 /// Unified diff of `base_ref` against `target_ref` (three-dot: "what did
 /// `target_ref` add on top of `base_ref`"), or — when `target_ref` is
 /// `None` — a plain diff of `base_ref` against the live working tree
@@ -213,6 +260,65 @@ mod tests {
     run(repo, &["add", "."]).unwrap();
     run(repo, &["commit", "-q", "-m", "commit"]).unwrap();
     run(repo, &["rev-parse", "HEAD"]).unwrap()
+  }
+
+  /// A host clone of an "upstream" repo standing in for the sandbox, wired
+  /// as remote `sandbox-test` like a clone-mode sandbox's git daemon.
+  fn host_and_sandbox() -> (std::path::PathBuf, std::path::PathBuf) {
+    let sandbox_dir = init_repo();
+    let sandbox = sandbox_dir.to_str().unwrap();
+    commit(sandbox, "a.txt", "1");
+    let host_dir = std::env::temp_dir().join(format!("overnight-git-sync-{}", uuid::Uuid::new_v4()));
+    let tmp = std::env::temp_dir();
+    run(tmp.to_str().unwrap(), &["clone", "-q", "--origin", "sandbox-test", sandbox, host_dir.to_str().unwrap()]).unwrap();
+    let host = host_dir.to_str().unwrap();
+    run(host, &["config", "user.email", "test@example.com"]).unwrap();
+    run(host, &["config", "user.name", "Test"]).unwrap();
+    (host_dir, sandbox_dir)
+  }
+
+  #[test]
+  fn checkout_sandbox_branch_creates_then_fast_forwards() {
+    let (host_dir, sandbox_dir) = host_and_sandbox();
+    let (host, sandbox) = (host_dir.to_str().unwrap(), sandbox_dir.to_str().unwrap());
+    run(sandbox, &["checkout", "-q", "-b", "feat/login"]).unwrap();
+    let first = commit(sandbox, "login.txt", "v1");
+
+    assert_eq!(checkout_sandbox_branch(host, "test", "feat/login").unwrap().as_deref(), Some("main"));
+    assert_eq!(current_branch(host).as_deref(), Some("feat/login"));
+    assert_eq!(run(host, &["rev-parse", "HEAD"]).unwrap(), first);
+
+    let second = commit(sandbox, "login.txt", "v2");
+    assert_eq!(checkout_sandbox_branch(host, "test", "feat/login").unwrap().as_deref(), Some("feat/login"));
+    assert_eq!(run(host, &["rev-parse", "HEAD"]).unwrap(), second);
+
+    checkout(host, "main").unwrap();
+    assert_eq!(current_branch(host).as_deref(), Some("main"));
+    fs::remove_dir_all(host_dir).unwrap();
+    fs::remove_dir_all(sandbox_dir).unwrap();
+  }
+
+  #[test]
+  fn checkout_sandbox_branch_refuses_unsafe_states() {
+    let (host_dir, sandbox_dir) = host_and_sandbox();
+    let (host, sandbox) = (host_dir.to_str().unwrap(), sandbox_dir.to_str().unwrap());
+    run(sandbox, &["checkout", "-q", "-b", "feat/x"]).unwrap();
+    commit(sandbox, "x.txt", "sandbox");
+
+    assert!(checkout_sandbox_branch(host, "test", "missing").unwrap_err().to_string().contains("no branch named missing"));
+
+    fs::write(format!("{host}/a.txt"), "dirty").unwrap();
+    assert!(checkout_sandbox_branch(host, "test", "feat/x").unwrap_err().to_string().contains("uncommitted changes"));
+    run(host, &["checkout", "-q", "--", "a.txt"]).unwrap();
+
+    run(host, &["checkout", "-q", "-b", "feat/x"]).unwrap();
+    commit(host, "x.txt", "host");
+    run(host, &["checkout", "-q", "main"]).unwrap();
+    assert!(checkout_sandbox_branch(host, "test", "feat/x").unwrap_err().to_string().contains("diverged"));
+    assert_eq!(current_branch(host).as_deref(), Some("main"));
+
+    fs::remove_dir_all(host_dir).unwrap();
+    fs::remove_dir_all(sandbox_dir).unwrap();
   }
 
   #[test]
