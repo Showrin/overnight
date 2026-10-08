@@ -13,7 +13,7 @@ import type { PlanFile, Sandbox } from './types'
 // selectors — no @tailwindcss/typography plugin is installed, and this is
 // the only place in the app that renders arbitrary markdown, so adding one
 // just for this wasn't worth it.
-const MARKDOWN_CLASS =
+export const MARKDOWN_CLASS =
   'flex flex-col gap-4 text-sm text-foreground/55 break-words *:leading-[1.75] ' +
   '[&_h1]:mt-6 [&_h1]:border-b [&_h1]:border-border [&_h1]:pb-2 [&_h1]:text-xl [&_h1]:font-semibold [&_h1]:text-foreground/75 [&_h1:first-child]:mt-0 ' +
   '[&_h2]:mt-5 [&_h2]:text-base [&_h2]:font-semibold [&_h2]:text-foreground/75 ' +

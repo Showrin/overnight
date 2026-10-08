@@ -47,6 +47,37 @@ export interface Sandbox {
   backup_enabled: boolean
   // null = use the global interval.
   backup_interval_minutes: number | null
+  // Claude in Chrome browser testing — off by default.
+  chrome_enabled: boolean
+  // 'sandbox': browse the app running in this sandbox; 'external': browse
+  // a server on the host (e.g. the sandbox's branch checked out there).
+  chrome_target: ChromeTarget
+  // In-sandbox app port; null = 8080.
+  chrome_sandbox_port: number | null
+  chrome_external_url: string | null
+}
+
+export type ChromeTarget = 'sandbox' | 'external'
+
+export type BrowserTestStatus = 'awaiting_host' | 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
+
+export interface BrowserTest {
+  id: string
+  sandbox_id: string
+  status: BrowserTestStatus
+  // The test plan the sandbox agent wrote (Markdown).
+  doc: string
+  branch: string | null
+  sandbox_port: number | null
+  // What the host Chrome actually opened, once the run started.
+  target_url: string | null
+  verdict: 'pass' | 'fail' | 'partial' | null
+  // The host agent's report (Markdown).
+  report: string | null
+  error: string | null
+  created_at: number
+  started_at: number | null
+  finished_at: number | null
 }
 
 export interface WorktreeInfo {

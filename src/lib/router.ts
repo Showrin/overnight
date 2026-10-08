@@ -14,7 +14,7 @@ export type Screen =
 // Sandbox detail page tabs. Not persisted into the hash — a same-session
 // navigation hint only (e.g. jumping straight to Backups from an
 // in-progress indicator), so a page refresh lands back on Overview.
-export type DetailTab = 'overview' | 'metrics' | 'plans' | 'backups' | 'credentials'
+export type DetailTab = 'overview' | 'metrics' | 'plans' | 'browser' | 'backups' | 'credentials'
 
 export interface Route {
   screen: Screen

@@ -7,6 +7,7 @@ import { useAppStore } from '@/store/useAppStore'
 import { SandboxBackupsTab } from './SandboxBackupsTab'
 import { SandboxBranchTab } from './SandboxBranchTab'
 import { SandboxBreadcrumb } from './SandboxBreadcrumb'
+import { SandboxBrowserTab } from './SandboxBrowserTab'
 import { SandboxCredentialsTab } from './SandboxCredentialsTab'
 import { SandboxHeader } from './SandboxHeader'
 import { SandboxMetricsTab } from './SandboxMetricsTab'
@@ -96,6 +97,8 @@ export function SandboxDetailScreen({
           <SandboxPlansTab sandbox={sandbox} />
         </div>
       )}
+
+      {tab === 'browser' && <SandboxBrowserTab sandbox={sandbox} />}
 
       {tab === 'backups' && <SandboxBackupsTab sandbox={sandbox} />}
 
