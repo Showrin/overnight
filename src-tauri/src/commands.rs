@@ -3191,3 +3191,30 @@ pub fn list_command_log_operations(pool: State<DbPool>) -> std::result::Result<V
   let conn = pool.get().map_err(|e| e.to_string())?;
   command_log::list_operations(&conn).map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub fn list_browser_tests(pool: State<'_, DbPool>, sandbox_id: String) -> std::result::Result<Vec<crate::db::models::BrowserTest>, String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  crate::db::browser_tests::list_for_sandbox(&conn, &sandbox_id).map_err(|e| e.to_string())
+}
+
+/// Releases an external-target test once the user has the branch checked
+/// out and its servers running on the host.
+#[tauri::command]
+pub fn start_browser_test(hub: State<'_, crate::browser_tests::Hub>, id: String) -> std::result::Result<crate::db::models::BrowserTest, String> {
+  let conn = hub.pool.get().map_err(|e| e.to_string())?;
+  let test = crate::db::browser_tests::release_to_queue(&conn, &id).map_err(|e| e.to_string())?;
+  hub.changed(&test);
+  Ok(test)
+}
+
+#[tauri::command]
+pub fn cancel_browser_test(hub: State<'_, crate::browser_tests::Hub>, id: String) -> std::result::Result<crate::db::models::BrowserTest, String> {
+  hub.cancel(&id)
+}
+
+#[tauri::command]
+pub fn delete_browser_test(pool: State<'_, DbPool>, id: String) -> std::result::Result<(), String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  crate::db::browser_tests::delete(&conn, &id).map_err(|e| e.to_string())
+}

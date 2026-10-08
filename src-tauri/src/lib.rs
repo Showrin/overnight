@@ -131,6 +131,10 @@ pub fn run() {
       commands::get_daemon_log_path,
       commands::save_daemon_log_path,
       commands::read_daemon_log,
+      commands::list_browser_tests,
+      commands::start_browser_test,
+      commands::cancel_browser_test,
+      commands::delete_browser_test,
       notifications::notify,
     ])
     .setup(|app| {
@@ -174,6 +178,15 @@ pub fn run() {
         let app_handle = app.handle().clone();
         browser_tests::Hub::new(pool.clone(), move |test| {
           let _ = app_handle.emit(browser_tests::CHANGED_EVENT, test);
+          let message = match test.status.as_str() {
+            "awaiting_host" => Some(("Browser test waiting", "Start your servers on this machine, then press Start in the sandbox's Browser tab.")),
+            "done" => Some(("Browser test finished", "The report is ready in the sandbox's Browser tab.")),
+            "failed" => Some(("Browser test failed", "See the sandbox's Browser tab for details.")),
+            _ => None,
+          };
+          if let Some((title, body)) = message {
+            let _ = notifications::notify_plain(&app_handle, title, Some(body), Some(test.sandbox_id.clone()), false);
+          }
         })
       };
       tauri::async_runtime::spawn({
@@ -184,6 +197,7 @@ pub fn run() {
           }
         }
       });
+      tauri::async_runtime::spawn(browser_tests::runner::run(app.handle().clone(), hub.clone()));
       app.manage(hub);
       app.manage(pool);
       app.manage(std::sync::Mutex::new(sbx::HostMonitor::new()));
