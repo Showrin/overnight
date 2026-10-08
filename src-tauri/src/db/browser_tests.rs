@@ -15,6 +15,7 @@ fn row_to_browser_test(row: &rusqlite::Row) -> rusqlite::Result<BrowserTest> {
     verdict: row.get("verdict")?,
     report: row.get("report")?,
     error: row.get("error")?,
+    progress: row.get("progress")?,
     created_at: row.get("created_at")?,
     started_at: row.get("started_at")?,
     finished_at: row.get("finished_at")?,
@@ -86,6 +87,11 @@ pub fn cancel_pending(conn: &Connection, id: &str) -> Result<BrowserTest> {
     "UPDATE browser_tests SET status = 'cancelled', finished_at = ?1 WHERE id = ?2 AND status IN ('awaiting_host', 'queued')",
     params![now_millis(), id],
   )?;
+  get(conn, id)
+}
+
+pub fn set_progress(conn: &Connection, id: &str, progress: &str) -> Result<BrowserTest> {
+  conn.execute("UPDATE browser_tests SET progress = ?1 WHERE id = ?2", params![progress, id])?;
   get(conn, id)
 }
 

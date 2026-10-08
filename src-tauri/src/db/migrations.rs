@@ -426,6 +426,16 @@ pub fn migrations() -> Migrations<'static> {
     CREATE INDEX ix_browser_tests_sandbox_created ON browser_tests(sandbox_id, created_at DESC);
     CREATE INDEX ix_browser_tests_status ON browser_tests(status, created_at);
     ",
+  ), M::up(
+    "
+    -- External-target browser tests: let Overnight check the sandbox's
+    -- branch out on the host and run these server commands (JSON array of
+    -- strings) itself, instead of waiting for the user to press Start.
+    ALTER TABLE sandboxes ADD COLUMN chrome_host_prep INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE sandboxes ADD COLUMN chrome_host_commands TEXT NOT NULL DEFAULT '[]';
+    -- What a running test is doing right now (\"Starting servers\"...).
+    ALTER TABLE browser_tests ADD COLUMN progress TEXT;
+    ",
   )])
 }
 

@@ -382,6 +382,7 @@ mod tests {
       verdict: None,
       report: None,
       error: None,
+      progress: None,
       created_at: 0,
       started_at: None,
       finished_at: None,
@@ -457,7 +458,8 @@ mod tests {
       "network_preset_override": null, "last_backup_at": null, "last_backup_path": null, "base_branch": null,
       "current_branch": null, "branches": [], "worktrees": [], "branch_snapshot_at": null, "env_vars": [], "secrets": [],
       "last_git_sync_at": null, "last_git_sync_result": [], "backup_enabled": true, "backup_interval_minutes": null,
-      "chrome_enabled": true, "chrome_target": "external", "chrome_sandbox_port": null, "chrome_external_url": "http://localhost:3000"
+      "chrome_enabled": true, "chrome_target": "external", "chrome_sandbox_port": null, "chrome_external_url": "http://localhost:3000",
+      "chrome_host_prep": false, "chrome_host_commands": []
     });
     let sandbox: Sandbox = serde_json::from_value(sandbox_json).unwrap();
     let prompt = build_prompt(&test_row(Some("feat/login")), &sandbox, "http://localhost:3000");

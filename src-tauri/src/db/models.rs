@@ -232,6 +232,11 @@ pub struct Sandbox {
   /// sent to the frontend.
   #[serde(skip)]
   pub chrome_token: Option<String>,
+  /// For `chrome_target = "external"`: Overnight checks the test's branch
+  /// out on the host and runs `chrome_host_commands` itself before testing.
+  pub chrome_host_prep: bool,
+  /// Long-running server commands, run from the project's repo folder.
+  pub chrome_host_commands: Vec<String>,
 }
 
 /// One browser-test request from a sandbox: the test doc its agent wrote,
@@ -258,6 +263,8 @@ pub struct BrowserTest {
   /// The host agent's report, as Markdown for the sandbox agent to read.
   pub report: Option<String>,
   pub error: Option<String>,
+  /// What a running test is doing right now, e.g. "Starting servers".
+  pub progress: Option<String>,
   pub created_at: i64,
   pub started_at: Option<i64>,
   pub finished_at: Option<i64>,
