@@ -8,6 +8,7 @@
 //! the sandbox's published app port (or an external host URL), and the
 //! sandbox polls the same server for the report.
 
+pub mod chrome;
 pub mod runner;
 pub mod sandbox_setup;
 pub mod server;

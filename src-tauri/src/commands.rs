@@ -3283,3 +3283,20 @@ pub async fn save_sandbox_chrome_settings(
   .map_err(|e| e.to_string())?;
   Ok(sandbox)
 }
+
+#[tauri::command]
+pub fn get_testing_chrome_status(app: AppHandle, pool: State<'_, DbPool>) -> std::result::Result<crate::browser_tests::chrome::ChromeStatus, String> {
+  crate::browser_tests::chrome::status(&app, pool.inner())
+}
+
+/// `setup` also opens the Claude extension's store page and claude.ai
+/// sign-in, for first-time setup of the testing profile.
+#[tauri::command]
+pub fn open_testing_chrome(app: AppHandle, pool: State<'_, DbPool>, setup: bool) -> std::result::Result<(), String> {
+  crate::browser_tests::chrome::open(&app, pool.inner(), setup)
+}
+
+#[tauri::command]
+pub fn save_testing_chrome_path(pool: State<'_, DbPool>, path: Option<String>) -> std::result::Result<(), String> {
+  crate::browser_tests::chrome::save_chrome_path_override(pool.inner(), path.as_deref())
+}

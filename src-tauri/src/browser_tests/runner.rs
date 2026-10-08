@@ -119,6 +119,9 @@ async fn execute(app: &AppHandle, hub: &Hub, test: &BrowserTest) -> Outcome {
       hub.changed(&updated);
     }
   }
+  if let Err(e) = super::chrome::ensure_running(app, &hub.pool).await {
+    return Outcome::Failed(e);
+  }
   let work_dir = match work_dir(app, &test.id) {
     Ok(dir) => dir,
     Err(e) => return Outcome::Failed(e),

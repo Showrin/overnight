@@ -136,6 +136,9 @@ pub fn run() {
       commands::start_browser_test,
       commands::cancel_browser_test,
       commands::delete_browser_test,
+      commands::get_testing_chrome_status,
+      commands::open_testing_chrome,
+      commands::save_testing_chrome_path,
       notifications::notify,
     ])
     .setup(|app| {
