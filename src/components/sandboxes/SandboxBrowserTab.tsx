@@ -81,6 +81,8 @@ function ChromeSettings({ sandbox }: { sandbox: Sandbox }) {
   const [target, setTarget] = useState<ChromeTarget>(sandbox.chrome_target)
   const [port, setPort] = useState(sandbox.chrome_sandbox_port?.toString() ?? '')
   const [url, setUrl] = useState(sandbox.chrome_external_url ?? '')
+  const [hostPrep, setHostPrep] = useState(sandbox.chrome_host_prep)
+  const [commands, setCommands] = useState(sandbox.chrome_host_commands.join('\n'))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
@@ -89,13 +91,17 @@ function ChromeSettings({ sandbox }: { sandbox: Sandbox }) {
     setTarget(sandbox.chrome_target)
     setPort(sandbox.chrome_sandbox_port?.toString() ?? '')
     setUrl(sandbox.chrome_external_url ?? '')
+    setHostPrep(sandbox.chrome_host_prep)
+    setCommands(sandbox.chrome_host_commands.join('\n'))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sandbox.id])
 
   const dirty =
     target !== sandbox.chrome_target ||
     port !== (sandbox.chrome_sandbox_port?.toString() ?? '') ||
-    url !== (sandbox.chrome_external_url ?? '')
+    url !== (sandbox.chrome_external_url ?? '') ||
+    hostPrep !== sandbox.chrome_host_prep ||
+    commands !== sandbox.chrome_host_commands.join('\n')
 
   async function save(enabled: boolean) {
     setSaving(true)
@@ -108,6 +114,8 @@ function ChromeSettings({ sandbox }: { sandbox: Sandbox }) {
         target,
         sandboxPort: port.trim() ? Number(port) : null,
         externalUrl: url.trim() || null,
+        hostPrep,
+        hostCommands: commands.split('\n'),
       })
       await useAppStore.getState().loadSandboxes()
       setSaved(true)
@@ -144,7 +152,7 @@ function ChromeSettings({ sandbox }: { sandbox: Sandbox }) {
             selected={target === 'external'}
             onSelect={() => setTarget('external')}
             title="Server on this machine"
-            body="You check out the sandbox's branch here and start the servers yourself. Each test waits for you to press Start."
+            body="Your own checkout of the sandbox's branch, served from this machine. You or Overnight start the servers."
           />
         </div>
       </div>
@@ -163,10 +171,13 @@ function ChromeSettings({ sandbox }: { sandbox: Sandbox }) {
           />
         </label>
       ) : (
-        <label className="flex items-center gap-2 text-xs text-muted-foreground">
-          URL
-          <Input className="max-w-80" placeholder="http://localhost:3000" value={url} onChange={(e) => setUrl(e.target.value)} />
-        </label>
+        <>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            URL
+            <Input className="max-w-80" placeholder="http://localhost:3000" value={url} onChange={(e) => setUrl(e.target.value)} />
+          </label>
+          <HostPrepSettings sandbox={sandbox} enabled={hostPrep} setEnabled={setHostPrep} commands={commands} setCommands={setCommands} />
+        </>
       )}
 
       <div className="flex items-center gap-2">
@@ -181,6 +192,51 @@ function ChromeSettings({ sandbox }: { sandbox: Sandbox }) {
         <p className="text-xs text-muted-foreground">The sandbox is stopped; it gets set up for browser testing when it starts.</p>
       )}
       {error && <p className="text-xs text-destructive">{error}</p>}
+    </div>
+  )
+}
+
+function HostPrepSettings({
+  sandbox,
+  enabled,
+  setEnabled,
+  commands,
+  setCommands,
+}: {
+  sandbox: Sandbox
+  enabled: boolean
+  setEnabled: (on: boolean) => void
+  commands: string
+  setCommands: (value: string) => void
+}) {
+  return (
+    <div className="flex flex-col gap-2 rounded-md bg-muted/40 p-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-col">
+          <span className="text-xs font-medium text-foreground">Prepare this machine automatically</span>
+          <span className="text-xs text-muted-foreground">
+            {sandbox.mode === 'clone'
+              ? 'Before each test, Overnight fetches the branch from the sandbox and checks it out in the project folder, runs the commands below, and waits for the URL. Afterwards it stops the servers and switches back to your branch. It won’t touch a folder with uncommitted changes.'
+              : 'This sandbox is mounted on the project folder, so its branch is already checked out here. Before each test, Overnight runs the commands below and waits for the URL, then stops the servers afterwards.'}
+          </span>
+        </div>
+        <Switch checked={enabled} onCheckedChange={setEnabled} />
+      </div>
+      {enabled ? (
+        <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+          Commands that start your servers, one per line, run in the project folder
+          <textarea
+            rows={3}
+            spellCheck={false}
+            className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 font-mono text-xs text-foreground shadow-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+            placeholder={'pnpm dev\ncd api && pnpm start'}
+            value={commands}
+            onChange={(e) => setCommands(e.target.value)}
+          />
+        </label>
+      ) : (
+        <span className="text-xs text-muted-foreground">Off: each test waits for you to start the servers and press Start.</span>
+      )}
     </div>
   )
 }
@@ -231,6 +287,7 @@ function TestRow({ test, onAction }: { test: BrowserTest; onAction: (command: st
             <Badge variant={test.verdict === 'pass' ? 'default' : 'destructive'}>{test.verdict.toUpperCase()}</Badge>
           )}
           <span className="truncate text-xs text-muted-foreground">
+            {test.status === 'running' && test.progress ? `${test.progress} · ` : ''}
             {test.branch ? `${test.branch} · ` : ''}
             {formatRelativeTime(test.created_at)}
             {test.target_url ? ` · ${test.target_url}` : ''}
