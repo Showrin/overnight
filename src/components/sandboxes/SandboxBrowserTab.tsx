@@ -1,17 +1,16 @@
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { ChevronDown, ChevronRight, Loader2, Plus, Trash2, X } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import { Loader2, Plus, Trash2, X } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { formatRelativeTime } from '@/lib/sandboxDisplay'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
-import { MARKDOWN_CLASS } from './SandboxPlansTab'
+import { MarkdownDocument } from './MarkdownDocument'
 import type { BrowserTest, BrowserTestStatus, ChromeTarget, HostServer, Sandbox } from './types'
 
 const DEFAULT_SANDBOX_PORT = 8080
@@ -20,8 +19,11 @@ const DEFAULT_SANDBOX_PORT = 8080
 // backend's `browser-tests-changed` event.
 export function SandboxBrowserTab({ sandbox }: { sandbox: Sandbox }) {
   const [tests, setTests] = useState<BrowserTest[]>([])
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // Falls back to the newest test, so a fresh request shows up selected.
+  const selected = tests.find((t) => t.id === selectedId) ?? tests[0] ?? null
 
   async function load() {
     try {
@@ -64,13 +66,20 @@ export function SandboxBrowserTab({ sandbox }: { sandbox: Sandbox }) {
         {error && <p className="text-xs text-destructive">{error}</p>}
         {loading ? (
           <Loader2 className="size-4 animate-spin text-muted-foreground" />
-        ) : tests.length === 0 ? (
+        ) : tests.length === 0 || !selected ? (
           <p className="text-xs text-muted-foreground">
             No tests yet. With Claude in Chrome on, ask the sandbox agent to browser-test its work (it has a
             <code className="mx-1">browser-test</code>skill for this).
           </p>
         ) : (
-          tests.map((test) => <TestRow key={test.id} test={test} onAction={act} />)
+          <div className="flex h-[36rem] min-h-0 gap-4">
+            <div className="flex w-56 shrink-0 flex-col gap-1 overflow-auto border-r border-border pr-2">
+              {tests.map((test) => (
+                <TestListItem key={test.id} test={test} selected={test.id === selected.id} onSelect={() => setSelectedId(test.id)} />
+              ))}
+            </div>
+            <TestDetail key={selected.id} test={selected} onAction={act} />
+          </div>
         )}
       </div>
     </div>
@@ -316,32 +325,58 @@ const STATUS_LABEL: Record<BrowserTestStatus, string> = {
   cancelled: 'Cancelled',
 }
 
-function TestRow({ test, onAction }: { test: BrowserTest; onAction: (command: string, id: string) => void }) {
-  const [open, setOpen] = useState(false)
-  // null = show the report once there is one, else the plan.
-  const [chosenView, setView] = useState<'report' | 'plan' | null>(null)
-  const view = chosenView ?? (test.report ? 'report' : 'plan')
+function StatusBadges({ test }: { test: BrowserTest }) {
+  return (
+    <>
+      <Badge variant={test.status === 'failed' ? 'destructive' : test.status === 'done' ? 'secondary' : 'outline'}>
+        {test.status === 'running' && <Loader2 className="size-3 animate-spin" />}
+        {STATUS_LABEL[test.status]}
+      </Badge>
+      {test.verdict && <Badge variant={test.verdict === 'pass' ? 'default' : 'destructive'}>{test.verdict.toUpperCase()}</Badge>}
+    </>
+  )
+}
+
+function TestListItem({ test, selected, onSelect }: { test: BrowserTest; selected: boolean; onSelect: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={cn(
+        'flex flex-col gap-1 rounded-md px-2 py-1.5 text-left',
+        selected ? 'bg-muted text-foreground/70' : 'text-muted-foreground/70 hover:bg-muted/50',
+      )}
+    >
+      <span className="flex items-center gap-1">
+        <StatusBadges test={test} />
+      </span>
+      <span className="truncate text-xs">{test.branch ?? 'No branch'}</span>
+      <span className="text-xs text-muted-foreground/60">{formatRelativeTime(test.created_at)}</span>
+    </button>
+  )
+}
+
+// Keyed by test id, so switching tests resets the chosen document tab.
+function TestDetail({ test, onAction }: { test: BrowserTest; onAction: (command: string, id: string) => void }) {
+  // null = show the host's report once there is one, else the handoff.
+  const [chosenTab, setTab] = useState<'handoff' | 'report' | null>(null)
+  const tab = chosenTab ?? (test.report ? 'report' : 'handoff')
   const pending = test.status === 'queued' || test.status === 'running'
 
   return (
-    <div className="flex flex-col rounded-lg border border-border">
-      <div className="flex items-center gap-2 p-2">
-        <button type="button" onClick={() => setOpen(!open)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
-          {open ? <ChevronDown className="size-3.5 shrink-0" /> : <ChevronRight className="size-3.5 shrink-0" />}
-          <Badge variant={test.status === 'failed' ? 'destructive' : test.status === 'done' ? 'secondary' : 'outline'}>
-            {test.status === 'running' && <Loader2 className="size-3 animate-spin" />}
-            {STATUS_LABEL[test.status]}
-          </Badge>
-          {test.verdict && (
-            <Badge variant={test.verdict === 'pass' ? 'default' : 'destructive'}>{test.verdict.toUpperCase()}</Badge>
-          )}
-          <span className="truncate text-xs text-muted-foreground">
-            {test.status === 'running' && test.progress ? `${test.progress} · ` : ''}
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
+      <div className="flex items-start gap-2">
+        <div className="flex min-w-0 flex-1 flex-col gap-1 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1.5">
+            <StatusBadges test={test} />
+            {test.status === 'running' && test.progress && <span>{test.progress}…</span>}
+          </span>
+          <span className="truncate">
             {test.branch ? `${test.branch} · ` : ''}
-            {formatRelativeTime(test.created_at)}
+            Requested {formatRelativeTime(test.created_at)}
             {test.target_url ? ` · ${test.target_url}` : ''}
           </span>
-        </button>
+        </div>
         {pending ? (
           <Button size="sm" variant="ghost" onClick={() => onAction('cancel_browser_test', test.id)}>
             <X className="size-3.5" />
@@ -353,25 +388,33 @@ function TestRow({ test, onAction }: { test: BrowserTest; onAction: (command: st
           </Button>
         )}
       </div>
+      {test.error && <p className="text-xs text-destructive">{test.error}</p>}
 
-      {open && (
-        <div className="flex flex-col gap-3 border-t border-border p-3">
-          {test.error && <p className="text-xs text-destructive">{test.error}</p>}
-          <div className="flex gap-3 text-xs">
-            {test.report && (
-              <button type="button" onClick={() => setView('report')} className={cn(view === 'report' ? 'font-medium text-foreground' : 'text-muted-foreground')}>
-                Report
-              </button>
-            )}
-            <button type="button" onClick={() => setView('plan')} className={cn(view === 'plan' ? 'font-medium text-foreground' : 'text-muted-foreground')}>
-              Test plan
-            </button>
-          </div>
-          <div className={MARKDOWN_CLASS}>
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{view === 'report' && test.report ? test.report : test.doc}</ReactMarkdown>
-          </div>
-        </div>
-      )}
+      <Tabs value={tab} onValueChange={(value) => setTab(value as 'handoff' | 'report')} className="flex min-h-0 flex-1 flex-col">
+        <TabsList>
+          <TabsTrigger value="handoff">Sandbox handoff</TabsTrigger>
+          <TabsTrigger value="report">Host report</TabsTrigger>
+        </TabsList>
+        <TabsContent value="handoff" className="min-h-0 flex-1 overflow-auto rounded-md border border-border p-4">
+          <MarkdownDocument content={test.doc} />
+        </TabsContent>
+        <TabsContent value="report" className="min-h-0 flex-1 overflow-auto rounded-md border border-border p-4">
+          {test.report ? <MarkdownDocument content={test.report} /> : <p className="text-xs text-muted-foreground">{reportPlaceholder(test)}</p>}
+        </TabsContent>
+      </Tabs>
     </div>
   )
+}
+
+function reportPlaceholder(test: BrowserTest): string {
+  switch (test.status) {
+    case 'queued':
+      return 'Waiting for the host browser. The report appears here when the test finishes.'
+    case 'running':
+      return `${test.progress ?? 'Testing'}… The report appears here when the test finishes.`
+    case 'cancelled':
+      return 'This test was cancelled before the host agent reported back.'
+    default:
+      return 'The host agent didn’t send a report. See the error above.'
+  }
 }
