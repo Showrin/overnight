@@ -178,7 +178,7 @@ function ChromeSettings({ sandbox }: { sandbox: Sandbox }) {
           </label>
           <p className="text-xs text-muted-foreground">
             {sandbox.mode === 'clone'
-              ? 'Before each test, Overnight fetches the sandbox’s branch and checks it out in the project folder, so your running servers serve its changes. Then it tests once the URL responds. It won’t touch a folder with uncommitted changes, and it leaves the branch checked out afterwards.'
+              ? 'Before each test, Overnight pulls the sandbox’s latest commits into the project folder, checking its branch out first if you’re on another one, so your running servers serve the changes. Then it tests once the URL responds. It never overwrites uncommitted changes, and it leaves the branch checked out afterwards.'
               : 'This sandbox is mounted on the project folder, so your servers already serve its changes. Each test starts once the URL responds.'}
           </p>
           {SHOW_HOST_SERVERS && (

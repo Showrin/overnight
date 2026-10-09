@@ -151,11 +151,14 @@ pub fn checkout(repo_path: &str, branch: &str) -> Result<()> {
 
 /// Brings `branch` from a clone-mode sandbox's `sandbox-<sbx_name>` remote
 /// into the host repo and checks it out, for browser testing on the host.
-/// Same safety rules as Git Sync: refuses with uncommitted changes, and
-/// only creates or fast-forwards the local branch, never force-updates it.
+/// Already on `branch`, this is just a pull: a fast-forward that git itself
+/// refuses if it would overwrite local edits. Switching branches refuses
+/// any uncommitted changes up front. Never force-updates the local branch.
 /// Returns the branch that was checked out before, to switch back to.
 pub fn checkout_sandbox_branch(repo_path: &str, sbx_name: &str, branch: &str) -> Result<Option<String>> {
-  if has_tracked_changes(repo_path)? {
+  let previous = current_branch(repo_path);
+  let switching = previous.as_deref() != Some(branch);
+  if switching && has_tracked_changes(repo_path)? {
     return Err(Error::CommandFailed(format!(
       "{repo_path} has uncommitted changes — commit or stash them so Overnight can check out {branch}"
     )));
@@ -166,8 +169,14 @@ pub fn checkout_sandbox_branch(repo_path: &str, sbx_name: &str, branch: &str) ->
   if !ref_exists(repo_path, &target_ref) {
     return Err(Error::CommandFailed(format!("the sandbox has no branch named {branch} — has it been committed?")));
   }
-  let previous = current_branch(repo_path);
-  match sync_branch(repo_path, branch, &target_ref)?.status {
+  let synced = sync_branch(repo_path, branch, &target_ref).map_err(|e| {
+    if switching {
+      e
+    } else {
+      Error::CommandFailed(format!("couldn't pull {branch} from the sandbox — your uncommitted changes may conflict with it: {e}"))
+    }
+  })?;
+  match synced.status {
     BranchSyncStatus::NeedsManualMerge => {
       return Err(Error::CommandFailed(format!(
         "your local {branch} has diverged from the sandbox's — merge them by hand, then test again"
@@ -178,7 +187,7 @@ pub fn checkout_sandbox_branch(repo_path: &str, sbx_name: &str, branch: &str) ->
     }
     BranchSyncStatus::FastForwarded => {}
   }
-  if previous.as_deref() != Some(branch) {
+  if switching {
     checkout(repo_path, branch)?;
   }
   Ok(previous)
@@ -294,6 +303,30 @@ mod tests {
 
     checkout(host, "main").unwrap();
     assert_eq!(current_branch(host).as_deref(), Some("main"));
+    fs::remove_dir_all(host_dir).unwrap();
+    fs::remove_dir_all(sandbox_dir).unwrap();
+  }
+
+  #[test]
+  fn already_on_the_branch_just_pulls_around_unrelated_edits() {
+    let (host_dir, sandbox_dir) = host_and_sandbox();
+    let (host, sandbox) = (host_dir.to_str().unwrap(), sandbox_dir.to_str().unwrap());
+    run(sandbox, &["checkout", "-q", "-b", "feat/pull"]).unwrap();
+    commit(sandbox, "page.txt", "v1");
+    checkout_sandbox_branch(host, "test", "feat/pull").unwrap();
+
+    let latest = commit(sandbox, "page.txt", "v2");
+    fs::write(format!("{host}/a.txt"), "my local edit").unwrap();
+    assert_eq!(checkout_sandbox_branch(host, "test", "feat/pull").unwrap().as_deref(), Some("feat/pull"));
+    assert_eq!(run(host, &["rev-parse", "HEAD"]).unwrap(), latest);
+    assert_eq!(fs::read_to_string(format!("{host}/page.txt")).unwrap(), "v2");
+    assert_eq!(fs::read_to_string(format!("{host}/a.txt")).unwrap(), "my local edit");
+
+    commit(sandbox, "page.txt", "v3");
+    fs::write(format!("{host}/page.txt"), "conflicting edit").unwrap();
+    assert!(checkout_sandbox_branch(host, "test", "feat/pull").unwrap_err().to_string().contains("couldn't pull feat/pull"));
+    assert_eq!(fs::read_to_string(format!("{host}/page.txt")).unwrap(), "conflicting edit");
+
     fs::remove_dir_all(host_dir).unwrap();
     fs::remove_dir_all(sandbox_dir).unwrap();
   }

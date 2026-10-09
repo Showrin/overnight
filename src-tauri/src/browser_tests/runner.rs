@@ -229,7 +229,8 @@ async fn prepare_host(
   let previous = if sandbox.mode == "clone" {
     let branch = test.branch.clone().ok_or("the test didn't say which branch to check out")?;
     let name = sandbox.sbx_name.clone().ok_or("sandbox has no sbx sandbox")?;
-    set_progress(hub, &test.id, &format!("Checking out {branch} on this machine"));
+    let action = if crate::git::current_branch(&repo_path).as_deref() == Some(branch.as_str()) { "Pulling" } else { "Checking out" };
+    set_progress(hub, &test.id, &format!("{action} {branch} from the sandbox"));
     let repo = repo_path.clone();
     tokio::task::spawn_blocking(move || crate::git::checkout_sandbox_branch(&repo, &name, &branch))
       .await
