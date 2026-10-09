@@ -55,15 +55,22 @@ export interface Sandbox {
   // In-sandbox app port; null = 8080.
   chrome_sandbox_port: number | null
   chrome_external_url: string | null
-  // External target only: Overnight checks the branch out on the host and
-  // runs chrome_host_commands itself before each test.
+  // External target only: Overnight also starts chrome_host_servers itself
+  // before each test, instead of the user running them. Not shown in the UI
+  // yet (see SHOW_HOST_SERVERS).
   chrome_host_prep: boolean
-  chrome_host_commands: string[]
+  chrome_host_servers: HostServer[]
+}
+
+export interface HostServer {
+  command: string
+  // Also wait for this URL before testing (e.g. an API the app needs).
+  ready_url: string | null
 }
 
 export type ChromeTarget = 'sandbox' | 'external'
 
-export type BrowserTestStatus = 'awaiting_host' | 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
+export type BrowserTestStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
 
 export interface BrowserTest {
   id: string

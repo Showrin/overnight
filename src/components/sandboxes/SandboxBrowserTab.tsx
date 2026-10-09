@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { ChevronDown, ChevronRight, Loader2, Play, Plus, Trash2, X } from 'lucide-react'
+import { ChevronDown, ChevronRight, Loader2, Plus, Trash2, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Badge } from '@/components/ui/badge'
@@ -12,7 +12,7 @@ import { formatRelativeTime } from '@/lib/sandboxDisplay'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
 import { MARKDOWN_CLASS } from './SandboxPlansTab'
-import type { BrowserTest, BrowserTestStatus, ChromeTarget, Sandbox } from './types'
+import type { BrowserTest, BrowserTestStatus, ChromeTarget, HostServer, Sandbox } from './types'
 
 const DEFAULT_SANDBOX_PORT = 8080
 
@@ -82,7 +82,7 @@ function ChromeSettings({ sandbox }: { sandbox: Sandbox }) {
   const [port, setPort] = useState(sandbox.chrome_sandbox_port?.toString() ?? '')
   const [url, setUrl] = useState(sandbox.chrome_external_url ?? '')
   const [hostPrep, setHostPrep] = useState(sandbox.chrome_host_prep)
-  const [commands, setCommands] = useState(() => initialCommands(sandbox))
+  const [servers, setServers] = useState(() => initialServers(sandbox))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
@@ -92,7 +92,7 @@ function ChromeSettings({ sandbox }: { sandbox: Sandbox }) {
     setPort(sandbox.chrome_sandbox_port?.toString() ?? '')
     setUrl(sandbox.chrome_external_url ?? '')
     setHostPrep(sandbox.chrome_host_prep)
-    setCommands(initialCommands(sandbox))
+    setServers(initialServers(sandbox))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sandbox.id])
 
@@ -101,7 +101,7 @@ function ChromeSettings({ sandbox }: { sandbox: Sandbox }) {
     port !== (sandbox.chrome_sandbox_port?.toString() ?? '') ||
     url !== (sandbox.chrome_external_url ?? '') ||
     hostPrep !== sandbox.chrome_host_prep ||
-    nonEmpty(commands).join('\n') !== sandbox.chrome_host_commands.join('\n')
+    JSON.stringify(filledServers(servers)) !== JSON.stringify(sandbox.chrome_host_servers)
 
   async function save(enabled: boolean) {
     setSaving(true)
@@ -115,7 +115,7 @@ function ChromeSettings({ sandbox }: { sandbox: Sandbox }) {
         sandboxPort: port.trim() ? Number(port) : null,
         externalUrl: url.trim() || null,
         hostPrep,
-        hostCommands: nonEmpty(commands),
+        hostServers: filledServers(servers),
       })
       await useAppStore.getState().loadSandboxes()
       setSaved(true)
@@ -152,7 +152,7 @@ function ChromeSettings({ sandbox }: { sandbox: Sandbox }) {
             selected={target === 'external'}
             onSelect={() => setTarget('external')}
             title="Server on this machine"
-            body="Your own checkout of the sandbox's branch, served from this machine. You or Overnight start the servers."
+            body="Servers you run in the project folder. Overnight checks out the sandbox's branch there before each test."
           />
         </div>
       </div>
@@ -176,7 +176,14 @@ function ChromeSettings({ sandbox }: { sandbox: Sandbox }) {
             URL
             <Input className="max-w-80" placeholder="http://localhost:3000" value={url} onChange={(e) => setUrl(e.target.value)} />
           </label>
-          <HostPrepSettings sandbox={sandbox} enabled={hostPrep} setEnabled={setHostPrep} commands={commands} setCommands={setCommands} />
+          <p className="text-xs text-muted-foreground">
+            {sandbox.mode === 'clone'
+              ? 'Before each test, Overnight fetches the sandbox’s branch and checks it out in the project folder, so your running servers serve its changes. Then it tests once the URL responds. It won’t touch a folder with uncommitted changes, and it leaves the branch checked out afterwards.'
+              : 'This sandbox is mounted on the project folder, so your servers already serve its changes. Each test starts once the URL responds.'}
+          </p>
+          {SHOW_HOST_SERVERS && (
+            <HostServerSettings enabled={hostPrep} setEnabled={setHostPrep} servers={servers} setServers={setServers} />
+          )}
         </>
       )}
 
@@ -196,83 +203,92 @@ function ChromeSettings({ sandbox }: { sandbox: Sandbox }) {
   )
 }
 
-function HostPrepSettings({
-  sandbox,
+// Lets Overnight start the host servers itself (each with an optional
+// ready URL to wait for). Fully supported by the backend; hidden until it's
+// wanted.
+const SHOW_HOST_SERVERS = false
+
+const EMPTY_SERVER: HostServer = { command: '', ready_url: null }
+
+function HostServerSettings({
   enabled,
   setEnabled,
-  commands,
-  setCommands,
+  servers,
+  setServers,
 }: {
-  sandbox: Sandbox
   enabled: boolean
   setEnabled: (on: boolean) => void
-  commands: string[]
-  setCommands: (commands: string[]) => void
+  servers: HostServer[]
+  setServers: (servers: HostServer[]) => void
 }) {
-  const update = (index: number, value: string) => setCommands(commands.map((c, i) => (i === index ? value : c)))
+  const update = (index: number, patch: Partial<HostServer>) =>
+    setServers(servers.map((s, i) => (i === index ? { ...s, ...patch } : s)))
   const remove = (index: number) => {
-    const rest = commands.filter((_, i) => i !== index)
-    setCommands(rest.length ? rest : [''])
+    const rest = servers.filter((_, i) => i !== index)
+    setServers(rest.length ? rest : [EMPTY_SERVER])
   }
 
   return (
     <div className="flex flex-col gap-2 rounded-md bg-muted/40 p-2">
       <div className="flex items-center justify-between gap-2">
         <div className="flex flex-col">
-          <span className="text-xs font-medium text-foreground">Prepare this machine automatically</span>
+          <span className="text-xs font-medium text-foreground">Start the servers for me</span>
           <span className="text-xs text-muted-foreground">
-            {sandbox.mode === 'clone'
-              ? 'Before each test, Overnight fetches the branch from the sandbox and checks it out in the project folder, runs the commands below, and waits for the URL. Afterwards it stops the servers and switches back to your branch. It won’t touch a folder with uncommitted changes.'
-              : 'This sandbox is mounted on the project folder, so its branch is already checked out here. Before each test, Overnight runs the commands below and waits for the URL, then stops the servers afterwards.'}
+            Overnight runs these from the project folder before each test, each in its own shell, and waits for the URL and
+            every ready URL. Afterwards it stops them and switches back to your branch.
           </span>
         </div>
         <Switch checked={enabled} onCheckedChange={setEnabled} />
       </div>
-      {enabled ? (
+      {enabled && (
         <div className="flex flex-col gap-1.5">
-          <span className="text-xs text-muted-foreground">
-            Server commands. Each one runs in its own shell from the project folder, and all of them run at once.
-          </span>
-          {commands.map((command, i) => (
+          {servers.map((server, i) => (
             <div key={i} className="flex items-center gap-2">
               <span className="w-16 shrink-0 text-xs text-muted-foreground">Server {i + 1}</span>
               <Input
                 className="h-8 font-mono text-xs"
                 spellCheck={false}
                 placeholder={i === 0 ? 'pnpm dev' : 'cd api && pnpm start'}
-                value={command}
-                onChange={(e) => update(i, e.target.value)}
+                value={server.command}
+                onChange={(e) => update(i, { command: e.target.value })}
+              />
+              <Input
+                className="h-8 max-w-56 text-xs"
+                placeholder="Ready URL (optional)"
+                value={server.ready_url ?? ''}
+                onChange={(e) => update(i, { ready_url: e.target.value || null })}
               />
               <Button
                 size="sm"
                 variant="ghost"
                 title="Remove this server"
-                disabled={commands.length === 1 && !command}
+                disabled={servers.length === 1 && !server.command}
                 onClick={() => remove(i)}
               >
                 <X className="size-3.5" />
               </Button>
             </div>
           ))}
-          <Button size="sm" variant="outline" className="w-fit" onClick={() => setCommands([...commands, ''])}>
+          <Button size="sm" variant="outline" className="w-fit" onClick={() => setServers([...servers, EMPTY_SERVER])}>
             <Plus className="size-3.5" />
             Add server
           </Button>
         </div>
-      ) : (
-        <span className="text-xs text-muted-foreground">Off: each test waits for you to start the servers and press Start.</span>
       )}
     </div>
   )
 }
 
 // Always at least one (possibly empty) row to type into.
-function initialCommands(sandbox: Sandbox): string[] {
-  return sandbox.chrome_host_commands.length ? [...sandbox.chrome_host_commands] : ['']
+function initialServers(sandbox: Sandbox): HostServer[] {
+  return sandbox.chrome_host_servers.length ? sandbox.chrome_host_servers.map((s) => ({ ...s })) : [EMPTY_SERVER]
 }
 
-function nonEmpty(commands: string[]): string[] {
-  return commands.map((c) => c.trim()).filter(Boolean)
+// What the backend keeps: blank rows dropped, blank ready URLs as null.
+function filledServers(servers: HostServer[]): HostServer[] {
+  return servers
+    .map((s) => ({ command: s.command.trim(), ready_url: s.ready_url?.trim() || null }))
+    .filter((s) => s.command)
 }
 
 function TargetOption({ selected, onSelect, title, body }: { selected: boolean; onSelect: () => void; title: string; body: string }) {
@@ -293,7 +309,6 @@ function TargetOption({ selected, onSelect, title, body }: { selected: boolean; 
 }
 
 const STATUS_LABEL: Record<BrowserTestStatus, string> = {
-  awaiting_host: 'Waiting for you',
   queued: 'Queued',
   running: 'Testing',
   done: 'Done',
@@ -302,14 +317,14 @@ const STATUS_LABEL: Record<BrowserTestStatus, string> = {
 }
 
 function TestRow({ test, onAction }: { test: BrowserTest; onAction: (command: string, id: string) => void }) {
-  const [open, setOpen] = useState(test.status === 'awaiting_host')
+  const [open, setOpen] = useState(false)
   // null = show the report once there is one, else the plan.
   const [chosenView, setView] = useState<'report' | 'plan' | null>(null)
   const view = chosenView ?? (test.report ? 'report' : 'plan')
-  const pending = test.status === 'awaiting_host' || test.status === 'queued' || test.status === 'running'
+  const pending = test.status === 'queued' || test.status === 'running'
 
   return (
-    <div className={cn('flex flex-col rounded-lg border border-border', test.status === 'awaiting_host' && 'ring-2 ring-primary/40')}>
+    <div className="flex flex-col rounded-lg border border-border">
       <div className="flex items-center gap-2 p-2">
         <button type="button" onClick={() => setOpen(!open)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
           {open ? <ChevronDown className="size-3.5 shrink-0" /> : <ChevronRight className="size-3.5 shrink-0" />}
@@ -327,12 +342,6 @@ function TestRow({ test, onAction }: { test: BrowserTest; onAction: (command: st
             {test.target_url ? ` · ${test.target_url}` : ''}
           </span>
         </button>
-        {test.status === 'awaiting_host' && (
-          <Button size="sm" onClick={() => onAction('start_browser_test', test.id)}>
-            <Play className="size-3.5" />
-            Start
-          </Button>
-        )}
         {pending ? (
           <Button size="sm" variant="ghost" onClick={() => onAction('cancel_browser_test', test.id)}>
             <X className="size-3.5" />
@@ -347,12 +356,6 @@ function TestRow({ test, onAction }: { test: BrowserTest; onAction: (command: st
 
       {open && (
         <div className="flex flex-col gap-3 border-t border-border p-3">
-          {test.status === 'awaiting_host' && (
-            <p className="text-xs text-foreground">
-              Check out {test.branch ? <code>{test.branch}</code> : 'the sandbox’s branch'} on this machine, start its
-              servers, then press Start.
-            </p>
-          )}
           {test.error && <p className="text-xs text-destructive">{test.error}</p>}
           <div className="flex gap-3 text-xs">
             {test.report && (
