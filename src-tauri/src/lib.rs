@@ -133,7 +133,6 @@ pub fn run() {
       commands::read_daemon_log,
       commands::save_sandbox_chrome_settings,
       commands::list_browser_tests,
-      commands::start_browser_test,
       commands::cancel_browser_test,
       commands::delete_browser_test,
       commands::get_testing_chrome_status,
@@ -183,7 +182,6 @@ pub fn run() {
         browser_tests::Hub::new(pool.clone(), move |test| {
           let _ = app_handle.emit(browser_tests::CHANGED_EVENT, test);
           let message = match test.status.as_str() {
-            "awaiting_host" => Some(("Browser test waiting", "Start your servers on this machine, then press Start in the sandbox's Browser tab.")),
             "done" => Some(("Browser test finished", "The report is ready in the sandbox's Browser tab.")),
             "failed" => Some(("Browser test failed", "See the sandbox's Browser tab for details.")),
             _ => None,

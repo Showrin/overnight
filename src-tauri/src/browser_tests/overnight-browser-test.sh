@@ -67,7 +67,6 @@ wait_for() {
     progress=$(printf '%s' "$json" | jq -r '.progress // empty')
     if [ "$status" != "$last" ]; then
       case $status in
-        awaiting_host) echo "Waiting for the user to start the app on the host and press Start in Overnight..." >&2 ;;
         queued) echo "Queued for the host browser..." >&2 ;;
       esac
       last=$status

@@ -1,25 +1,34 @@
-//! Runs the user's own server commands on the host for an external-target
-//! browser test: starts each one from the project folder, waits for the app
-//! URL to answer, and stops every process tree it started afterwards.
+//! The host side of an external-target browser test: optionally starts the
+//! user's server commands from the project folder, waits for the app (and
+//! each server's ready URL) to answer, and stops every process tree it
+//! started afterwards.
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use crate::db::models::HostServer;
+
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
 const LOG_TAIL_LINES: usize = 40;
 
+/// Servers this run started (none when the user runs their own), plus the
+/// URLs that must answer before testing.
+#[derive(Default)]
 pub struct HostServers {
   servers: Vec<(String, Child, PathBuf)>,
+  ready_urls: Vec<String>,
 }
 
 impl HostServers {
-  /// Starts every command in `cwd`, logging each one's output to a file in
+  /// Starts every server in `cwd`, logging each one's output to a file in
   /// `log_dir`. Stops whatever already started if a later one can't spawn.
-  pub fn start(commands: &[String], cwd: &Path, log_dir: &Path) -> Result<Self, String> {
-    let mut started = Self { servers: Vec::new() };
-    for (i, command) in commands.iter().enumerate() {
+  pub fn start(servers: &[HostServer], cwd: &Path, log_dir: &Path) -> Result<Self, String> {
+    let mut started = Self::default();
+    for (i, server) in servers.iter().enumerate() {
+      let command = &server.command;
+      started.ready_urls.extend(server.ready_url.clone());
       let log_path = log_dir.join(format!("server-{}.log", i + 1));
       let log = File::create(&log_path).map_err(|e| format!("couldn't create {}: {e}", log_path.display()))?;
       let log_err = log.try_clone().map_err(|e| e.to_string())?;
@@ -31,31 +40,45 @@ impl HostServers {
     Ok(started)
   }
 
-  /// Polls `url` until it gives any HTTP response. Fails early, with the
-  /// log tail, if a server exits first, and on `timeout`.
+  /// Polls `url` and every server's ready URL until each gives any HTTP
+  /// response. Fails early, with the log tail, if a started server exits
+  /// first, and on `timeout`.
   pub async fn wait_until_up(&mut self, url: &str, timeout: Duration) -> Result<(), String> {
-    let client = reqwest::Client::builder()
-      .timeout(Duration::from_secs(3))
-      .danger_accept_invalid_certs(true)
-      .build()
-      .map_err(|e| e.to_string())?;
+    let mut pending: Vec<String> = std::iter::once(url.to_string()).chain(self.ready_urls.iter().cloned()).collect();
+    pending.dedup();
     let deadline = Instant::now() + timeout;
     loop {
       for (command, child, log) in &mut self.servers {
         if let Ok(Some(status)) = child.try_wait() {
-          return Err(format!("`{command}` exited ({status}) before {url} came up:\n{}", log_tail(log)));
+          return Err(format!("`{command}` exited ({status}) before {} came up:\n{}", pending.join(", "), log_tail(log)));
         }
       }
-      if client.get(url).send().await.is_ok() {
+      let mut still_down = Vec::new();
+      for url in pending {
+        if !is_up(&url).await {
+          still_down.push(url);
+        }
+      }
+      pending = still_down;
+      if pending.is_empty() {
         return Ok(());
       }
       if Instant::now() >= deadline {
         let logs: Vec<String> = self.servers.iter().map(|(command, _, log)| format!("`{command}`:\n{}", log_tail(log))).collect();
-        return Err(format!("{url} didn't respond within {}s.\n{}", timeout.as_secs(), logs.join("\n")));
+        return Err(format!("{} didn't respond within {}s.\n{}", pending.join(", "), timeout.as_secs(), logs.join("\n")).trim_end().to_string());
       }
       tokio::time::sleep(POLL_INTERVAL).await;
     }
   }
+}
+
+/// Whether `url` gives any HTTP response at all — a 404 or 500 still means
+/// the server is up.
+pub async fn is_up(url: &str) -> bool {
+  let Ok(client) = reqwest::Client::builder().timeout(Duration::from_secs(3)).danger_accept_invalid_certs(true).build() else {
+    return false;
+  };
+  client.get(url).send().await.is_ok()
 }
 
 /// Stops each server's whole process tree — `pnpm dev` and friends spawn
@@ -129,10 +152,22 @@ mod tests {
   #[cfg(not(target_os = "windows"))]
   const LONG_RUNNING: &str = "sleep 60";
 
+  fn server(command: &str, ready_url: Option<&str>) -> HostServer {
+    HostServer { command: command.to_string(), ready_url: ready_url.map(String::from) }
+  }
+
+  async fn serve_ok() -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let app = axum::Router::new().route("/", axum::routing::get(|| async { "ok" }));
+    tokio::spawn(async move { axum::serve(listener, app).await });
+    url
+  }
+
   #[tokio::test]
   async fn reports_a_server_that_exits_early_with_its_output() {
     let dir = temp_dir();
-    let mut servers = HostServers::start(&["echo \"boom from server\" && exit 3".to_string()], &dir, &dir).unwrap();
+    let mut servers = HostServers::start(&[server("echo \"boom from server\" && exit 3", None)], &dir, &dir).unwrap();
     let err = servers.wait_until_up("http://127.0.0.1:1", Duration::from_secs(20)).await.unwrap_err();
     assert!(err.contains("exited"), "{err}");
     assert!(err.contains("boom from server"), "{err}");
@@ -141,12 +176,9 @@ mod tests {
   #[tokio::test]
   async fn waits_for_the_url_then_stops_the_servers() {
     let dir = temp_dir();
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let app = axum::Router::new().route("/", axum::routing::get(|| async { "ok" }));
-    tokio::spawn(async move { axum::serve(listener, app).await });
+    let url = serve_ok().await;
 
-    let mut servers = HostServers::start(&[LONG_RUNNING.to_string()], &dir, &dir).unwrap();
+    let mut servers = HostServers::start(&[server(LONG_RUNNING, None)], &dir, &dir).unwrap();
     servers.wait_until_up(&url, Duration::from_secs(20)).await.unwrap();
     let pid = servers.servers[0].1.id();
     drop(servers);
@@ -159,8 +191,28 @@ mod tests {
   #[tokio::test]
   async fn times_out_with_logs() {
     let dir = temp_dir();
-    let mut servers = HostServers::start(&[LONG_RUNNING.to_string()], &dir, &dir).unwrap();
+    let mut servers = HostServers::start(&[server(LONG_RUNNING, None)], &dir, &dir).unwrap();
     let err = servers.wait_until_up("http://127.0.0.1:1", Duration::from_secs(2)).await.unwrap_err();
     assert!(err.contains("didn't respond within 2s"), "{err}");
+  }
+
+  #[tokio::test]
+  async fn also_waits_for_each_servers_ready_url() {
+    let dir = temp_dir();
+    let app_url = serve_ok().await;
+    let mut servers = HostServers::start(&[server(LONG_RUNNING, Some("http://127.0.0.1:1/health"))], &dir, &dir).unwrap();
+    let err = servers.wait_until_up(&app_url, Duration::from_secs(2)).await.unwrap_err();
+    assert!(err.starts_with("http://127.0.0.1:1/health didn't respond"), "{err}");
+
+    let api_url = serve_ok().await;
+    let mut servers = HostServers::start(&[server(LONG_RUNNING, Some(&api_url))], &dir, &dir).unwrap();
+    servers.wait_until_up(&app_url, Duration::from_secs(10)).await.unwrap();
+  }
+
+  #[tokio::test]
+  async fn without_servers_just_waits_for_the_url() {
+    let url = serve_ok().await;
+    HostServers::default().wait_until_up(&url, Duration::from_secs(10)).await.unwrap();
+    assert!(!is_up("http://127.0.0.1:1").await);
   }
 }

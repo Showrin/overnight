@@ -3223,16 +3223,6 @@ pub fn list_browser_tests(pool: State<'_, DbPool>, sandbox_id: String) -> std::r
   crate::db::browser_tests::list_for_sandbox(&conn, &sandbox_id).map_err(|e| e.to_string())
 }
 
-/// Releases an external-target test once the user has the branch checked
-/// out and its servers running on the host.
-#[tauri::command]
-pub fn start_browser_test(hub: State<'_, crate::browser_tests::Hub>, id: String) -> std::result::Result<crate::db::models::BrowserTest, String> {
-  let conn = hub.pool.get().map_err(|e| e.to_string())?;
-  let test = crate::db::browser_tests::release_to_queue(&conn, &id).map_err(|e| e.to_string())?;
-  hub.changed(&test);
-  Ok(test)
-}
-
 #[tauri::command]
 pub fn cancel_browser_test(hub: State<'_, crate::browser_tests::Hub>, id: String) -> std::result::Result<crate::db::models::BrowserTest, String> {
   hub.cancel(&id)
@@ -3258,14 +3248,14 @@ pub async fn save_sandbox_chrome_settings(
   sandbox_port: Option<i64>,
   external_url: Option<String>,
   host_prep: bool,
-  host_commands: Vec<String>,
+  host_servers: Vec<crate::db::models::HostServer>,
 ) -> std::result::Result<Sandbox, String> {
   let pool = pool.inner().clone();
   let sandbox = {
     let mut conn = pool.get().map_err(|e| e.to_string())?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     sandboxes::set_chrome_settings(&tx, &id, enabled, &target, sandbox_port, external_url.as_deref()).map_err(|e| e.to_string())?;
-    let sandbox = sandboxes::set_chrome_host_prep(&tx, &id, host_prep, &host_commands).map_err(|e| e.to_string())?;
+    let sandbox = sandboxes::set_chrome_host_prep(&tx, &id, host_prep, &host_servers).map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
     sandbox
   };

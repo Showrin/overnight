@@ -93,14 +93,11 @@ fn authorize(hub: &Hub, headers: &HeaderMap) -> Result<Sandbox, ApiError> {
 struct Health {
   ok: bool,
   target: String,
-  /// Whether Overnight checks the branch out and starts the servers on the
-  /// host itself (external target only).
-  host_prep: bool,
 }
 
 async fn health(State(hub): State<Hub>, headers: HeaderMap) -> Result<Json<Health>, ApiError> {
   let sandbox = authorize(&hub, &headers)?;
-  Ok(Json(Health { ok: true, target: sandbox.chrome_target, host_prep: sandbox.chrome_host_prep }))
+  Ok(Json(Health { ok: true, target: sandbox.chrome_target }))
 }
 
 #[derive(Deserialize)]
@@ -138,12 +135,9 @@ async fn create_test(
       return Err(ApiError(StatusCode::BAD_REQUEST, format!("port out of range: {port}")));
     }
   }
-  // Without host prep, an external target waits for the user to start the
-  // servers by hand and press Start.
-  let status = if sandbox.chrome_target == "external" && !sandbox.chrome_host_prep { "awaiting_host" } else { "queued" };
   let branch = body.branch.as_deref().map(str::trim).filter(|b| !b.is_empty());
   let conn = hub.pool.get().map_err(internal)?;
-  let test = browser_tests::create(&conn, &sandbox.id, &body.doc, branch, body.port, status)
+  let test = browser_tests::create(&conn, &sandbox.id, &body.doc, branch, body.port)
     .map_err(|e| ApiError(StatusCode::BAD_REQUEST, e.to_string()))?;
   hub.changed(&test);
   Ok((StatusCode::CREATED, Json(test.into())))
@@ -236,20 +230,10 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn external_target_waits_for_the_host() {
+  async fn external_target_queues_too() {
     let f = fixture("external");
     let (_, body) =
       call(&f.hub, "POST", "/v1/browser-tests", Some(&f.token), Some(serde_json::json!({ "doc": "x", "branch": "feat/a" }))).await;
-    assert_eq!(body["status"], "awaiting_host");
-  }
-
-  #[tokio::test]
-  async fn external_target_with_host_prep_queues_immediately() {
-    let f = fixture("external");
-    let conn = f.hub.pool.get().unwrap();
-    sandboxes::set_chrome_host_prep(&conn, &f.sandbox_id, true, &["pnpm dev".to_string()]).unwrap();
-    drop(conn);
-    let (_, body) = call(&f.hub, "POST", "/v1/browser-tests", Some(&f.token), Some(serde_json::json!({ "doc": "x", "branch": "feat/a" }))).await;
     assert_eq!(body["status"], "queued");
   }
 
@@ -264,7 +248,7 @@ mod tests {
     let conn = f.hub.pool.get().unwrap();
     let project = crate::db::projects::create(&conn, "Q", "/repo2", None, None).unwrap();
     let other = sandboxes::create(&conn, &project.id, "clone", None, None, "default", None, "claude").unwrap();
-    let foreign = browser_tests::create(&conn, &other.id, "x", None, None, "queued").unwrap();
+    let foreign = browser_tests::create(&conn, &other.id, "x", None, None).unwrap();
     drop(conn);
     let (status, _) = call(&f.hub, "GET", &format!("/v1/browser-tests/{}", foreign.id), Some(&f.token), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);

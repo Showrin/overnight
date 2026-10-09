@@ -1,7 +1,7 @@
 use rusqlite::{params, Connection};
 
 use crate::db::error::{Error, Result};
-use crate::db::models::{new_id, now_millis, EnvVar, Sandbox, Secret, WorktreeInfo};
+use crate::db::models::{new_id, now_millis, EnvVar, HostServer, Sandbox, Secret, WorktreeInfo};
 
 fn row_to_sandbox(row: &rusqlite::Row) -> rusqlite::Result<Sandbox> {
   let branches_raw: String = row.get("branches")?;
@@ -42,7 +42,7 @@ fn row_to_sandbox(row: &rusqlite::Row) -> rusqlite::Result<Sandbox> {
     chrome_external_url: row.get("chrome_external_url")?,
     chrome_token: row.get("chrome_token")?,
     chrome_host_prep: row.get("chrome_host_prep")?,
-    chrome_host_commands: serde_json::from_str(&row.get::<_, String>("chrome_host_commands")?).unwrap_or_default(),
+    chrome_host_servers: serde_json::from_str(&row.get::<_, String>("chrome_host_commands")?).unwrap_or_default(),
   })
 }
 
@@ -264,14 +264,28 @@ pub fn set_chrome_settings(
   get(conn, id)
 }
 
-/// Persists whether Overnight prepares the host for external-target tests,
-/// and the server commands it runs. Blank commands are dropped.
-pub fn set_chrome_host_prep(conn: &Connection, id: &str, enabled: bool, commands: &[String]) -> Result<Sandbox> {
-  let commands: Vec<&str> = commands.iter().map(|c| c.trim()).filter(|c| !c.is_empty()).collect();
-  if enabled && commands.is_empty() {
+/// Persists whether Overnight starts the host servers itself for
+/// external-target tests, and which. Servers with a blank command are
+/// dropped; blank ready URLs become `None`.
+pub fn set_chrome_host_prep(conn: &Connection, id: &str, enabled: bool, servers: &[HostServer]) -> Result<Sandbox> {
+  let mut cleaned = Vec::new();
+  for server in servers {
+    let command = server.command.trim();
+    if command.is_empty() {
+      continue;
+    }
+    let ready_url = server.ready_url.as_deref().map(str::trim).filter(|u| !u.is_empty());
+    if let Some(url) = ready_url {
+      if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err(Error::InvalidValue(format!("ready URL must start with http:// or https://: {url}")));
+      }
+    }
+    cleaned.push(HostServer { command: command.to_string(), ready_url: ready_url.map(String::from) });
+  }
+  if enabled && cleaned.is_empty() {
     return Err(Error::InvalidValue("add at least one command that starts your servers".to_string()));
   }
-  let json = serde_json::to_string(&commands)?;
+  let json = serde_json::to_string(&cleaned)?;
   let changed = conn.execute(
     "UPDATE sandboxes SET chrome_host_prep = ?1, chrome_host_commands = ?2 WHERE id = ?3",
     params![enabled, json, id],
@@ -384,15 +398,30 @@ mod tests {
     let project_id = make_project(&conn);
     let sandbox = create(&conn, &project_id, "clone", None, None, "default", None, "claude").unwrap();
     assert!(!sandbox.chrome_host_prep);
-    assert!(sandbox.chrome_host_commands.is_empty());
+    assert!(sandbox.chrome_host_servers.is_empty());
 
-    let commands = vec![" pnpm dev ".to_string(), "".to_string(), "cd api && pnpm start".to_string()];
-    let updated = set_chrome_host_prep(&conn, &sandbox.id, true, &commands).unwrap();
+    let server = |command: &str, ready_url: Option<&str>| HostServer { command: command.to_string(), ready_url: ready_url.map(String::from) };
+    let servers = vec![server(" pnpm dev ", Some(" ")), server("", None), server("cd api && pnpm start", Some("http://localhost:4000/health"))];
+    let updated = set_chrome_host_prep(&conn, &sandbox.id, true, &servers).unwrap();
     assert!(updated.chrome_host_prep);
-    assert_eq!(updated.chrome_host_commands, vec!["pnpm dev", "cd api && pnpm start"]);
+    assert_eq!(
+      updated.chrome_host_servers,
+      vec![server("pnpm dev", None), server("cd api && pnpm start", Some("http://localhost:4000/health"))]
+    );
 
-    assert!(set_chrome_host_prep(&conn, &sandbox.id, true, &[" ".to_string()]).is_err());
+    assert!(set_chrome_host_prep(&conn, &sandbox.id, true, &[server(" ", None)]).is_err());
+    assert!(set_chrome_host_prep(&conn, &sandbox.id, true, &[server("x", Some("localhost:4000"))]).is_err());
     assert!(!set_chrome_host_prep(&conn, &sandbox.id, false, &[]).unwrap().chrome_host_prep);
+  }
+
+  #[test]
+  fn reads_host_servers_saved_as_plain_commands() {
+    let conn = test_conn();
+    let project_id = make_project(&conn);
+    let sandbox = create(&conn, &project_id, "clone", None, None, "default", None, "claude").unwrap();
+    conn.execute("UPDATE sandboxes SET chrome_host_commands = '[\"pnpm dev\"]' WHERE id = ?1", params![sandbox.id]).unwrap();
+    let servers = get(&conn, &sandbox.id).unwrap().chrome_host_servers;
+    assert_eq!(servers, vec![HostServer { command: "pnpm dev".to_string(), ready_url: None }]);
   }
 
   #[test]

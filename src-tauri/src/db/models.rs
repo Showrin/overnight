@@ -232,11 +232,41 @@ pub struct Sandbox {
   /// sent to the frontend.
   #[serde(skip)]
   pub chrome_token: Option<String>,
-  /// For `chrome_target = "external"`: Overnight checks the test's branch
-  /// out on the host and runs `chrome_host_commands` itself before testing.
+  /// For `chrome_target = "external"`: Overnight also starts
+  /// `chrome_host_servers` itself before testing, instead of the user
+  /// running them. Not exposed in the UI yet.
   pub chrome_host_prep: bool,
-  /// Long-running server commands, run from the project's repo folder.
-  pub chrome_host_commands: Vec<String>,
+  /// Long-running servers Overnight starts from the project's repo folder
+  /// when `chrome_host_prep` is on.
+  pub chrome_host_servers: Vec<HostServer>,
+}
+
+/// One server Overnight starts on the host for external-target tests.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(from = "HostServerRepr")]
+pub struct HostServer {
+  pub command: String,
+  /// Also wait for this URL to answer before testing, e.g. an API the app
+  /// under test depends on. The test URL itself is always waited for.
+  pub ready_url: Option<String>,
+}
+
+/// Accepts rows saved before ready URLs existed, when a server was just
+/// its command string.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum HostServerRepr {
+  Command(String),
+  Full { command: String, ready_url: Option<String> },
+}
+
+impl From<HostServerRepr> for HostServer {
+  fn from(repr: HostServerRepr) -> Self {
+    match repr {
+      HostServerRepr::Command(command) => Self { command, ready_url: None },
+      HostServerRepr::Full { command, ready_url } => Self { command, ready_url },
+    }
+  }
 }
 
 /// One browser-test request from a sandbox: the test doc its agent wrote,
@@ -245,9 +275,7 @@ pub struct Sandbox {
 pub struct BrowserTest {
   pub id: String,
   pub sandbox_id: String,
-  /// "awaiting_host" (external target: waits for the user to press Start
-  /// once the host servers are up) | "queued" | "running" | "done" |
-  /// "failed" | "cancelled"
+  /// "queued" | "running" | "done" | "failed" | "cancelled"
   pub status: String,
   pub doc: String,
   /// Branch the sandbox agent says it tested, shown so the user knows what

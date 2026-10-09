@@ -17,7 +17,10 @@ use crate::db::models::{BrowserTest, Sandbox};
 
 const CLAUDE_BIN: &str = "claude";
 const RUN_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+/// How long servers Overnight started itself get to come up.
 const SERVER_READY_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+/// How long to wait for the user to start their own servers.
+const USER_SERVER_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const CHROME_TOOLS: &str = "mcp__claude-in-chrome__*";
 
 const REPORT_SCHEMA: &str = r#"{
@@ -142,8 +145,8 @@ async fn execute_in(
 
   // Dropped (stopping the servers, then restoring the branch) whichever
   // way this function returns.
-  let _host = if sandbox.chrome_target == "external" && sandbox.chrome_host_prep {
-    let prepare = prepare_host(hub, test, &sandbox, &url, work_dir);
+  let _host = if sandbox.chrome_target == "external" {
+    let prepare = prepare_host(app, hub, test, &sandbox, &url, work_dir);
     tokio::select! {
       prepared = prepare => match prepared {
         Ok(host) => Some(host),
@@ -181,7 +184,7 @@ fn set_progress(hub: &Hub, id: &str, progress: &str) {
 /// the servers stop before the branch is switched back.
 struct PreparedHost {
   _servers: HostServers,
-  _restore: RestoreBranch,
+  _restore: Option<RestoreBranch>,
 }
 
 /// Switches the host repo back to the branch it was on before the test.
@@ -203,9 +206,19 @@ impl Drop for RestoreBranch {
 }
 
 /// Checks the test's branch out on the host (clone mode; a mount-mode
-/// sandbox already shares the host's working tree), starts the configured
-/// servers, and waits for `url` to answer.
-async fn prepare_host(hub: &Hub, test: &BrowserTest, sandbox: &Sandbox, url: &str, work_dir: &Path) -> Result<PreparedHost, String> {
+/// sandbox already shares the host's working tree) so the servers serve
+/// the sandbox's changes, then waits for them to answer. The user runs the
+/// servers, unless `chrome_host_prep` has Overnight start them — only then
+/// is the previous branch restored afterwards, since the user's own
+/// servers keep serving whatever is checked out.
+async fn prepare_host(
+  app: &AppHandle,
+  hub: &Hub,
+  test: &BrowserTest,
+  sandbox: &Sandbox,
+  url: &str,
+  work_dir: &Path,
+) -> Result<PreparedHost, String> {
   let project = hub
     .pool
     .get()
@@ -225,13 +238,30 @@ async fn prepare_host(hub: &Hub, test: &BrowserTest, sandbox: &Sandbox, url: &st
   } else {
     None
   };
-  let restore = RestoreBranch { repo_path: repo_path.clone(), previous };
+  let starts_servers = sandbox.chrome_host_prep && !sandbox.chrome_host_servers.is_empty();
+  if starts_servers {
+    let restore = RestoreBranch { repo_path: repo_path.clone(), previous };
+    set_progress(hub, &test.id, "Starting servers");
+    let mut servers = HostServers::start(&sandbox.chrome_host_servers, Path::new(&repo_path), work_dir)?;
+    set_progress(hub, &test.id, &format!("Waiting for {url}"));
+    servers.wait_until_up(url, SERVER_READY_TIMEOUT).await?;
+    return Ok(PreparedHost { _servers: servers, _restore: Some(restore) });
+  }
 
-  set_progress(hub, &test.id, "Starting servers");
-  let mut servers = HostServers::start(&sandbox.chrome_host_commands, Path::new(&repo_path), work_dir)?;
-  set_progress(hub, &test.id, &format!("Waiting for {url}"));
-  servers.wait_until_up(url, SERVER_READY_TIMEOUT).await?;
-  Ok(PreparedHost { _servers: servers, _restore: restore })
+  let mut servers = HostServers::default();
+  if !super::host_servers::is_up(url).await {
+    let branch = test.branch.as_deref().map(|b| format!(" on {b}")).unwrap_or_default();
+    set_progress(hub, &test.id, &format!("Waiting for your servers at {url}"));
+    let _ = crate::notifications::notify_plain(
+      app,
+      "Start your servers for a browser test",
+      Some(&format!("The project is checked out{branch}. The test starts once {url} responds.")),
+      Some(sandbox.id.clone()),
+      false,
+    );
+  }
+  servers.wait_until_up(url, USER_SERVER_TIMEOUT).await?;
+  Ok(PreparedHost { _servers: servers, _restore: None })
 }
 
 /// The URL the host Chrome should open: the external URL as configured,
@@ -551,7 +581,7 @@ mod tests {
       "current_branch": null, "branches": [], "worktrees": [], "branch_snapshot_at": null, "env_vars": [], "secrets": [],
       "last_git_sync_at": null, "last_git_sync_result": [], "backup_enabled": true, "backup_interval_minutes": null,
       "chrome_enabled": true, "chrome_target": "external", "chrome_sandbox_port": null, "chrome_external_url": "http://localhost:3000",
-      "chrome_host_prep": false, "chrome_host_commands": []
+      "chrome_host_prep": false, "chrome_host_servers": []
     });
     let sandbox: Sandbox = serde_json::from_value(sandbox_json).unwrap();
     let prompt = build_prompt(&test_row(Some("feat/login")), &sandbox, "http://localhost:3000");

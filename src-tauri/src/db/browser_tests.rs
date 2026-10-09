@@ -22,14 +22,12 @@ fn row_to_browser_test(row: &rusqlite::Row) -> rusqlite::Result<BrowserTest> {
   })
 }
 
-/// `status` is "queued" or "awaiting_host" — see `BrowserTest::status`.
 pub fn create(
   conn: &Connection,
   sandbox_id: &str,
   doc: &str,
   branch: Option<&str>,
   sandbox_port: Option<i64>,
-  status: &str,
 ) -> Result<BrowserTest> {
   if doc.trim().is_empty() {
     return Err(Error::InvalidValue("test doc is empty".to_string()));
@@ -37,8 +35,8 @@ pub fn create(
   let id = new_id();
   conn.execute(
     "INSERT INTO browser_tests (id, sandbox_id, status, doc, branch, sandbox_port, created_at)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-    params![id, sandbox_id, status, doc, branch, sandbox_port, now_millis()],
+     VALUES (?1, ?2, 'queued', ?3, ?4, ?5, ?6)",
+    params![id, sandbox_id, doc, branch, sandbox_port, now_millis()],
   )?;
   get(conn, &id)
 }
@@ -74,17 +72,11 @@ pub fn claim_next_queued(conn: &Connection) -> Result<Option<BrowserTest>> {
   )
 }
 
-/// Moves an "awaiting_host" test into the queue once the user says the
-/// host-side servers are up.
-pub fn release_to_queue(conn: &Connection, id: &str) -> Result<BrowserTest> {
-  transition(conn, id, "UPDATE browser_tests SET status = 'queued' WHERE id = ?1 AND status = 'awaiting_host'")
-}
-
 /// Cancels a test that hasn't started yet. A running test is stopped by
 /// the runner itself (see `crate::browser_tests::cancel`).
 pub fn cancel_pending(conn: &Connection, id: &str) -> Result<BrowserTest> {
   conn.execute(
-    "UPDATE browser_tests SET status = 'cancelled', finished_at = ?1 WHERE id = ?2 AND status IN ('awaiting_host', 'queued')",
+    "UPDATE browser_tests SET status = 'cancelled', finished_at = ?1 WHERE id = ?2 AND status = 'queued'",
     params![now_millis(), id],
   )?;
   get(conn, id)
@@ -141,15 +133,6 @@ pub fn delete(conn: &Connection, id: &str) -> Result<()> {
   Ok(())
 }
 
-fn transition(conn: &Connection, id: &str, sql: &str) -> Result<BrowserTest> {
-  let changed = conn.execute(sql, params![id])?;
-  let test = get(conn, id)?;
-  if changed == 0 {
-    return Err(Error::InvalidValue(format!("browser test is {}", test.status)));
-  }
-  Ok(test)
-}
-
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -164,9 +147,9 @@ mod tests {
   fn queued_tests_are_claimed_oldest_first_and_only_once() {
     let conn = test_conn();
     let sandbox_id = make_sandbox(&conn);
-    let first = create(&conn, &sandbox_id, "check login", Some("feat/login"), None, "queued").unwrap();
+    let first = create(&conn, &sandbox_id, "check login", Some("feat/login"), None).unwrap();
     std::thread::sleep(std::time::Duration::from_millis(2));
-    let second = create(&conn, &sandbox_id, "check signup", None, Some(5173), "queued").unwrap();
+    let second = create(&conn, &sandbox_id, "check signup", None, Some(5173)).unwrap();
 
     let claimed = claim_next_queued(&conn).unwrap().unwrap();
     assert_eq!(claimed.id, first.id);
@@ -177,29 +160,17 @@ mod tests {
   }
 
   #[test]
-  fn awaiting_host_tests_wait_until_released() {
-    let conn = test_conn();
-    let sandbox_id = make_sandbox(&conn);
-    let test = create(&conn, &sandbox_id, "check login", None, None, "awaiting_host").unwrap();
-    assert!(claim_next_queued(&conn).unwrap().is_none());
-
-    assert_eq!(release_to_queue(&conn, &test.id).unwrap().status, "queued");
-    assert!(release_to_queue(&conn, &test.id).is_err());
-    assert_eq!(claim_next_queued(&conn).unwrap().unwrap().id, test.id);
-  }
-
-  #[test]
   fn finish_records_report_but_not_over_a_cancel() {
     let conn = test_conn();
     let sandbox_id = make_sandbox(&conn);
-    let a = create(&conn, &sandbox_id, "a", None, None, "queued").unwrap();
+    let a = create(&conn, &sandbox_id, "a", None, None).unwrap();
     claim_next_queued(&conn).unwrap();
     let done = finish(&conn, &a.id, "done", Some("pass"), Some("# ok"), None).unwrap();
     assert_eq!(done.status, "done");
     assert_eq!(done.verdict.as_deref(), Some("pass"));
     assert!(done.finished_at.is_some());
 
-    let b = create(&conn, &sandbox_id, "b", None, None, "queued").unwrap();
+    let b = create(&conn, &sandbox_id, "b", None, None).unwrap();
     claim_next_queued(&conn).unwrap();
     mark_cancelled(&conn, &b.id).unwrap();
     assert_eq!(finish(&conn, &b.id, "failed", None, None, Some("killed")).unwrap().status, "cancelled");
@@ -209,10 +180,10 @@ mod tests {
   fn cancel_pending_and_fail_interrupted() {
     let conn = test_conn();
     let sandbox_id = make_sandbox(&conn);
-    let pending = create(&conn, &sandbox_id, "a", None, None, "awaiting_host").unwrap();
+    let pending = create(&conn, &sandbox_id, "a", None, None).unwrap();
     assert_eq!(cancel_pending(&conn, &pending.id).unwrap().status, "cancelled");
 
-    let running = create(&conn, &sandbox_id, "b", None, None, "queued").unwrap();
+    let running = create(&conn, &sandbox_id, "b", None, None).unwrap();
     claim_next_queued(&conn).unwrap();
     assert_eq!(fail_interrupted(&conn).unwrap(), 1);
     let failed = get(&conn, &running.id).unwrap();
@@ -224,6 +195,6 @@ mod tests {
   fn rejects_empty_doc() {
     let conn = test_conn();
     let sandbox_id = make_sandbox(&conn);
-    assert!(create(&conn, &sandbox_id, "  ", None, None, "queued").is_err());
+    assert!(create(&conn, &sandbox_id, "  ", None, None).is_err());
   }
 }
