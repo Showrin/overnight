@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { ChevronDown, ChevronRight, Loader2, Play, Trash2, X } from 'lucide-react'
+import { ChevronDown, ChevronRight, Loader2, Play, Plus, Trash2, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Badge } from '@/components/ui/badge'
@@ -82,7 +82,7 @@ function ChromeSettings({ sandbox }: { sandbox: Sandbox }) {
   const [port, setPort] = useState(sandbox.chrome_sandbox_port?.toString() ?? '')
   const [url, setUrl] = useState(sandbox.chrome_external_url ?? '')
   const [hostPrep, setHostPrep] = useState(sandbox.chrome_host_prep)
-  const [commands, setCommands] = useState(sandbox.chrome_host_commands.join('\n'))
+  const [commands, setCommands] = useState(() => initialCommands(sandbox))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
@@ -92,7 +92,7 @@ function ChromeSettings({ sandbox }: { sandbox: Sandbox }) {
     setPort(sandbox.chrome_sandbox_port?.toString() ?? '')
     setUrl(sandbox.chrome_external_url ?? '')
     setHostPrep(sandbox.chrome_host_prep)
-    setCommands(sandbox.chrome_host_commands.join('\n'))
+    setCommands(initialCommands(sandbox))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sandbox.id])
 
@@ -101,7 +101,7 @@ function ChromeSettings({ sandbox }: { sandbox: Sandbox }) {
     port !== (sandbox.chrome_sandbox_port?.toString() ?? '') ||
     url !== (sandbox.chrome_external_url ?? '') ||
     hostPrep !== sandbox.chrome_host_prep ||
-    commands !== sandbox.chrome_host_commands.join('\n')
+    nonEmpty(commands).join('\n') !== sandbox.chrome_host_commands.join('\n')
 
   async function save(enabled: boolean) {
     setSaving(true)
@@ -115,7 +115,7 @@ function ChromeSettings({ sandbox }: { sandbox: Sandbox }) {
         sandboxPort: port.trim() ? Number(port) : null,
         externalUrl: url.trim() || null,
         hostPrep,
-        hostCommands: commands.split('\n'),
+        hostCommands: nonEmpty(commands),
       })
       await useAppStore.getState().loadSandboxes()
       setSaved(true)
@@ -206,9 +206,15 @@ function HostPrepSettings({
   sandbox: Sandbox
   enabled: boolean
   setEnabled: (on: boolean) => void
-  commands: string
-  setCommands: (value: string) => void
+  commands: string[]
+  setCommands: (commands: string[]) => void
 }) {
+  const update = (index: number, value: string) => setCommands(commands.map((c, i) => (i === index ? value : c)))
+  const remove = (index: number) => {
+    const rest = commands.filter((_, i) => i !== index)
+    setCommands(rest.length ? rest : [''])
+  }
+
   return (
     <div className="flex flex-col gap-2 rounded-md bg-muted/40 p-2">
       <div className="flex items-center justify-between gap-2">
@@ -223,22 +229,50 @@ function HostPrepSettings({
         <Switch checked={enabled} onCheckedChange={setEnabled} />
       </div>
       {enabled ? (
-        <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-          Commands that start your servers, one per line, run in the project folder
-          <textarea
-            rows={3}
-            spellCheck={false}
-            className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 font-mono text-xs text-foreground shadow-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-            placeholder={'pnpm dev\ncd api && pnpm start'}
-            value={commands}
-            onChange={(e) => setCommands(e.target.value)}
-          />
-        </label>
+        <div className="flex flex-col gap-1.5">
+          <span className="text-xs text-muted-foreground">
+            Server commands. Each one runs in its own shell from the project folder, and all of them run at once.
+          </span>
+          {commands.map((command, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <span className="w-16 shrink-0 text-xs text-muted-foreground">Server {i + 1}</span>
+              <Input
+                className="h-8 font-mono text-xs"
+                spellCheck={false}
+                placeholder={i === 0 ? 'pnpm dev' : 'cd api && pnpm start'}
+                value={command}
+                onChange={(e) => update(i, e.target.value)}
+              />
+              <Button
+                size="sm"
+                variant="ghost"
+                title="Remove this server"
+                disabled={commands.length === 1 && !command}
+                onClick={() => remove(i)}
+              >
+                <X className="size-3.5" />
+              </Button>
+            </div>
+          ))}
+          <Button size="sm" variant="outline" className="w-fit" onClick={() => setCommands([...commands, ''])}>
+            <Plus className="size-3.5" />
+            Add server
+          </Button>
+        </div>
       ) : (
         <span className="text-xs text-muted-foreground">Off: each test waits for you to start the servers and press Start.</span>
       )}
     </div>
   )
+}
+
+// Always at least one (possibly empty) row to type into.
+function initialCommands(sandbox: Sandbox): string[] {
+  return sandbox.chrome_host_commands.length ? [...sandbox.chrome_host_commands] : ['']
+}
+
+function nonEmpty(commands: string[]): string[] {
+  return commands.map((c) => c.trim()).filter(Boolean)
 }
 
 function TargetOption({ selected, onSelect, title, body }: { selected: boolean; onSelect: () => void; title: string; body: string }) {
