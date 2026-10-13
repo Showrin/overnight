@@ -1,0 +1,3 @@
+# Installed into Linux sandboxes verbatim via include_str!
+src-tauri/src/browser_tests/*.sh text eol=lf
+src-tauri/src/browser_tests/*.md text eol=lf

@@ -216,6 +216,86 @@ pub struct Sandbox {
   pub backup_enabled: bool,
   /// `None` = use the global interval.
   pub backup_interval_minutes: Option<i64>,
+  /// Whether this sandbox may ask the host to browser-test its app through
+  /// Claude in Chrome (see `crate::browser_tests`). Off by default.
+  pub chrome_enabled: bool,
+  /// What the host Chrome browses: `"sandbox"` (the app running inside
+  /// this sandbox, via a published port) or `"external"` (a URL served on
+  /// the host, e.g. after checking the sandbox's branch out there).
+  pub chrome_target: String,
+  /// Port the app listens on inside the sandbox, for `chrome_target =
+  /// "sandbox"`. `None` = `crate::browser_tests::DEFAULT_SANDBOX_APP_PORT`.
+  pub chrome_sandbox_port: Option<i64>,
+  /// URL to browse for `chrome_target = "external"`.
+  pub chrome_external_url: Option<String>,
+  /// Bearer token the sandbox presents to the browser-test server. Never
+  /// sent to the frontend.
+  #[serde(skip)]
+  pub chrome_token: Option<String>,
+  /// For `chrome_target = "external"`: Overnight also starts
+  /// `chrome_host_servers` itself before testing, instead of the user
+  /// running them. Not exposed in the UI yet.
+  pub chrome_host_prep: bool,
+  /// Long-running servers Overnight starts from the project's repo folder
+  /// when `chrome_host_prep` is on.
+  pub chrome_host_servers: Vec<HostServer>,
+}
+
+/// One server Overnight starts on the host for external-target tests.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(from = "HostServerRepr")]
+pub struct HostServer {
+  pub command: String,
+  /// Also wait for this URL to answer before testing, e.g. an API the app
+  /// under test depends on. The test URL itself is always waited for.
+  pub ready_url: Option<String>,
+}
+
+/// Accepts rows saved before ready URLs existed, when a server was just
+/// its command string.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum HostServerRepr {
+  Command(String),
+  Full { command: String, ready_url: Option<String> },
+}
+
+impl From<HostServerRepr> for HostServer {
+  fn from(repr: HostServerRepr) -> Self {
+    match repr {
+      HostServerRepr::Command(command) => Self { command, ready_url: None },
+      HostServerRepr::Full { command, ready_url } => Self { command, ready_url },
+    }
+  }
+}
+
+/// One browser-test request from a sandbox: the test doc its agent wrote,
+/// and (once run) the host agent's report. See `db::browser_tests`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrowserTest {
+  pub id: String,
+  pub sandbox_id: String,
+  /// "queued" | "running" | "done" | "failed" | "cancelled"
+  pub status: String,
+  pub doc: String,
+  /// Branch the sandbox agent says it tested, shown so the user knows what
+  /// to check out on the host for an external target.
+  pub branch: Option<String>,
+  /// In-sandbox port the request asked for, overriding the sandbox's
+  /// `chrome_sandbox_port`.
+  pub sandbox_port: Option<i64>,
+  /// URL the host agent actually browsed, set once the run starts.
+  pub target_url: Option<String>,
+  /// "pass" | "fail" | "partial", from the host agent's report.
+  pub verdict: Option<String>,
+  /// The host agent's report, as Markdown for the sandbox agent to read.
+  pub report: Option<String>,
+  pub error: Option<String>,
+  /// What a running test is doing right now, e.g. "Starting servers".
+  pub progress: Option<String>,
+  pub created_at: i64,
+  pub started_at: Option<i64>,
+  pub finished_at: Option<i64>,
 }
 
 /// One periodic (or pre-stop/pre-delete) backup of a sandbox's agent home

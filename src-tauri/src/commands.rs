@@ -626,7 +626,26 @@ fn secrets_as_env_vars(secrets: &[Secret]) -> Vec<EnvVar> {
 fn full_env_vars_for_sandbox(pool: &DbPool, project_id: &str, sandbox: &Sandbox) -> std::result::Result<Vec<EnvVar>, String> {
   let mut vars = merged_env_vars(pool, project_id, &sandbox.env_vars)?;
   vars.extend(secrets_as_env_vars(&merged_secrets(pool, project_id, &sandbox.secrets)?));
+  vars.extend(browser_test_env_vars(sandbox));
   Ok(vars)
+}
+
+/// What the in-sandbox `overnight-browser-test` helper needs, only while
+/// Claude in Chrome is enabled for the sandbox.
+fn browser_test_env_vars(sandbox: &Sandbox) -> Vec<EnvVar> {
+  let (true, Some(token)) = (sandbox.chrome_enabled, sandbox.chrome_token.as_deref()) else {
+    return Vec::new();
+  };
+  let port = sandbox.chrome_sandbox_port.unwrap_or(i64::from(crate::browser_tests::DEFAULT_SANDBOX_APP_PORT));
+  [
+    ("OVERNIGHT_BROWSER_URL", format!("http://host.docker.internal:{}", crate::browser_tests::SERVER_PORT)),
+    ("OVERNIGHT_BROWSER_TOKEN", token.to_string()),
+    ("OVERNIGHT_BROWSER_TARGET", sandbox.chrome_target.clone()),
+    ("OVERNIGHT_BROWSER_PORT", port.to_string()),
+  ]
+  .into_iter()
+  .map(|(key, value)| EnvVar { key: key.to_string(), value })
+  .collect()
 }
 
 /// Generates a fresh, stable placeholder for a brand-new custom secret.
@@ -2220,6 +2239,12 @@ pub async fn start_sandbox(app: AppHandle, pool: State<'_, DbPool>, id: String) 
     sync_paste_keybinding(&app, &name, kit).await;
   }
 
+  if sandbox.chrome_enabled {
+    if let Err(e) = crate::browser_tests::sandbox_setup::install(&app, &name, &sandbox.agent).await {
+      log::warn!("start_sandbox: failed to install the browser test helper in {name}: {e}");
+    }
+  }
+
   let conn = pool.get().map_err(|e| e.to_string())?;
   sandboxes::update_status(&conn, &id, "running", None, None).map_err(|e| e.to_string())
 }
@@ -3190,4 +3215,84 @@ pub fn count_command_log(
 pub fn list_command_log_operations(pool: State<DbPool>) -> std::result::Result<Vec<String>, String> {
   let conn = pool.get().map_err(|e| e.to_string())?;
   command_log::list_operations(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn list_browser_tests(pool: State<'_, DbPool>, sandbox_id: String) -> std::result::Result<Vec<crate::db::models::BrowserTest>, String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  crate::db::browser_tests::list_for_sandbox(&conn, &sandbox_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn cancel_browser_test(hub: State<'_, crate::browser_tests::Hub>, id: String) -> std::result::Result<crate::db::models::BrowserTest, String> {
+  hub.cancel(&id)
+}
+
+#[tauri::command]
+pub fn delete_browser_test(pool: State<'_, DbPool>, id: String) -> std::result::Result<(), String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  crate::db::browser_tests::delete(&conn, &id).map_err(|e| e.to_string())
+}
+
+/// Saves a sandbox's Claude in Chrome settings and applies them: the
+/// network rule letting it reach the browser-test server (any status —
+/// sbx keeps policy outside the VM), plus env vars and the helper script
+/// (running sandboxes only; `start_sandbox` catches up stopped ones).
+#[tauri::command]
+pub async fn save_sandbox_chrome_settings(
+  app: AppHandle,
+  pool: State<'_, DbPool>,
+  id: String,
+  enabled: bool,
+  target: String,
+  sandbox_port: Option<i64>,
+  external_url: Option<String>,
+  host_prep: bool,
+  host_servers: Vec<crate::db::models::HostServer>,
+) -> std::result::Result<Sandbox, String> {
+  let pool = pool.inner().clone();
+  let sandbox = {
+    let mut conn = pool.get().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    sandboxes::set_chrome_settings(&tx, &id, enabled, &target, sandbox_port, external_url.as_deref()).map_err(|e| e.to_string())?;
+    let sandbox = sandboxes::set_chrome_host_prep(&tx, &id, host_prep, &host_servers).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    sandbox
+  };
+  let Some(name) = sandbox.sbx_name.clone() else { return Ok(sandbox) };
+  let rule = crate::browser_tests::sandbox_setup::network_rule();
+  if enabled {
+    crate::sbx::policy_allow(&app, Some(&name), &rule).await.map_err(|e| format!("couldn't allow the sandbox to reach Overnight: {e}"))?;
+  } else if let Err(e) = crate::sbx::policy_rm(&app, Some(&name), &rule).await {
+    log::warn!("save_sandbox_chrome_settings: couldn't remove {rule} rule from {name}: {e}");
+  }
+  if sandbox.status != "running" {
+    return Ok(sandbox);
+  }
+  let merged = full_env_vars_for_sandbox(&pool, &sandbox.project_id, &sandbox)?;
+  crate::sbx::set_env_vars(&app, &name, &merged).await.map_err(|e| e.to_string())?;
+  if enabled {
+    crate::browser_tests::sandbox_setup::install(&app, &name, &sandbox.agent).await
+  } else {
+    crate::browser_tests::sandbox_setup::uninstall(&app, &name, &sandbox.agent).await
+  }
+  .map_err(|e| e.to_string())?;
+  Ok(sandbox)
+}
+
+#[tauri::command]
+pub fn get_testing_chrome_status(app: AppHandle, pool: State<'_, DbPool>) -> std::result::Result<crate::browser_tests::chrome::ChromeStatus, String> {
+  crate::browser_tests::chrome::status(&app, pool.inner())
+}
+
+/// `setup` also opens the Claude extension's store page and claude.ai
+/// sign-in, for first-time setup of the testing profile.
+#[tauri::command]
+pub fn open_testing_chrome(app: AppHandle, pool: State<'_, DbPool>, setup: bool) -> std::result::Result<(), String> {
+  crate::browser_tests::chrome::open(&app, pool.inner(), setup)
+}
+
+#[tauri::command]
+pub fn save_testing_chrome_path(pool: State<'_, DbPool>, path: Option<String>) -> std::result::Result<(), String> {
+  crate::browser_tests::chrome::save_chrome_path_override(pool.inner(), path.as_deref())
 }

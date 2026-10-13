@@ -1,5 +1,6 @@
 mod agents;
 mod backup;
+mod browser_tests;
 mod commands;
 mod daemon_log;
 mod db;
@@ -14,7 +15,7 @@ mod skills;
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
-use tauri::{Manager, WindowEvent};
+use tauri::{Emitter, Manager, WindowEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -130,6 +131,13 @@ pub fn run() {
       commands::get_daemon_log_path,
       commands::save_daemon_log_path,
       commands::read_daemon_log,
+      commands::save_sandbox_chrome_settings,
+      commands::list_browser_tests,
+      commands::cancel_browser_test,
+      commands::delete_browser_test,
+      commands::get_testing_chrome_status,
+      commands::open_testing_chrome,
+      commands::save_testing_chrome_path,
       notifications::notify,
     ])
     .setup(|app| {
@@ -157,6 +165,7 @@ pub fn run() {
           "host_metrics",
           "command_log",
           "sandbox_backups",
+          "browser_tests",
         ];
         for table in table_names {
           match conn.query_row(&format!("SELECT count(*) FROM {table}"), [], |row| row.get::<_, i64>(0)) {
@@ -168,6 +177,30 @@ pub fn run() {
       app.manage(std::sync::Mutex::new(backup::BackupState::default()));
       app.manage(std::sync::Mutex::new(restore::RestoreState::default()));
       tauri::async_runtime::spawn(backup::run_scheduler(app.handle().clone(), pool.clone()));
+      let hub = {
+        let app_handle = app.handle().clone();
+        browser_tests::Hub::new(pool.clone(), move |test| {
+          let _ = app_handle.emit(browser_tests::CHANGED_EVENT, test);
+          let message = match test.status.as_str() {
+            "done" => Some(("Browser test finished", "The report is ready in the sandbox's Browser tab.")),
+            "failed" => Some(("Browser test failed", "See the sandbox's Browser tab for details.")),
+            _ => None,
+          };
+          if let Some((title, body)) = message {
+            let _ = notifications::notify_plain(&app_handle, title, Some(body), Some(test.sandbox_id.clone()), false);
+          }
+        })
+      };
+      tauri::async_runtime::spawn({
+        let hub = hub.clone();
+        async move {
+          if let Err(e) = browser_tests::server::serve(hub).await {
+            log::error!("browser test server stopped: {e}");
+          }
+        }
+      });
+      tauri::async_runtime::spawn(browser_tests::runner::run(app.handle().clone(), hub.clone()));
+      app.manage(hub);
       app.manage(pool);
       app.manage(std::sync::Mutex::new(sbx::HostMonitor::new()));
       app.manage(std::sync::Mutex::new(sbx::SandboxMonitor::new()));
