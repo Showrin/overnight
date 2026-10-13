@@ -98,11 +98,20 @@ export function SandboxDetailScreen({
         </div>
       )}
 
-      {tab === 'browser' && <SandboxBrowserTab sandbox={sandbox} />}
+      {/* Taller than the fixed-height page, so they scroll inside it like Plans does; overflowing the page instead would swallow its bottom padding. */}
+      {tab === 'browser' && (
+        <div className="min-h-0 flex-1 overflow-auto">
+          <SandboxBrowserTab sandbox={sandbox} />
+        </div>
+      )}
 
       {tab === 'backups' && <SandboxBackupsTab sandbox={sandbox} />}
 
-      {tab === 'credentials' && <SandboxCredentialsTab sandbox={sandbox} />}
+      {tab === 'credentials' && (
+        <div className="min-h-0 flex-1 overflow-auto">
+          <SandboxCredentialsTab sandbox={sandbox} />
+        </div>
+      )}
     </div>
   )
 }
