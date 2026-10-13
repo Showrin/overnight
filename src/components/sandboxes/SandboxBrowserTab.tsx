@@ -68,8 +68,8 @@ export function SandboxBrowserTab({ sandbox }: { sandbox: Sandbox }) {
           <Loader2 className="size-4 animate-spin text-muted-foreground" />
         ) : tests.length === 0 || !selected ? (
           <p className="text-xs text-muted-foreground">
-            No tests yet. With Claude in Chrome on, ask the sandbox agent to browser-test its work (it has a
-            <code className="mx-1">browser-test</code>skill for this).
+            No tests yet. With Claude in Chrome on, ask the sandbox agent to browser-test its work. Its instructions
+            tell it how.
           </p>
         ) : (
           <div className="flex h-[36rem] min-h-0 gap-4">

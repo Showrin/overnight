@@ -21,7 +21,7 @@ The sandbox must be running for the switch to take effect. If it's stopped, it's
 
 ## Run a test
 
-1. Ask the sandbox agent to browser-test its work, e.g. *"Test the new login form in the browser."* It uses its `browser-test` skill to write a test plan and submit it.
+1. Ask the sandbox agent to browser-test its work, e.g. *"Test the new login form in the browser."* Turning browser testing on adds a short note to the agent's instructions (`~/.claude/CLAUDE.md`, or `~/.codex/AGENTS.md` for Codex) pointing to a guide, so it knows how to write a test plan and submit it. Start a new agent session after turning it on.
 2. For **Server on this machine**, keep your servers running. Before each test, Overnight pulls the sandbox's branch into the project folder, checking it out first if you're on another branch. If the URL isn't responding, you get a notification to start your servers, and the test begins once it responds.
 3. Watch it in the **Browser** tab under **Test runs**:
    - **Sandbox handoff**: the plan the sandbox agent sent.

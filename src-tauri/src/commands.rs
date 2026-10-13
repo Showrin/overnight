@@ -3274,7 +3274,7 @@ pub async fn save_sandbox_chrome_settings(
   if enabled {
     crate::browser_tests::sandbox_setup::install(&app, &name, &sandbox.agent).await
   } else {
-    crate::browser_tests::sandbox_setup::uninstall(&app, &name).await
+    crate::browser_tests::sandbox_setup::uninstall(&app, &name, &sandbox.agent).await
   }
   .map_err(|e| e.to_string())?;
   Ok(sandbox)

@@ -828,40 +828,58 @@ pub async fn install_paste_keybinding<R: Runtime>(app: &AppHandle<R>, name: &str
   Ok(())
 }
 
-/// A file `write_files` creates inside a sandbox.
+/// A file `write_files_script` creates inside a sandbox.
 pub struct SandboxFile<'a> {
   pub path: &'a str,
   pub content: &'a str,
   pub executable: bool,
 }
 
-fn build_write_files_script(files: &[SandboxFile]) -> String {
+/// Script lines that write (overwriting) each file, creating parent dirs.
+pub fn write_files_script(files: &[SandboxFile]) -> String {
   files
     .iter()
     .map(|file| {
       let path = shell_quote(file.path);
-      let mut line = format!("mkdir -p \"$(dirname {path})\" && printf '%s' {} > {path}", shell_quote(file.content));
+      let mut line = format!("mkdir -p \"$(dirname {path})\"\nprintf '%s' {} > {path}\n", shell_quote(file.content));
       if file.executable {
-        line.push_str(&format!(" && chmod +x {path}"));
+        line.push_str(&format!("chmod +x {path}\n"));
       }
       line
     })
-    .collect::<Vec<_>>()
-    .join(" && ")
+    .collect()
 }
 
-/// Writes (overwriting) each file inside the sandbox as the sandbox user.
-pub async fn write_files<R: Runtime>(app: &AppHandle<R>, name: &str, operation: &str, files: &[SandboxFile<'_>]) -> Result<()> {
-  let script = build_write_files_script(files);
-  run(app, operation, &["exec", name, "bash", "-c", &script]).await?;
-  Ok(())
+/// Script lines that replace the block between the `start` and `end`
+/// marker lines in `file` with `block` (or just drop it when `None`),
+/// keeping everything else in the file. Creates the file if needed; a
+/// file left with nothing but the removed block is deleted.
+pub fn managed_block_script(file: &str, start: &str, end: &str, block: Option<&str>) -> String {
+  let f = shell_quote(file);
+  let awk = shell_quote(&format!(
+    "$0 == \"{start}\" {{ skip = 1 }} skip {{ if ($0 == \"{end}\") skip = 0; next }} {{ print }}"
+  ));
+  let mut script = format!("old=$(awk {awk} {f} 2>/dev/null || true)\n");
+  match block {
+    Some(block) => {
+      let block = shell_quote(&format!("{start}\n{}\n{end}", block.trim_end()));
+      script.push_str(&format!(
+        "mkdir -p \"$(dirname {f})\"\n{{ if [ -n \"$old\" ]; then printf '%s\\n\\n' \"$old\"; fi; printf '%s\\n' {block}; }} > {f}\n"
+      ));
+    }
+    None => {
+      script.push_str(&format!("if [ -n \"$old\" ]; then printf '%s\\n' \"$old\" > {f}; else rm -f {f}; fi\n"));
+    }
+  }
+  script
 }
 
-/// `rm -rf`s each path inside the sandbox. Missing paths are fine.
-pub async fn remove_paths<R: Runtime>(app: &AppHandle<R>, name: &str, operation: &str, paths: &[&str]) -> Result<()> {
-  let quoted: Vec<String> = paths.iter().map(|p| shell_quote(p)).collect();
-  let script = format!("rm -rf {}", quoted.join(" "));
-  run(app, operation, &["exec", name, "bash", "-c", &script]).await?;
+/// Runs `script` with `bash -e` inside the sandbox. The command log and
+/// any error show `operation` in place of the script, which is usually too
+/// long to be useful there; the script's own stderr still comes through.
+pub async fn exec_script<R: Runtime>(app: &AppHandle<R>, name: &str, operation: &str, script: &str) -> Result<()> {
+  let label = format!("<{operation} script>");
+  run_with_logged_args(app, operation, &["exec", name, "bash", "-e", "-c", script], &["exec", name, "bash", "-e", "-c", &label]).await?;
   Ok(())
 }
 
@@ -957,7 +975,7 @@ pub struct BranchSnapshot {
 /// escaping any embedded single quote (`'` -> `'\''`) — used for the
 /// in-sandbox workspace path passed to every `git -C` invocation below,
 /// which may contain spaces.
-fn shell_quote(value: &str) -> String {
+pub fn shell_quote(value: &str) -> String {
   format!("'{}'", value.replace('\'', "'\\''"))
 }
 
@@ -2735,25 +2753,71 @@ mod paste_keybinding_tests {
 
 
 
-// Unix only: on Windows, `bash` resolves to WSL's bash.exe, which re-parses
-// its command line and mangles the quoting this test exists to check.
-#[cfg(all(test, unix))]
-mod write_files_tests {
+// Runs the generated scripts from a file rather than `bash -c`: on Windows
+// `bash` may be WSL's bash.exe, which mangles quoting passed on its command
+// line. Paths are relative to the temp dir for the same reason.
+#[cfg(test)]
+mod script_tests {
   use super::*;
   use std::process::Command;
 
+  fn run_in(dir: &std::path::Path, script: &str) {
+    std::fs::write(dir.join("script.sh"), format!("set -e\n{script}")).unwrap();
+    let status = Command::new("bash").current_dir(dir).arg("script.sh").status().unwrap();
+    assert!(status.success(), "script failed:\n{script}");
+  }
+
+  fn temp_dir() -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("overnight-script-test-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+  }
+
+  fn bash_available() -> bool {
+    Command::new("bash").arg("--version").output().is_ok_and(|o| o.status.success())
+  }
+
   #[test]
   fn writes_content_verbatim_and_creates_parent_dirs() {
-    let dir = std::env::temp_dir().join(format!("overnight-wf-test-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let tricky = "#!/bin/bash\necho \"it's $HOME\" `date` \n %s\n";
-    let script = build_write_files_script(&[
-      SandboxFile { path: "bin/tool.sh", content: tricky, executable: true },
-      SandboxFile { path: "skills/x/SKILL.md", content: "# hi\n", executable: false },
-    ]);
-    assert!(Command::new("bash").current_dir(&dir).arg("-c").arg(&script).status().unwrap().success());
+    if !bash_available() {
+      return;
+    }
+    let dir = temp_dir();
+    let tricky = "#!/bin/bash\necho \"it's $HOME\" `date` \\n %s\n";
+    run_in(
+      &dir,
+      &write_files_script(&[
+        SandboxFile { path: "bin/tool.sh", content: tricky, executable: true },
+        SandboxFile { path: "docs/guide.md", content: "# hi\n", executable: false },
+      ]),
+    );
     assert_eq!(std::fs::read_to_string(dir.join("bin/tool.sh")).unwrap(), tricky);
-    assert_eq!(std::fs::read_to_string(dir.join("skills/x/SKILL.md")).unwrap(), "# hi\n");
+    assert_eq!(std::fs::read_to_string(dir.join("docs/guide.md")).unwrap(), "# hi\n");
+    let _ = std::fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn managed_block_is_added_replaced_and_removed_without_touching_the_rest() {
+    if !bash_available() {
+      return;
+    }
+    let dir = temp_dir();
+    let (start, end) = ("<!-- test:start -->", "<!-- test:end -->");
+    let read = || std::fs::read_to_string(dir.join("home/CLAUDE.md")).unwrap();
+
+    run_in(&dir, &managed_block_script("home/CLAUDE.md", start, end, Some("first")));
+    assert_eq!(read(), "<!-- test:start -->\nfirst\n<!-- test:end -->\n");
+
+    std::fs::write(dir.join("home/CLAUDE.md"), format!("# Mine\n\nkeep me\n\n{start}\nfirst\n{end}\n")).unwrap();
+    run_in(&dir, &managed_block_script("home/CLAUDE.md", start, end, Some("it's second")));
+    assert_eq!(read(), "# Mine\n\nkeep me\n\n<!-- test:start -->\nit's second\n<!-- test:end -->\n");
+
+    run_in(&dir, &managed_block_script("home/CLAUDE.md", start, end, None));
+    assert_eq!(read(), "# Mine\n\nkeep me\n");
+
+    std::fs::write(dir.join("home/CLAUDE.md"), format!("{start}\nonly\n{end}\n")).unwrap();
+    run_in(&dir, &managed_block_script("home/CLAUDE.md", start, end, None));
+    assert!(!dir.join("home/CLAUDE.md").exists());
     let _ = std::fs::remove_dir_all(&dir);
   }
 }

@@ -16,6 +16,9 @@ pub struct AgentKit {
   /// This agent's home directory inside the sandbox — the backup/plan
   /// source and the destination for `host_auth_relative_path`.
   pub home_dir: &'static str,
+  /// The agent's global instructions file inside `home_dir`, read at the
+  /// start of every session (e.g. Claude Code's user-level CLAUDE.md).
+  pub instructions_file: &'static str,
   /// `sbx secret set <secret_service> ...` — must be one of
   /// `commands::KNOWN_SECRET_SERVICES`. Surfaced read-only via
   /// `commands::list_agents`; Codex/Claude auth itself goes through the
@@ -50,6 +53,7 @@ pub const CLAUDE: AgentKit = AgentKit {
   label: "Claude",
   cli_token: "claude",
   home_dir: "/home/agent/.claude",
+  instructions_file: "CLAUDE.md",
   secret_service: "anthropic",
   permission_flag: "--permission-mode",
   permission_modes: &["plan", "default", "acceptEdits", "bypassPermissions"],
@@ -69,6 +73,7 @@ pub const CODEX: AgentKit = AgentKit {
   label: "Codex",
   cli_token: "codex",
   home_dir: "/home/agent/.codex",
+  instructions_file: "AGENTS.md",
   secret_service: "openai",
   permission_flag: "--ask-for-approval",
   permission_modes: &["untrusted", "on-failure", "on-request", "never"],
