@@ -9,7 +9,6 @@ import { Button } from '@/components/ui/button'
 import type { EnvVar } from '@/lib/envVars'
 import type { Secret } from '@/lib/secrets'
 import { useAppStore } from '@/store/useAppStore'
-import { SandboxComposeOverrideSection } from './SandboxComposeOverrideSection'
 import type { Sandbox } from './types'
 
 function sameEnvVars(a: EnvVar[], b: EnvVar[]): boolean {
@@ -207,7 +206,6 @@ export function SandboxCredentialsTab({ sandbox }: { sandbox: Sandbox }) {
         </div>
       </SettingsSection>
 
-      <SandboxComposeOverrideSection sandbox={sandbox} />
 
       <EnvVarsSavedDialog open={savedDialogOpen} onOpenChange={setSavedDialogOpen} />
     </div>

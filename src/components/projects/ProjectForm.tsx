@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { ComposeOverrideEditor, composeOverrideError } from '@/components/settings/ComposeOverrideEditor'
 import type { Project } from './types'
 
 export function ProjectForm({
@@ -19,7 +18,6 @@ export function ProjectForm({
 }) {
   const [name, setName] = useState(initial?.name ?? '')
   const [repoPath, setRepoPath] = useState(initial?.repo_path ?? '')
-  const [composeOverride, setComposeOverride] = useState(initial?.compose_override ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -29,20 +27,12 @@ export function ProjectForm({
   }
 
   async function handleSave() {
-    if (composeOverrideError(composeOverride)) {
-      setError('Fix the compose override YAML first.')
-      return
-    }
     setSaving(true)
     setError(null)
     try {
       const args = { name, repoPath }
-      const saved = initial
-        ? await invoke<Project>('update_project', { id: initial.id, ...args })
-        : await invoke<Project>('create_project', args)
-      if (composeOverride !== (initial?.compose_override ?? '')) {
-        await invoke('save_project_compose_override', { id: saved.id, content: composeOverride.trim() ? composeOverride : null })
-      }
+      if (initial) await invoke<Project>('update_project', { id: initial.id, ...args })
+      else await invoke<Project>('create_project', args)
       onSaved()
     } catch (e) {
       setError(String(e))
@@ -74,11 +64,6 @@ export function ProjectForm({
               Browse
             </Button>
           </div>
-        </div>
-        <div className="flex flex-col gap-1">
-          <Label>Docker compose override (optional)</Label>
-          <ComposeOverrideEditor value={composeOverride} onChange={setComposeOverride} />
-          <p className="text-xs text-muted-foreground">Applied to new sandboxes and pushed to running ones without their own override.</p>
         </div>
         {error && <p className="text-sm text-destructive">{error}</p>}
         <div className="flex gap-2">

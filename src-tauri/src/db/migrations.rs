@@ -470,6 +470,22 @@ pub fn migrations() -> Migrations<'static> {
     ALTER TABLE sandboxes DROP COLUMN ports;
     ALTER TABLE sandboxes DROP COLUMN host_port;
     ",
+  ), M::up(
+    "
+    -- Compose overrides move to a library scoped like kits.
+    ALTER TABLE projects DROP COLUMN compose_override;
+    ALTER TABLE sandboxes DROP COLUMN compose_override;
+    CREATE TABLE compose_overrides (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      content TEXT NOT NULL DEFAULT '',
+      is_global INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    ALTER TABLE projects ADD COLUMN compose_override_id TEXT REFERENCES compose_overrides(id) ON DELETE SET NULL;
+    ALTER TABLE sandboxes ADD COLUMN compose_override_id TEXT REFERENCES compose_overrides(id) ON DELETE SET NULL;
+    ",
   )])
 }
 
@@ -495,7 +511,7 @@ mod tests {
         |row| row.get(0),
       )
       .unwrap();
-    assert_eq!(table_count, 14);
+    assert_eq!(table_count, 15);
   }
 
   fn columns(conn: &rusqlite::Connection, table: &str) -> Vec<String> {
@@ -504,14 +520,14 @@ mod tests {
   }
 
   #[test]
-  fn removed_port_and_plan_columns_are_gone() {
+  fn removed_columns_are_gone() {
     let conn = test_conn();
     let project_cols = columns(&conn, "projects");
-    for gone in ["plans_path", "dev_server_port", "ports", "browser_urls"] {
+    for gone in ["plans_path", "dev_server_port", "ports", "browser_urls", "compose_override"] {
       assert!(!project_cols.iter().any(|c| c == gone), "projects.{gone} still exists");
     }
     let sandbox_cols = columns(&conn, "sandboxes");
-    for gone in ["ports", "host_port"] {
+    for gone in ["ports", "host_port", "compose_override"] {
       assert!(!sandbox_cols.iter().any(|c| c == gone), "sandboxes.{gone} still exists");
     }
   }

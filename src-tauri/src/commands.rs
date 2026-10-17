@@ -6,11 +6,11 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::daemon_log;
 use crate::db::error::{Error, Result};
 use crate::db::models::{
-  CommandLogEntry, ContainerMetric, EnvVar, HostMetric, JiraIssue, Kit, Project, Sandbox, SandboxBackup, Secret, SecretSource,
+  CommandLogEntry, ContainerMetric, EnvVar, HostMetric, JiraIssue, ComposeOverride, Kit, Project, Sandbox, SandboxBackup, Secret, SecretSource,
   SecretTarget, Session, SetupFailure, SetupStep, Task,
 };
 use crate::db::{
-  backups, command_log, container_metrics, host_metrics, jira_issues, kits, metrics, projects, sandboxes, sessions,
+  backups, command_log, compose_overrides, container_metrics, host_metrics, jira_issues, kits, metrics, projects, sandboxes, sessions,
   settings, tasks, DbPool,
 };
 use crate::jira::{self, JiraClient};
@@ -204,55 +204,107 @@ pub fn import_agent_files(paths: Vec<String>) -> std::result::Result<Vec<crate::
   crate::agent_config::read_files(&paths)
 }
 
-fn normalize_compose_override(content: Option<String>) -> Option<String> {
-  content.filter(|c| !c.trim().is_empty())
+#[tauri::command]
+pub fn list_compose_overrides(pool: State<DbPool>) -> Result<Vec<ComposeOverride>> {
+  let conn = pool.get()?;
+  compose_overrides::list(&conn)
 }
 
-/// Saves the project override, then pushes it to running sandboxes that have no override of their own.
 #[tauri::command]
-pub async fn save_project_compose_override(
+pub fn create_compose_override(pool: State<DbPool>, name: String, content: String) -> Result<ComposeOverride> {
+  let conn = pool.get()?;
+  compose_overrides::create(&conn, &name, &content)
+}
+
+/// Saves the override, then pushes it to running sandboxes that use it.
+#[tauri::command]
+pub async fn update_compose_override(
   app: AppHandle,
   pool: State<'_, DbPool>,
   id: String,
-  content: Option<String>,
-) -> std::result::Result<Project, String> {
-  let content = normalize_compose_override(content);
-  let (project, targets) = {
+  name: String,
+  content: String,
+) -> std::result::Result<ComposeOverride, String> {
+  let item = {
     let conn = pool.get().map_err(|e| e.to_string())?;
-    let project = projects::set_compose_override(&conn, &id, content.as_deref()).map_err(|e| e.to_string())?;
-    let targets: Vec<String> = sandboxes::list_for_project(&conn, &id)
-      .map_err(|e| e.to_string())?
-      .into_iter()
-      .filter(|s| s.status == "running" && s.compose_override.is_none())
-      .filter_map(|s| s.sbx_name)
-      .collect();
-    (project, targets)
+    compose_overrides::update(&conn, &id, &name, &content).map_err(|e| e.to_string())?
   };
-  for name in targets {
+  let targets = running_override_users(pool.inner(), &id)?;
+  push_override_to(&app, &targets, non_blank(&item.content)).await?;
+  Ok(item)
+}
+
+/// Deletes the override and removes its file from running sandboxes that used it.
+#[tauri::command]
+pub async fn delete_compose_override(app: AppHandle, pool: State<'_, DbPool>, id: String) -> std::result::Result<(), String> {
+  let targets = running_override_users(pool.inner(), &id)?;
+  {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    compose_overrides::delete(&conn, &id).map_err(|e| e.to_string())?;
+  }
+  push_override_to(&app, &targets, None).await
+}
+
+#[tauri::command]
+pub fn set_compose_override_scope(
+  pool: State<DbPool>,
+  id: String,
+  global: bool,
+  project_ids: Vec<String>,
+) -> Result<ComposeOverride> {
+  let conn = pool.get()?;
+  compose_overrides::set_scope(&conn, &id, global, &project_ids)
+}
+
+/// Picks the sandbox's override (`None` = no override) and pushes it when running.
+#[tauri::command]
+pub async fn set_sandbox_compose_override(
+  app: AppHandle,
+  pool: State<'_, DbPool>,
+  id: String,
+  override_id: Option<String>,
+) -> std::result::Result<Sandbox, String> {
+  let pool = pool.inner().clone();
+  let sandbox = {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    sandboxes::set_compose_override_id(&conn, &id, override_id.as_deref()).map_err(|e| e.to_string())?
+  };
+  if let (true, Some(name)) = (sandbox.status == "running", sandbox.sbx_name.clone()) {
+    let content = effective_compose_override(&pool, &sandbox)?;
     crate::sbx::push_compose_override(&app, &name, content.as_deref()).await.map_err(|e| e.to_string())?;
   }
-  Ok(project)
+  Ok(sandbox)
 }
 
-/// Saves the sandbox override and pushes the effective value when running.
-#[tauri::command]
-pub async fn save_sandbox_compose_override(
-  app: AppHandle,
-  pool: State<'_, DbPool>,
-  id: String,
-  content: Option<String>,
-) -> std::result::Result<Sandbox, String> {
-  let content = normalize_compose_override(content);
-  let (sandbox, project) = {
-    let conn = pool.get().map_err(|e| e.to_string())?;
-    let sandbox = sandboxes::set_compose_override(&conn, &id, content.as_deref()).map_err(|e| e.to_string())?;
-    let project = projects::get(&conn, &sandbox.project_id).map_err(|e| e.to_string())?;
-    (sandbox, project)
-  };
-  if let (true, Some(name)) = (sandbox.status == "running", sandbox.sbx_name.as_deref()) {
-    crate::sbx::push_compose_override(&app, name, effective_compose_override(&sandbox, &project)).await.map_err(|e| e.to_string())?;
+fn non_blank(content: &str) -> Option<&str> {
+  Some(content).filter(|c| !c.trim().is_empty())
+}
+
+fn running_override_users(pool: &DbPool, override_id: &str) -> std::result::Result<Vec<String>, String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  Ok(
+    sandboxes::list(&conn)
+      .map_err(|e| e.to_string())?
+      .into_iter()
+      .filter(|s| s.status == "running" && s.compose_override_id.as_deref() == Some(override_id))
+      .filter_map(|s| s.sbx_name)
+      .collect(),
+  )
+}
+
+async fn push_override_to(app: &AppHandle, names: &[String], content: Option<&str>) -> std::result::Result<(), String> {
+  let mut failed = Vec::new();
+  for name in names {
+    if let Err(e) = crate::sbx::push_compose_override(app, name, content).await {
+      log::warn!("compose override push to {name} failed: {e}");
+      failed.push(name.as_str());
+    }
   }
-  Ok(sandbox)
+  if failed.is_empty() {
+    Ok(())
+  } else {
+    Err(format!("saved, but failed to push to: {}", failed.join(", ")))
+  }
 }
 
 #[tauri::command]
@@ -1691,6 +1743,7 @@ pub async fn create_sandbox(
   permission_mode: Option<String>,
   agent: Option<String>,
   kit_id: Option<String>,
+  compose_override_id: Option<String>,
   progress_id: Option<String>,
 ) -> std::result::Result<Sandbox, String> {
   if mode != "mount" && mode != "clone" {
@@ -1771,8 +1824,13 @@ pub async fn create_sandbox(
     // Clone mode's clone lives inside the sandbox VM, not on the host — no
     // host-visible folder_path to record for it.
     let initial_folder = if mode == "mount" { Some(project.repo_path.as_str()) } else { None };
-    sandboxes::create(&conn, &project_id, &mode, initial_folder, name.as_deref(), &permission_mode, base_branch.as_deref(), &agent)
-      .map_err(|e| e.to_string())?
+    let sandbox =
+      sandboxes::create(&conn, &project_id, &mode, initial_folder, name.as_deref(), &permission_mode, base_branch.as_deref(), &agent)
+        .map_err(|e| e.to_string())?;
+    match compose_override_id.filter(|id| !id.trim().is_empty()) {
+      Some(id) => sandboxes::set_compose_override_id(&conn, &sandbox.id, Some(&id)).map_err(|e| e.to_string())?,
+      None => sandbox,
+    }
   };
 
   // From here on the sandbox row already exists (status "starting"). If
@@ -1826,7 +1884,8 @@ async fn provision_sandbox(
   let ctx = SetupContext { app, pool, project, sandbox, name: &name, agent_kit };
   // Best-effort syncs stay silent; tracked steps record failures instead of failing the create.
   let has_agent_config = !load_agent_config(pool).map(|c| c.is_empty()).unwrap_or(true);
-  let steps = applicable_steps(sandbox, project, has_agent_config);
+  let has_compose_override = effective_compose_override(pool, sandbox).map(|c| c.is_some()).unwrap_or(true);
+  let steps = applicable_steps(sandbox, has_agent_config, has_compose_override);
   let (failures, (), (), ()) = tokio::join!(
     run_steps_with(&steps, |step| progress.track_step(step, run_setup_step(&ctx, step))),
     sync_git_identity(app, &name),
@@ -1901,26 +1960,33 @@ struct SetupContext<'a> {
 const SETUP_STEPS: &[SetupStep] =
   &[SetupStep::PermissionMode, SetupStep::EnvVars, SetupStep::Secrets, SetupStep::GitOrigin, SetupStep::ComposeOverride, SetupStep::AgentConfig];
 
-fn applicable_steps(sandbox: &Sandbox, project: &Project, has_agent_config: bool) -> Vec<SetupStep> {
+fn applicable_steps(sandbox: &Sandbox, has_agent_config: bool, has_compose_override: bool) -> Vec<SetupStep> {
   SETUP_STEPS
     .iter()
     .copied()
     .filter(|step| match step {
       // /run/sandbox/source only exists in clone mode.
       SetupStep::GitOrigin => sandbox.mode == "clone",
-      SetupStep::ComposeOverride => effective_compose_override(sandbox, project).is_some(),
+      SetupStep::ComposeOverride => has_compose_override,
       SetupStep::AgentConfig => has_agent_config && sandbox.agent == crate::agents::CLAUDE.id,
       _ => true,
     })
     .collect()
 }
 
-fn effective_compose_override<'a>(sandbox: &'a Sandbox, project: &'a Project) -> Option<&'a str> {
-  sandbox
-    .compose_override
-    .as_deref()
-    .or(project.compose_override.as_deref())
-    .filter(|c| !c.trim().is_empty())
+fn effective_compose_override(pool: &DbPool, sandbox: &Sandbox) -> std::result::Result<Option<String>, String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  compose_override_content(&conn, sandbox)
+}
+
+/// The sandbox's override content, or `None` when unset, deleted or blank.
+fn compose_override_content(conn: &rusqlite::Connection, sandbox: &Sandbox) -> std::result::Result<Option<String>, String> {
+  let Some(id) = sandbox.compose_override_id.as_deref() else { return Ok(None) };
+  match compose_overrides::get(conn, id) {
+    Ok(item) => Ok(non_blank(&item.content).map(str::to_string)),
+    Err(Error::NotFound) => Ok(None),
+    Err(e) => Err(e.to_string()),
+  }
 }
 
 async fn run_setup_step(ctx: &SetupContext<'_>, step: SetupStep) -> std::result::Result<(), String> {
@@ -1940,9 +2006,10 @@ async fn run_setup_step(ctx: &SetupContext<'_>, step: SetupStep) -> std::result:
       register_secrets(app, &merged, Some(name)).await
     }
     SetupStep::GitOrigin => crate::sbx::set_git_origin_to_source(app, name).await.map_err(|e| e.to_string()),
-    SetupStep::ComposeOverride => crate::sbx::push_compose_override(app, name, effective_compose_override(sandbox, project))
-      .await
-      .map_err(|e| e.to_string()),
+    SetupStep::ComposeOverride => {
+      let content = effective_compose_override(pool, sandbox)?;
+      crate::sbx::push_compose_override(app, name, content.as_deref()).await.map_err(|e| e.to_string())
+    }
     SetupStep::AgentConfig => {
       let config = load_agent_config(pool)?;
       crate::sbx::push_agent_config(app, name, agent_kit.home_dir, &config).await.map_err(|e| e.to_string())
@@ -2011,22 +2078,22 @@ mod setup_steps_tests {
     let second = projects::create(&conn, "P2", "/r2").unwrap();
     let clone = sandboxes::create(&conn, &first.id, "clone", None, None, "default", None, "claude").unwrap();
     let mount = sandboxes::create(&conn, &second.id, "mount", Some("/r2"), None, "default", None, "claude").unwrap();
-    assert!(applicable_steps(&clone, &first, false).contains(&SetupStep::GitOrigin));
-    assert!(!applicable_steps(&mount, &second, false).contains(&SetupStep::GitOrigin));
+    assert!(applicable_steps(&clone, false, false).contains(&SetupStep::GitOrigin));
+    assert!(!applicable_steps(&mount, false, false).contains(&SetupStep::GitOrigin));
   }
 
   #[test]
-  fn compose_override_prefers_sandbox_and_skips_blank() {
+  fn compose_override_content_skips_unset_and_blank() {
     let conn = crate::db::migrations::test_conn();
-    let project = projects::set_compose_override(&conn, &projects::create(&conn, "P", "/r").unwrap().id, Some("p: 1")).unwrap();
+    let project = projects::create(&conn, "P", "/r").unwrap();
     let sandbox = sandboxes::create(&conn, &project.id, "clone", None, None, "default", None, "claude").unwrap();
-    assert_eq!(effective_compose_override(&sandbox, &project), Some("p: 1"));
-    let sandbox = sandboxes::set_compose_override(&conn, &sandbox.id, Some("s: 1")).unwrap();
-    assert_eq!(effective_compose_override(&sandbox, &project), Some("s: 1"));
-    let sandbox = sandboxes::set_compose_override(&conn, &sandbox.id, Some("  ")).unwrap();
-    let blank_project = projects::set_compose_override(&conn, &project.id, None).unwrap();
-    assert_eq!(effective_compose_override(&sandbox, &blank_project), None);
-    assert!(!applicable_steps(&sandbox, &blank_project, false).contains(&SetupStep::ComposeOverride));
+    assert_eq!(compose_override_content(&conn, &sandbox), Ok(None));
+    let item = compose_overrides::create(&conn, "web", "services: {}").unwrap();
+    let sandbox = sandboxes::set_compose_override_id(&conn, &sandbox.id, Some(&item.id)).unwrap();
+    assert_eq!(compose_override_content(&conn, &sandbox), Ok(Some("services: {}".to_string())));
+    compose_overrides::update(&conn, &item.id, "web", "  ").unwrap();
+    assert_eq!(compose_override_content(&conn, &sandbox), Ok(None));
+    assert!(!applicable_steps(&sandbox, false, false).contains(&SetupStep::ComposeOverride));
   }
 
   #[test]

@@ -44,7 +44,7 @@ fn row_to_sandbox(row: &rusqlite::Row) -> rusqlite::Result<Sandbox> {
     chrome_host_prep: row.get("chrome_host_prep")?,
     chrome_host_servers: serde_json::from_str(&row.get::<_, String>("chrome_host_commands")?).unwrap_or_default(),
     setup_failures: serde_json::from_str(&setup_failures_raw).unwrap_or_default(),
-    compose_override: row.get("compose_override")?,
+    compose_override_id: row.get("compose_override_id")?,
     git_sync_interval_minutes: row.get("git_sync_interval_minutes")?,
   })
 }
@@ -362,8 +362,8 @@ pub fn set_setup_failures(conn: &Connection, id: &str, failures: &[SetupFailure]
   get(conn, id)
 }
 
-pub fn set_compose_override(conn: &Connection, id: &str, content: Option<&str>) -> Result<Sandbox> {
-  let changed = conn.execute("UPDATE sandboxes SET compose_override = ?1 WHERE id = ?2", params![content, id])?;
+pub fn set_compose_override_id(conn: &Connection, id: &str, override_id: Option<&str>) -> Result<Sandbox> {
+  let changed = conn.execute("UPDATE sandboxes SET compose_override_id = ?1 WHERE id = ?2", params![override_id, id])?;
   if changed == 0 {
     return Err(Error::NotFound);
   }
@@ -698,14 +698,6 @@ mod tests {
     assert_eq!(no_base_branch.base_branch, None);
   }
 
-  #[test]
-  fn set_compose_override_round_trips() {
-    let conn = test_conn();
-    let project_id = make_project(&conn);
-    let sandbox = create(&conn, &project_id, "clone", None, None, "default", None, "claude").unwrap();
-    set_compose_override(&conn, &sandbox.id, Some("services: {}")).unwrap();
-    assert_eq!(get(&conn, &sandbox.id).unwrap().compose_override.as_deref(), Some("services: {}"));
-  }
 
   #[test]
   fn set_git_sync_interval_round_trips() {

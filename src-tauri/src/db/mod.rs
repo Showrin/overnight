@@ -10,6 +10,7 @@ pub mod activity;
 pub mod backups;
 pub mod browser_tests;
 pub mod command_log;
+pub mod compose_overrides;
 pub mod container_metrics;
 pub mod error;
 pub mod host_metrics;

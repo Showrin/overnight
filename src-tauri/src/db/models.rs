@@ -216,7 +216,7 @@ pub struct Sandbox {
   /// `None` = use the global interval.
   pub backup_interval_minutes: Option<i64>,
   pub setup_failures: Vec<SetupFailure>,
-  pub compose_override: Option<String>,
+  pub compose_override_id: Option<String>,
   /// `None` = auto Git Sync off.
   pub git_sync_interval_minutes: Option<i64>,
   /// Whether this sandbox may ask the host to browser-test its app through
@@ -381,7 +381,19 @@ pub struct Project {
   pub env_vars: Vec<EnvVar>,
   pub secrets: Vec<Secret>,
   pub kit_id: Option<String>,
-  pub compose_override: Option<String>,
+  pub compose_override_id: Option<String>,
+  pub created_at: i64,
+  pub updated_at: i64,
+}
+
+/// A reusable docker compose override, scoped like a `Kit`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComposeOverride {
+  pub id: String,
+  pub name: String,
+  pub content: String,
+  pub is_global: bool,
+  pub project_ids: Vec<String>,
   pub created_at: i64,
   pub updated_at: i64,
 }

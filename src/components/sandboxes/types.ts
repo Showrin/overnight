@@ -14,7 +14,7 @@ export interface Sandbox {
   sbx_name: string | null
   folder_path: string | null
   setup_failures: SetupFailure[]
-  compose_override: string | null
+  compose_override_id: string | null
   git_sync_interval_minutes: number | null
   created_at: number
   stopped_at: number | null
