@@ -6,6 +6,7 @@ mod commands;
 mod daemon_log;
 mod db;
 mod git;
+mod git_sync_scheduler;
 mod jira;
 mod notifications;
 mod process;
@@ -124,6 +125,7 @@ pub fn run() {
       commands::save_sidebar_width,
       commands::open_sandbox_agent,
       commands::git_sync_sandbox,
+      commands::save_sandbox_git_sync_interval,
       commands::get_sandbox_diff_stats,
       commands::get_branch_diff,
       commands::get_branch_commits,
@@ -211,6 +213,7 @@ pub fn run() {
       tauri::async_runtime::spawn(browser_tests::runner::run(app.handle().clone(), hub.clone()));
       app.manage(hub);
       tauri::async_runtime::spawn(prune_command_log_daily(pool.clone()));
+      tauri::async_runtime::spawn(git_sync_scheduler::run(app.handle().clone(), pool.clone()));
       app.manage(pool);
       app.manage(std::sync::Mutex::new(sbx::HostMonitor::new()));
       app.manage(std::sync::Mutex::new(sbx::SandboxMonitor::new()));

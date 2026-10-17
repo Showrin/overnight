@@ -7,6 +7,7 @@ import { branchSyncBadgeVariant, branchSyncStatusLabel, formatRelativeTime, pars
 import type { Route } from '@/lib/router'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
+import { AutoGitSyncSelect } from './AutoGitSyncSelect'
 import { SandboxHeader } from './SandboxHeader'
 import type { BranchStat, SandboxDiffStats } from './types'
 
@@ -102,7 +103,10 @@ export function BranchesPage({ sandboxId, navigate }: { sandboxId: string; navig
 
       {sandbox.mode === 'clone' && (
         <div className="mt-4 flex flex-col gap-3 border-t border-dashed border-border pt-8">
-          <h2 className="text-base font-semibold text-foreground">Git Sync Output</h2>
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-base font-semibold text-foreground">Git Sync Output</h2>
+            <AutoGitSyncSelect sandbox={sandbox} />
+          </div>
           {sandbox.last_git_sync_at == null ? (
             <p className="text-sm text-muted-foreground">Not synced yet.</p>
           ) : (

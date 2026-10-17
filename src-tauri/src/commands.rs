@@ -3264,8 +3264,13 @@ mod open_url_tests {
 /// itself. Never pushes and never force-updates.
 #[tauri::command]
 pub fn git_sync_sandbox(pool: State<DbPool>, id: String) -> std::result::Result<Vec<crate::git::BranchSyncOutcome>, String> {
+  git_sync_core(pool.inner(), &id)
+}
+
+/// Shared by the Git Sync button and the auto-sync scheduler.
+pub(crate) fn git_sync_core(pool: &DbPool, id: &str) -> std::result::Result<Vec<crate::git::BranchSyncOutcome>, String> {
   let conn = pool.get().map_err(|e| e.to_string())?;
-  let sandbox = sandboxes::get(&conn, &id).map_err(|e| e.to_string())?;
+  let sandbox = sandboxes::get(&conn, id).map_err(|e| e.to_string())?;
   let name = sandbox.sbx_name.ok_or_else(|| "sandbox isn't running".to_string())?;
   let project = projects::get(&conn, &sandbox.project_id).map_err(|e| e.to_string())?;
 
@@ -3281,9 +3286,18 @@ pub fn git_sync_sandbox(pool: State<DbPool>, id: String) -> std::result::Result<
     stderr.as_deref(),
   );
   if let Ok(outcomes) = &result {
-    let _ = sandboxes::record_git_sync(&conn, &id, outcomes, crate::db::models::now_millis());
+    let _ = sandboxes::record_git_sync(&conn, id, outcomes, crate::db::models::now_millis());
   }
   result
+}
+
+#[tauri::command]
+pub fn save_sandbox_git_sync_interval(pool: State<DbPool>, id: String, minutes: Option<i64>) -> std::result::Result<Sandbox, String> {
+  if minutes.is_some_and(|m| m < 1) {
+    return Err("auto sync interval must be at least 1 minute".to_string());
+  }
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  sandboxes::set_git_sync_interval(&conn, &id, minutes).map_err(|e| e.to_string())
 }
 
 /// One branch's diff against `base_branch`: mount mode has exactly one

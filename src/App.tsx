@@ -15,6 +15,7 @@ import { parseRoute, pushRoute, type Route } from '@/lib/router'
 import { initAppStore, useAppStore } from '@/store/useAppStore'
 import { initCreateJobs } from '@/store/useCreateJobs'
 import { cn } from '@/lib/utils'
+import type { BranchSyncOutcome } from '@/components/sandboxes/types'
 
 function App() {
   const [route, setRoute] = useState<Route>(() => parseRoute(window.location.hash))
@@ -49,6 +50,24 @@ function App() {
     }
     window.addEventListener('popstate', onPopState)
     return () => window.removeEventListener('popstate', onPopState)
+  }, [])
+
+  useEffect(() => {
+    // Auto sync only interrupts when a branch needs a manual merge.
+    const unlisten = listen<{ sandbox_id: string; outcomes: BranchSyncOutcome[] }>('git-sync-auto', (event) => {
+      const { sandbox_id, outcomes } = event.payload
+      useAppStore.getState().loadSandboxes()
+      if (!outcomes.some((o) => o.status === 'needs_manual_merge')) return
+      const sandbox = useAppStore.getState().sandboxes.find((s) => s.id === sandbox_id)
+      useAppStore.getState().showGitSyncToast({
+        sandboxId: sandbox_id,
+        label: `Auto Git Sync — ${sandbox?.name ?? sandbox?.sbx_name ?? 'sandbox'}`,
+        outcomes,
+      })
+    })
+    return () => {
+      unlisten.then((fn) => fn())
+    }
   }, [])
 
   useEffect(() => {

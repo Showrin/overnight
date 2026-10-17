@@ -219,6 +219,8 @@ pub struct Sandbox {
   pub ports: Vec<PortMapping>,
   pub setup_failures: Vec<SetupFailure>,
   pub compose_override: Option<String>,
+  /// `None` = auto Git Sync off.
+  pub git_sync_interval_minutes: Option<i64>,
   /// Whether this sandbox may ask the host to browser-test its app through
   /// Claude in Chrome (see `crate::browser_tests`). Off by default.
   pub chrome_enabled: bool,

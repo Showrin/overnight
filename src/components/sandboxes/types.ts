@@ -18,6 +18,7 @@ export interface Sandbox {
   ports: PortMapping[]
   setup_failures: SetupFailure[]
   compose_override: string | null
+  git_sync_interval_minutes: number | null
   created_at: number
   stopped_at: number | null
   // "open" | "locked-down" | null (null = inherit the global default)

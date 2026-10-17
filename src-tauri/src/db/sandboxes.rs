@@ -48,6 +48,7 @@ fn row_to_sandbox(row: &rusqlite::Row) -> rusqlite::Result<Sandbox> {
     ports: serde_json::from_str(&ports_raw).unwrap_or_default(),
     setup_failures: serde_json::from_str(&setup_failures_raw).unwrap_or_default(),
     compose_override: row.get("compose_override")?,
+    git_sync_interval_minutes: row.get("git_sync_interval_minutes")?,
   })
 }
 
@@ -381,6 +382,14 @@ pub fn set_setup_failures(conn: &Connection, id: &str, failures: &[SetupFailure]
 
 pub fn set_compose_override(conn: &Connection, id: &str, content: Option<&str>) -> Result<Sandbox> {
   let changed = conn.execute("UPDATE sandboxes SET compose_override = ?1 WHERE id = ?2", params![content, id])?;
+  if changed == 0 {
+    return Err(Error::NotFound);
+  }
+  get(conn, id)
+}
+
+pub fn set_git_sync_interval(conn: &Connection, id: &str, minutes: Option<i64>) -> Result<Sandbox> {
+  let changed = conn.execute("UPDATE sandboxes SET git_sync_interval_minutes = ?1 WHERE id = ?2", params![minutes, id])?;
   if changed == 0 {
     return Err(Error::NotFound);
   }
@@ -728,6 +737,15 @@ mod tests {
     let sandbox = create(&conn, &project_id, "clone", None, None, "default", None, "claude").unwrap();
     set_compose_override(&conn, &sandbox.id, Some("services: {}")).unwrap();
     assert_eq!(get(&conn, &sandbox.id).unwrap().compose_override.as_deref(), Some("services: {}"));
+  }
+
+  #[test]
+  fn set_git_sync_interval_round_trips() {
+    let conn = test_conn();
+    let project_id = make_project(&conn);
+    let sandbox = create(&conn, &project_id, "clone", None, None, "default", None, "claude").unwrap();
+    assert_eq!(sandbox.git_sync_interval_minutes, None);
+    assert_eq!(set_git_sync_interval(&conn, &sandbox.id, Some(30)).unwrap().git_sync_interval_minutes, Some(30));
   }
 
   #[test]

@@ -455,6 +455,11 @@ pub fn migrations() -> Migrations<'static> {
     ALTER TABLE projects ADD COLUMN compose_override TEXT;
     ALTER TABLE sandboxes ADD COLUMN compose_override TEXT;
     ",
+  ), M::up(
+    "
+    -- Auto Git Sync interval for clone-mode sandboxes. NULL = off.
+    ALTER TABLE sandboxes ADD COLUMN git_sync_interval_minutes INTEGER;
+    ",
   )])
 }
 

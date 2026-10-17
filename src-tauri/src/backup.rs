@@ -371,7 +371,7 @@ pub fn is_auto_backup_enabled(pool: &DbPool) -> bool {
 /// A sandbox is due once its interval has passed since the later of its
 /// last backup and the scheduler's last attempt (so a failing sandbox is
 /// retried once per interval, not every tick).
-fn is_due(now: i64, last_backup: i64, last_attempt: Option<i64>, interval_minutes: i64) -> bool {
+pub(crate) fn is_due(now: i64, last_backup: i64, last_attempt: Option<i64>, interval_minutes: i64) -> bool {
   let last = last_attempt.map_or(last_backup, |attempt| attempt.max(last_backup));
   now - last >= interval_minutes * 60_000
 }
