@@ -3191,9 +3191,10 @@ pub fn list_command_log(
   since_ms: Option<i64>,
   until_ms: Option<i64>,
   operation: Option<String>,
+  sandbox: Option<String>,
 ) -> std::result::Result<Vec<CommandLogEntry>, String> {
   let conn = pool.get().map_err(|e| e.to_string())?;
-  let filter = command_log::CommandLogFilter { success_only, since_ms, until_ms, operation: operation.as_deref() };
+  let filter = command_log::CommandLogFilter { success_only, since_ms, until_ms, operation: operation.as_deref(), sandbox: sandbox.as_deref() };
   command_log::list(&conn, limit, offset, &filter).map_err(|e| e.to_string())
 }
 
@@ -3205,9 +3206,10 @@ pub fn count_command_log(
   since_ms: Option<i64>,
   until_ms: Option<i64>,
   operation: Option<String>,
+  sandbox: Option<String>,
 ) -> std::result::Result<i64, String> {
   let conn = pool.get().map_err(|e| e.to_string())?;
-  let filter = command_log::CommandLogFilter { success_only, since_ms, until_ms, operation: operation.as_deref() };
+  let filter = command_log::CommandLogFilter { success_only, since_ms, until_ms, operation: operation.as_deref(), sandbox: sandbox.as_deref() };
   command_log::count(&conn, &filter).map_err(|e| e.to_string())
 }
 

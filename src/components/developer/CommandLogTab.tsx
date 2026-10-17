@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { Check, Copy } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { useAppStore } from '@/store/useAppStore'
 import { DateTimeRangeFilter } from './DateTimeRangeFilter'
 import type { CommandLogEntry } from './types'
 
@@ -82,6 +83,12 @@ export function CommandLogTab() {
   const [operations, setOperations] = useState<string[]>([])
   const [filter, setFilter] = useState<Filter>('all')
   const [operationFilter, setOperationFilter] = useState<string>('all')
+  const [sandboxFilter, setSandboxFilter] = useState<string>('all')
+  const sandboxes = useAppStore((s) => s.sandboxes)
+  const sandboxNames = useMemo(
+    () => Array.from(new Set(sandboxes.map((sb) => sb.sbx_name).filter((n): n is string => !!n))).sort(),
+    [sandboxes],
+  )
   const [fromTime, setFromTime] = useState('')
   const [toTime, setToTime] = useState('')
   const [page, setPage] = useState(1)
@@ -99,6 +106,7 @@ export function CommandLogTab() {
         sinceMs: fromTime ? new Date(fromTime).getTime() : undefined,
         untilMs: toTime ? new Date(toTime).getTime() : undefined,
         operation: operationFilter === 'all' ? undefined : operationFilter,
+        sandbox: sandboxFilter === 'all' ? undefined : sandboxFilter,
       }
       const [results, count, ops] = await Promise.all([
         invoke<CommandLogEntry[]>('list_command_log', { limit: pageSize, offset: (page - 1) * pageSize, ...params }),
@@ -118,7 +126,7 @@ export function CommandLogTab() {
   useEffect(() => {
     load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filter, operationFilter, fromTime, toTime, page, pageSize])
+  }, [filter, operationFilter, sandboxFilter, fromTime, toTime, page, pageSize])
 
   function handleFilterChange(next: Filter) {
     setFilter(next)
@@ -127,6 +135,11 @@ export function CommandLogTab() {
 
   function handleOperationChange(next: string) {
     setOperationFilter(next)
+    setPage(1)
+  }
+
+  function handleSandboxChange(next: string) {
+    setSandboxFilter(next)
     setPage(1)
   }
 
@@ -144,12 +157,13 @@ export function CommandLogTab() {
   function handleResetFilters() {
     setFilter('all')
     setOperationFilter('all')
+    setSandboxFilter('all')
     setFromTime('')
     setToTime('')
     setPage(1)
   }
 
-  const filtersActive = filter !== 'all' || operationFilter !== 'all' || fromTime !== '' || toTime !== ''
+  const filtersActive = filter !== 'all' || operationFilter !== 'all' || sandboxFilter !== 'all' || fromTime !== '' || toTime !== ''
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
 
   return (
@@ -180,6 +194,19 @@ export function CommandLogTab() {
               {operations.map((op) => (
                 <SelectItem key={op} value={op} title={op} className="truncate">
                   {truncateActionLabel(op)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={sandboxFilter} onValueChange={handleSandboxChange}>
+            <SelectTrigger className="w-48 overflow-hidden">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All sandboxes</SelectItem>
+              {sandboxNames.map((name) => (
+                <SelectItem key={name} value={name} title={name} className="truncate">
+                  {truncateActionLabel(name)}
                 </SelectItem>
               ))}
             </SelectContent>

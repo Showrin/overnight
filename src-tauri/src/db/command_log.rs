@@ -45,6 +45,7 @@ pub struct CommandLogFilter<'a> {
   pub since_ms: Option<i64>,
   pub until_ms: Option<i64>,
   pub operation: Option<&'a str>,
+  pub sandbox: Option<&'a str>,
 }
 
 fn where_clause(filter: &CommandLogFilter) -> (String, Vec<Box<dyn rusqlite::ToSql>>) {
@@ -66,6 +67,11 @@ fn where_clause(filter: &CommandLogFilter) -> (String, Vec<Box<dyn rusqlite::ToS
   if let Some(operation) = filter.operation {
     clauses.push(format!("operation = ?{}", query_params.len() + 1));
     query_params.push(Box::new(operation.to_string()));
+  }
+  if let Some(sandbox) = filter.sandbox {
+    // Matches a whole JSON array element, so "alpha" never matches "alpha-2".
+    clauses.push(format!("instr(args, '\"' || ?{} || '\"') > 0", query_params.len() + 1));
+    query_params.push(Box::new(sandbox.to_string()));
   }
 
   let sql = if clauses.is_empty() { String::new() } else { format!("WHERE {}", clauses.join(" AND ")) };
@@ -93,6 +99,12 @@ pub fn count(conn: &Connection, filter: &CommandLogFilter) -> Result<i64> {
   Ok(conn.query_row(&sql, param_refs.as_slice(), |row| row.get(0))?)
 }
 
+pub const RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1000;
+
+pub fn prune_older_than(conn: &Connection, cutoff_ms: i64) -> Result<usize> {
+  Ok(conn.execute("DELETE FROM command_log WHERE occurred_at < ?1", params![cutoff_ms])?)
+}
+
 /// Every distinct operation label seen so far, for the Command Logs page's
 /// action filter dropdown — populated from real data rather than a
 /// hardcoded list, so it can't drift out of sync with the labels used
@@ -107,6 +119,26 @@ pub fn list_operations(conn: &Connection) -> Result<Vec<String>> {
 mod tests {
   use super::*;
   use crate::db::migrations::test_conn;
+
+  #[test]
+  fn prune_drops_rows_older_than_cutoff() {
+    let conn = test_conn();
+    append(&conn, "Old", "sbx", &[], true, Some(0), None).unwrap();
+    conn.execute("UPDATE command_log SET occurred_at = 0", []).unwrap();
+    append(&conn, "New", "sbx", &[], true, Some(0), None).unwrap();
+    assert_eq!(prune_older_than(&conn, 1).unwrap(), 1);
+    assert_eq!(count(&conn, &CommandLogFilter::default()).unwrap(), 1);
+  }
+
+  #[test]
+  fn filters_by_sandbox_name_in_args() {
+    let conn = test_conn();
+    append(&conn, "Stop", "sbx", &["stop".into(), "alpha".into()], true, Some(0), None).unwrap();
+    append(&conn, "Stop", "sbx", &["stop".into(), "alpha-2".into()], true, Some(0), None).unwrap();
+    let filter = CommandLogFilter { sandbox: Some("alpha"), ..Default::default() };
+    assert_eq!(count(&conn, &filter).unwrap(), 1);
+    assert_eq!(list(&conn, 10, 0, &filter).unwrap().len(), 1);
+  }
 
   #[test]
   fn append_and_list_most_recent_first() {

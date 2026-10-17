@@ -201,6 +201,7 @@ pub fn run() {
       });
       tauri::async_runtime::spawn(browser_tests::runner::run(app.handle().clone(), hub.clone()));
       app.manage(hub);
+      tauri::async_runtime::spawn(prune_command_log_daily(pool.clone()));
       app.manage(pool);
       app.manage(std::sync::Mutex::new(sbx::HostMonitor::new()));
       app.manage(std::sync::Mutex::new(sbx::SandboxMonitor::new()));
@@ -257,4 +258,19 @@ pub fn run() {
     })
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
+}
+
+async fn prune_command_log_daily(pool: db::DbPool) {
+  loop {
+    let cutoff = db::models::now_millis() - db::command_log::RETENTION_MS;
+    match pool.get() {
+      Ok(conn) => {
+        if let Err(e) = db::command_log::prune_older_than(&conn, cutoff) {
+          log::warn!("command log prune failed: {e}");
+        }
+      }
+      Err(e) => log::warn!("command log prune: no db connection: {e}"),
+    }
+    tokio::time::sleep(std::time::Duration::from_secs(24 * 60 * 60)).await;
+  }
 }
