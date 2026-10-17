@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::daemon_log;
 use crate::db::error::{Error, Result};
@@ -1632,6 +1632,7 @@ pub async fn create_sandbox(
   permission_mode: Option<String>,
   agent: Option<String>,
   kit_id: Option<String>,
+  progress_id: Option<String>,
 ) -> std::result::Result<Sandbox, String> {
   if mode != "mount" && mode != "clone" {
     return Err(format!("invalid sandbox mode: {mode} (expected \"mount\" or \"clone\")"));
@@ -1720,7 +1721,8 @@ pub async fn create_sandbox(
   // machine hanging on an unanswered interactive network-policy prompt —
   // mark the row "error" instead of leaving it stuck at "starting" forever
   // with no signal that it didn't work.
-  match provision_sandbox(&app, &pool, &project, &sandbox, &mode, kit_dir.as_deref()).await {
+  let progress = CreateProgressEmitter { app: &app, job_id: progress_id.as_deref(), sandbox_id: &sandbox.id };
+  match provision_sandbox(&app, &pool, &project, &sandbox, &mode, kit_dir.as_deref(), &progress).await {
     Ok(result) => Ok(result),
     Err(e) => {
       if let Ok(conn) = pool.get() {
@@ -1738,27 +1740,35 @@ async fn provision_sandbox(
   sandbox: &Sandbox,
   mode: &str,
   kit_dir: Option<&std::path::Path>,
+  progress: &CreateProgressEmitter<'_>,
 ) -> std::result::Result<Sandbox, String> {
   let agent_kit = crate::agents::get(&sandbox.agent).ok_or_else(|| format!("unknown agent: {}", sandbox.agent))?;
   let base_name = base_sbx_name(sandbox.name.as_deref(), &project.name, &sandbox.id);
   let clone = mode == "clone";
   let kit_dir = kit_dir.map(|d| d.to_string_lossy().into_owned());
   let kit_dir = kit_dir.as_deref();
-  let name = resolve_unique_sbx_name(&base_name, |candidate| async move {
-    crate::sbx::create(app, &candidate, clone, &project.repo_path, agent_kit.cli_token, kit_dir).await.map_err(|e| e.to_string())
-  })
-  .await?;
+  let name = progress
+    .track(
+      "create",
+      resolve_unique_sbx_name(&base_name, |candidate| async move {
+        crate::sbx::create(app, &candidate, clone, &project.repo_path, agent_kit.cli_token, kit_dir).await.map_err(|e| e.to_string())
+      }),
+    )
+    .await?;
   // `create` returning doesn't guarantee the VM is actually up for `exec`
   // yet — wait before the exec-dependent steps below.
-  crate::sbx::wait_until_ready(app, &name, SANDBOX_READY_TIMEOUT, SANDBOX_READY_POLL_INTERVAL)
-    .await
-    .map_err(|e| e.to_string())?;
+  progress
+    .track(
+      "ready",
+      async { crate::sbx::wait_until_ready(app, &name, SANDBOX_READY_TIMEOUT, SANDBOX_READY_POLL_INTERVAL).await.map_err(|e| e.to_string()) },
+    )
+    .await?;
 
   let ctx = SetupContext { app, pool, project, sandbox, name: &name, agent_kit };
   // Best-effort syncs stay silent; tracked steps record failures instead of failing the create.
   let steps = applicable_steps(sandbox);
   let (failures, (), (), ()) = tokio::join!(
-    run_steps_with(&steps, |step| run_setup_step(&ctx, step)),
+    run_steps_with(&steps, |step| progress.track_step(step, run_setup_step(&ctx, step))),
     sync_git_identity(app, &name),
     sync_host_agent_auth(app, &name, agent_kit),
     sync_paste_keybinding(app, &name, agent_kit),
@@ -1767,6 +1777,56 @@ async fn provision_sandbox(
   let conn = pool.get().map_err(|e| e.to_string())?;
   sandboxes::update_status(&conn, &sandbox.id, "running", Some(&name), None).map_err(|e| e.to_string())?;
   sandboxes::set_setup_failures(&conn, &sandbox.id, &failures).map_err(|e| e.to_string())
+}
+
+#[derive(Serialize, Clone)]
+struct CreateProgress<'a> {
+  job_id: &'a str,
+  sandbox_id: &'a str,
+  step: &'a str,
+  status: &'a str,
+  error: Option<&'a str>,
+}
+
+/// Emits `sandbox-create-progress` for one create job. No-op without a job id.
+struct CreateProgressEmitter<'a> {
+  app: &'a AppHandle,
+  job_id: Option<&'a str>,
+  sandbox_id: &'a str,
+}
+
+impl CreateProgressEmitter<'_> {
+  fn emit(&self, step: &str, status: &str, error: Option<&str>) {
+    let Some(job_id) = self.job_id else { return };
+    let payload = CreateProgress { job_id, sandbox_id: self.sandbox_id, step, status, error };
+    if let Err(e) = self.app.emit("sandbox-create-progress", payload) {
+      log::warn!("failed to emit create progress: {e}");
+    }
+  }
+
+  async fn track<T, Fut>(&self, step: &str, fut: Fut) -> std::result::Result<T, String>
+  where
+    Fut: std::future::Future<Output = std::result::Result<T, String>>,
+  {
+    self.emit(step, "running", None);
+    let result = fut.await;
+    match &result {
+      Ok(_) => self.emit(step, "done", None),
+      Err(e) => self.emit(step, "failed", Some(e)),
+    }
+    result
+  }
+
+  async fn track_step<Fut>(&self, step: SetupStep, fut: Fut) -> std::result::Result<(), String>
+  where
+    Fut: std::future::Future<Output = std::result::Result<(), String>>,
+  {
+    self.track(&setup_step_key(step), fut).await
+  }
+}
+
+fn setup_step_key(step: SetupStep) -> String {
+  serde_json::to_value(step).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default()
 }
 
 struct SetupContext<'a> {
@@ -1881,6 +1941,12 @@ mod setup_steps_tests {
     let mount = sandboxes::create(&conn, &second.id, "mount", Some("/r2"), None, "default", None, "claude").unwrap();
     assert!(applicable_steps(&clone).contains(&SetupStep::GitOrigin));
     assert!(!applicable_steps(&mount).contains(&SetupStep::GitOrigin));
+  }
+
+  #[test]
+  fn step_key_matches_serde_name() {
+    assert_eq!(setup_step_key(SetupStep::EnvVars), "env_vars");
+    assert_eq!(setup_step_key(SetupStep::GitOrigin), "git_origin");
   }
 
   #[tokio::test]

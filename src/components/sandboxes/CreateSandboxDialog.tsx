@@ -1,6 +1,4 @@
 import { useState } from 'react'
-import { invoke } from '@tauri-apps/api/core'
-import { Copy, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -10,43 +8,14 @@ import { AGENTS, AGENT_LABELS, type Agent } from '@/lib/agentHost'
 import { defaultKitId } from '@/lib/kits'
 import type { NetworkRuleDecision } from '@/lib/networkPolicy'
 import { SANDBOX_NETWORK_PRESET_OVERRIDE_LABELS, SANDBOX_NETWORK_PRESET_OVERRIDES } from '@/lib/networkPolicy'
-import { notify } from '@/lib/notify'
 import { fullPermissionMode, PERMISSION_MODES } from '@/lib/permissionModes'
 import { useAppStore } from '@/store/useAppStore'
-import type { Sandbox, SandboxMode } from './types'
+import { useCreateJobs } from '@/store/useCreateJobs'
+import type { SandboxMode } from './types'
 
 const DEFAULT_PERMISSION_MODE = '__settings_default__'
 const DEFAULT_NETWORK_OVERRIDE = '__global_default__'
 const NO_KIT = '__no_kit__'
-
-function ErrorDetails({ message }: { message: string }) {
-  const [copied, setCopied] = useState(false)
-
-  if (!message.includes('\n')) {
-    return <p className="text-sm text-destructive">{message}</p>
-  }
-
-  async function copy() {
-    await navigator.clipboard.writeText(message)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1500)
-  }
-
-  return (
-    <div className="flex flex-col gap-1">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-destructive">Sandbox couldn't start</p>
-        <Button size="sm" variant="outline" onClick={copy} type="button">
-          <Copy className="size-3.5" />
-          {copied ? 'Copied' : 'Copy'}
-        </Button>
-      </div>
-      <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-muted p-2.5 text-xs text-foreground">
-        {message}
-      </pre>
-    </div>
-  )
-}
 
 export function CreateSandboxDialog({
   defaultProjectId,
@@ -59,7 +28,6 @@ export function CreateSandboxDialog({
 }) {
   const projects = useAppStore((s) => s.projects)
   const sandboxes = useAppStore((s) => s.sandboxes)
-  const loadNetworkPolicyPreset = useAppStore((s) => s.loadNetworkPolicyPreset)
   const defaultAgent = useAppStore((s) => s.defaultAgent)
   const kits = useAppStore((s) => s.kits)
   const [projectId, setProjectId] = useState(defaultProjectId ?? projects[0]?.id ?? '')
@@ -71,26 +39,18 @@ export function CreateSandboxDialog({
   const [agent, setAgent] = useState(defaultAgent)
   const [permissionMode, setPermissionMode] = useState('')
   const [mode, setMode] = useState<SandboxMode>('mount')
-  const [creating, setCreating] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [needsPolicyInit, setNeedsPolicyInit] = useState(false)
-  const [initializingPolicy, setInitializingPolicy] = useState(false)
   const [networkPresetOverride, setNetworkPresetOverride] = useState('')
   const [pendingNetworkRules, setPendingNetworkRules] = useState<{ decision: NetworkRuleDecision; host: string }[]>([])
   const [pendingRuleDecision, setPendingRuleDecision] = useState<NetworkRuleDecision>('allow')
   const [pendingRuleHost, setPendingRuleHost] = useState('')
 
-  // Sourced from the polled store, not local state. Gated on `!creating` so
-  // this dialog's own in-flight create — whose "starting" row the poll can
-  // pick up before our own invoke() resolves — isn't mistaken for a conflict.
+  const startCreate = useCreateJobs((s) => s.startCreate)
   const hasActiveMount =
-    !creating &&
     mode === 'mount' &&
     sandboxes.some(
       (sb) => sb.project_id === projectId && sb.mode === 'mount' && (sb.status === 'starting' || sb.status === 'running')
     )
-  const hasStartingSandbox =
-    !creating && sandboxes.some((sb) => sb.project_id === projectId && sb.status === 'starting')
+  const hasStartingSandbox = sandboxes.some((sb) => sb.project_id === projectId && sb.status === 'starting')
 
   function addPendingNetworkRule() {
     const host = pendingRuleHost.trim()
@@ -103,66 +63,23 @@ export function CreateSandboxDialog({
     setPendingNetworkRules((rules) => rules.filter((_, i) => i !== index))
   }
 
-  // Rules and the preset override need a real sbx_name to scope to, so
-  // they're applied here — right after create_sandbox succeeds — rather
-  // than passed into create_sandbox itself. Best-effort: a failure here
-  // doesn't undo the (already-running) sandbox, it just leaves the
-  // override/rules for the user to set manually from the SandboxCard.
-  async function applyNetworkPolicyOverrides(sandboxId: string) {
-    if (networkPresetOverride) {
-      await invoke('set_sandbox_network_preset_override', { id: sandboxId, preset: networkPresetOverride })
-    }
-    for (const rule of pendingNetworkRules) {
-      await invoke('add_sandbox_network_rule', { id: sandboxId, decision: rule.decision, host: rule.host })
-    }
-  }
-
-  async function handleCreate() {
-    setCreating(true)
-    setError(null)
-    setNeedsPolicyInit(false)
-    try {
-      const sandbox = await invoke<Sandbox>('create_sandbox', {
+  // Runs in the background; progress shows in CreateProgressPopout.
+  function handleCreate() {
+    const project = projects.find((p) => p.id === projectId)
+    startCreate(
+      {
         projectId,
         mode,
         name: name.trim() || null,
         permissionMode: permissionMode || null,
         agent,
         kitId,
-      })
-      notify('Sandbox started', 'Your sandbox is up and running.', sandbox.id)
-      try {
-        await applyNetworkPolicyOverrides(sandbox.id)
-      } catch (networkError) {
-        console.error('failed to apply network policy overrides for new sandbox', networkError)
-      }
-      onCreated()
-    } catch (e) {
-      const message = String(e)
-      setError(message)
-      if (message.includes("network policy hasn't been initialized")) {
-        setNeedsPolicyInit(true)
-      } else {
-        notify('Sandbox failed to start', message)
-      }
-    } finally {
-      setCreating(false)
-    }
-  }
-
-  async function initPolicyAndRetry(preset: 'allow-all' | 'balanced' | 'deny-all') {
-    setInitializingPolicy(true)
-    setError(null)
-    try {
-      await invoke('init_sbx_policy', { preset })
-      setNeedsPolicyInit(false)
-      await loadNetworkPolicyPreset()
-      await handleCreate()
-    } catch (e) {
-      setError(String(e))
-    } finally {
-      setInitializingPolicy(false)
-    }
+        networkPresetOverride: networkPresetOverride || null,
+        networkRules: pendingNetworkRules,
+      },
+      name.trim() || project?.name || 'sandbox',
+    )
+    onCreated()
   }
 
   return (
@@ -364,44 +281,15 @@ export function CreateSandboxDialog({
         {!hasActiveMount && hasStartingSandbox && (
           <p className="text-xs text-destructive">A sandbox is already starting for this project.</p>
         )}
-        {error && <ErrorDetails message={error} />}
-
-        {needsPolicyInit && (
-          <div className="flex flex-col gap-2 rounded-lg border border-border p-2.5">
-            <p className="text-xs text-muted-foreground">
-              sbx needs a one-time network policy for this machine before it can create sandboxes. Balanced is a
-              good default — allows common dev services, blocks everything else.
-            </p>
-            <div className="flex flex-wrap gap-2">
-              <Button size="sm" variant="outline" disabled={initializingPolicy} onClick={() => initPolicyAndRetry('allow-all')}>
-                Open
-              </Button>
-              <Button size="sm" disabled={initializingPolicy} onClick={() => initPolicyAndRetry('balanced')}>
-                Balanced (recommended)
-              </Button>
-              <Button size="sm" variant="outline" disabled={initializingPolicy} onClick={() => initPolicyAndRetry('deny-all')}>
-                Locked down
-              </Button>
-            </div>
-          </div>
-        )}
-
         <div className="flex gap-2">
           <Button
             className="flex-1"
             onClick={handleCreate}
-            disabled={creating || !projectId || hasActiveMount || hasStartingSandbox}
+            disabled={!projectId || hasActiveMount || hasStartingSandbox}
           >
-            {creating && <Loader2 className="size-3.5 animate-spin" />}
-            {creating
-              ? 'Starting…'
-              : hasActiveMount
-                ? 'Sandbox running'
-                : hasStartingSandbox
-                  ? 'Sandbox starting…'
-                  : 'Start sandbox'}
+            {hasActiveMount ? 'Sandbox running' : hasStartingSandbox ? 'Sandbox starting…' : 'Start sandbox'}
           </Button>
-          <Button variant="outline" onClick={onCancel} disabled={creating}>
+          <Button variant="outline" onClick={onCancel}>
             Cancel
           </Button>
         </div>

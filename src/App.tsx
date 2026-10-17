@@ -7,11 +7,13 @@ import { BackupsScreen } from '@/components/backups/BackupsScreen'
 import { JiraIssueList } from '@/components/dashboard/JiraIssueList'
 import { ProjectsScreen } from '@/components/projects/ProjectsScreen'
 import { HostStatsPanel } from '@/components/sandboxes/HostStatsPanel'
+import { CreateProgressPopout } from '@/components/sandboxes/CreateProgressPopout'
 import { GitSyncToast } from '@/components/sandboxes/GitSyncToast'
 import { SandboxesScreen } from '@/components/sandboxes/SandboxesScreen'
 import { SettingsDialog } from '@/components/settings/SettingsDialog'
 import { parseRoute, pushRoute, type Route } from '@/lib/router'
 import { initAppStore, useAppStore } from '@/store/useAppStore'
+import { initCreateJobs } from '@/store/useCreateJobs'
 import { cn } from '@/lib/utils'
 
 function App() {
@@ -27,6 +29,7 @@ function App() {
 
   useEffect(() => {
     initAppStore()
+    initCreateJobs()
 
     const splash = document.getElementById('splash')
     if (splash) {
@@ -114,6 +117,7 @@ function App() {
         </div>
       </div>
       <OperationsIndicator navigate={navigate} />
+      <CreateProgressPopout />
       <GitSyncToast />
       <SettingsDialog />
     </div>
