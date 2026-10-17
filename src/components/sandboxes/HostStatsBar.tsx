@@ -26,7 +26,7 @@ function Meter({ label, percent, value, usage }: { label: string; percent: numbe
           className="absolute inset-y-0 left-0 border-r-[1.5px] border-current transition-[width] duration-300"
           style={{
             width: `${width}%`,
-            backgroundImage: 'linear-gradient(to right, transparent, color-mix(in oklch, currentColor 35%, transparent))',
+            backgroundImage: 'linear-gradient(to left, transparent,color-mix(in oklch, currentColor 35%, transparent))',
             borderRightWidth: width > 0 ? undefined : 0,
           }}
         />
