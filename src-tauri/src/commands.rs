@@ -2878,6 +2878,46 @@ pub fn open_path_in_explorer(pool: State<DbPool>, path: String) -> std::result::
   result.map(|_| ()).map_err(|e| e.to_string())
 }
 
+fn is_http_url(url: &str) -> bool {
+  url.starts_with("http://") || url.starts_with("https://")
+}
+
+/// Hands the URL straight to the OS opener. `window.open` from the webview
+/// goes through a new-window request that leaves an extra blank tab.
+#[tauri::command]
+pub fn open_url(pool: State<DbPool>, url: String) -> std::result::Result<(), String> {
+  if !is_http_url(&url) {
+    return Err(format!("invalid url: {url}"));
+  }
+  #[cfg(target_os = "windows")]
+  let (program, result) = {
+    let mut cmd = std::process::Command::new("rundll32");
+    cmd.args(["url.dll,FileProtocolHandler", &url]);
+    crate::git::hide_console(&mut cmd);
+    ("rundll32", cmd.spawn())
+  };
+  #[cfg(target_os = "macos")]
+  let (program, result) = ("open", std::process::Command::new("open").arg(&url).spawn());
+  #[cfg(target_os = "linux")]
+  let (program, result) = ("xdg-open", std::process::Command::new("xdg-open").arg(&url).spawn());
+
+  log_spawn_result(&pool, "Open URL in browser", program, std::slice::from_ref(&url), &result);
+  result.map(|_| ()).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod open_url_tests {
+  use super::is_http_url;
+
+  #[test]
+  fn accepts_only_http_schemes() {
+    assert!(is_http_url("http://localhost:8080"));
+    assert!(is_http_url("https://example.com"));
+    assert!(!is_http_url("file:///etc/passwd"));
+    assert!(!is_http_url("calc.exe"));
+  }
+}
+
 /// `git fetch sandbox-<name>` on the host repo, fast-forwarding any local
 /// branch that can take the update cleanly. Plain host-side git — no `sbx`
 /// involved, since the daemon and remote are already wired up by `sbx`

@@ -103,7 +103,7 @@ export function SandboxActions({
 
   function openInBrowser() {
     if (sandbox.host_port != null) {
-      window.open(`http://localhost:${sandbox.host_port}`, '_blank')
+      invoke('open_url', { url: `http://localhost:${sandbox.host_port}` }).catch((e) => setError(String(e)))
     }
   }
 

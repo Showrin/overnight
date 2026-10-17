@@ -120,6 +120,7 @@ pub fn run() {
       commands::get_branch_diff,
       commands::get_branch_commits,
       commands::open_path_in_explorer,
+      commands::open_url,
       commands::open_backups_root_folder,
       commands::get_host_stats,
       commands::get_host_stats_history,
