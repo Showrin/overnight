@@ -311,6 +311,7 @@ pub enum SetupStep {
   Secrets,
   GitOrigin,
   ComposeOverride,
+  AgentConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

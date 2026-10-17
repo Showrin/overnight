@@ -1,3 +1,4 @@
+mod agent_config;
 mod agents;
 mod backup;
 mod browser_tests;
@@ -44,6 +45,9 @@ pub fn run() {
       commands::save_project_browser_config,
       commands::save_project_compose_override,
       commands::save_sandbox_compose_override,
+      commands::get_agent_config,
+      commands::save_agent_config,
+      commands::import_agent_files,
       commands::get_settings,
       commands::save_settings,
       commands::save_skill_folders,

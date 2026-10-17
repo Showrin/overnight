@@ -1,5 +1,5 @@
 // Mirrors db/models.rs::SetupStep.
-export type SetupStep = 'permission_mode' | 'ports' | 'env_vars' | 'secrets' | 'git_origin' | 'compose_override'
+export type SetupStep = 'permission_mode' | 'ports' | 'env_vars' | 'secrets' | 'git_origin' | 'compose_override' | 'agent_config'
 
 export interface SetupFailure {
   step: SetupStep
@@ -15,5 +15,6 @@ export const SETUP_STEP_LABELS: Record<string, string> = {
   secrets: 'Secrets',
   git_origin: 'Git origin',
   compose_override: 'Compose override',
+  agent_config: 'Hooks & output styles',
   network_rules: 'Network rules',
 }

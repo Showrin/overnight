@@ -186,6 +186,52 @@ pub fn save_project_browser_config(
   projects::set_browser_config(&conn, &id, &ports_unique, &urls).map_err(|e| e.to_string())
 }
 
+fn load_agent_config(pool: &DbPool) -> std::result::Result<crate::agent_config::AgentConfig, String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  Ok(settings::get_json(&conn, crate::agent_config::SETTINGS_KEY).map_err(|e| e.to_string())?.unwrap_or_default())
+}
+
+#[tauri::command]
+pub fn get_agent_config(pool: State<DbPool>) -> std::result::Result<crate::agent_config::AgentConfig, String> {
+  load_agent_config(pool.inner())
+}
+
+/// Saves the Claude hooks/output styles and pushes them to running Claude sandboxes.
+#[tauri::command]
+pub async fn save_agent_config(
+  app: AppHandle,
+  pool: State<'_, DbPool>,
+  config: crate::agent_config::AgentConfig,
+) -> std::result::Result<(), String> {
+  crate::agent_config::validate(&config)?;
+  let targets: Vec<String> = {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    settings::set_json(&conn, crate::agent_config::SETTINGS_KEY, &config).map_err(|e| e.to_string())?;
+    sandboxes::list(&conn)
+      .map_err(|e| e.to_string())?
+      .into_iter()
+      .filter(|s| s.status == "running" && s.agent == crate::agents::CLAUDE.id)
+      .filter_map(|s| s.sbx_name)
+      .collect()
+  };
+  let mut errors = Vec::new();
+  for name in targets {
+    if let Err(e) = crate::sbx::push_agent_config(&app, &name, crate::agents::CLAUDE.home_dir, &config).await {
+      errors.push(format!("{name}: {e}"));
+    }
+  }
+  if errors.is_empty() {
+    Ok(())
+  } else {
+    Err(format!("saved, but failed to push to: {}", errors.join("; ")))
+  }
+}
+
+#[tauri::command]
+pub fn import_agent_files(paths: Vec<String>) -> std::result::Result<Vec<crate::agent_config::NamedFile>, String> {
+  crate::agent_config::read_files(&paths)
+}
+
 fn normalize_compose_override(content: Option<String>) -> Option<String> {
   content.filter(|c| !c.trim().is_empty())
 }
@@ -1817,7 +1863,8 @@ async fn provision_sandbox(
 
   let ctx = SetupContext { app, pool, project, sandbox, name: &name, agent_kit };
   // Best-effort syncs stay silent; tracked steps record failures instead of failing the create.
-  let steps = applicable_steps(sandbox, project);
+  let has_agent_config = !load_agent_config(pool).map(|c| c.is_empty()).unwrap_or(true);
+  let steps = applicable_steps(sandbox, project, has_agent_config);
   let (failures, (), (), ()) = tokio::join!(
     run_steps_with(&steps, |step| progress.track_step(step, run_setup_step(&ctx, step))),
     sync_git_identity(app, &name),
@@ -1890,9 +1937,9 @@ struct SetupContext<'a> {
 }
 
 const SETUP_STEPS: &[SetupStep] =
-  &[SetupStep::PermissionMode, SetupStep::Ports, SetupStep::EnvVars, SetupStep::Secrets, SetupStep::GitOrigin, SetupStep::ComposeOverride];
+  &[SetupStep::PermissionMode, SetupStep::Ports, SetupStep::EnvVars, SetupStep::Secrets, SetupStep::GitOrigin, SetupStep::ComposeOverride, SetupStep::AgentConfig];
 
-fn applicable_steps(sandbox: &Sandbox, project: &Project) -> Vec<SetupStep> {
+fn applicable_steps(sandbox: &Sandbox, project: &Project, has_agent_config: bool) -> Vec<SetupStep> {
   SETUP_STEPS
     .iter()
     .copied()
@@ -1900,6 +1947,7 @@ fn applicable_steps(sandbox: &Sandbox, project: &Project) -> Vec<SetupStep> {
       // /run/sandbox/source only exists in clone mode.
       SetupStep::GitOrigin => sandbox.mode == "clone",
       SetupStep::ComposeOverride => effective_compose_override(sandbox, project).is_some(),
+      SetupStep::AgentConfig => has_agent_config && sandbox.agent == crate::agents::CLAUDE.id,
       _ => true,
     })
     .collect()
@@ -1939,6 +1987,10 @@ async fn run_setup_step(ctx: &SetupContext<'_>, step: SetupStep) -> std::result:
     SetupStep::ComposeOverride => crate::sbx::push_compose_override(app, name, effective_compose_override(sandbox, project))
       .await
       .map_err(|e| e.to_string()),
+    SetupStep::AgentConfig => {
+      let config = load_agent_config(pool)?;
+      crate::sbx::push_agent_config(app, name, agent_kit.home_dir, &config).await.map_err(|e| e.to_string())
+    }
   }
 }
 
@@ -2002,8 +2054,8 @@ mod setup_steps_tests {
     let second = projects::create(&conn, "P2", "/r2", None, None).unwrap();
     let clone = sandboxes::create(&conn, &first.id, "clone", None, None, "default", None, "claude").unwrap();
     let mount = sandboxes::create(&conn, &second.id, "mount", Some("/r2"), None, "default", None, "claude").unwrap();
-    assert!(applicable_steps(&clone, &first).contains(&SetupStep::GitOrigin));
-    assert!(!applicable_steps(&mount, &second).contains(&SetupStep::GitOrigin));
+    assert!(applicable_steps(&clone, &first, false).contains(&SetupStep::GitOrigin));
+    assert!(!applicable_steps(&mount, &second, false).contains(&SetupStep::GitOrigin));
   }
 
   #[test]
@@ -2017,7 +2069,7 @@ mod setup_steps_tests {
     let sandbox = sandboxes::set_compose_override(&conn, &sandbox.id, Some("  ")).unwrap();
     let blank_project = projects::set_compose_override(&conn, &project.id, None).unwrap();
     assert_eq!(effective_compose_override(&sandbox, &blank_project), None);
-    assert!(!applicable_steps(&sandbox, &blank_project).contains(&SetupStep::ComposeOverride));
+    assert!(!applicable_steps(&sandbox, &blank_project, false).contains(&SetupStep::ComposeOverride));
   }
 
   #[test]

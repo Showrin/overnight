@@ -9,6 +9,7 @@ import {
   ScrollText,
   SlidersHorizontal,
   Terminal,
+  Webhook,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -16,7 +17,7 @@ export const SHOW_JIRA_SETTINGS = false
 export const SHOW_PERFORMANCE_MONITOR = false
 
 export type SettingsTab = 'general' | 'backups' | 'network' | 'credentials' | 'kits' | 'browser' | 'integrations'
-export type SettingsSection = SettingsTab | 'performance-monitor' | 'daemon-logs' | 'command-logs'
+export type SettingsSection = SettingsTab | 'agent-config' | 'performance-monitor' | 'daemon-logs' | 'command-logs'
 
 export interface SectionItem {
   id: SettingsSection
@@ -34,6 +35,7 @@ export const SECTION_GROUPS: { label: string; items: SectionItem[] }[] = [
       { id: 'credentials', label: 'Credentials', icon: KeyRound },
       { id: 'kits', label: 'Kits', icon: Boxes },
       { id: 'browser', label: 'Browser Testing', icon: Globe },
+      { id: 'agent-config', label: 'Hooks & Styles', icon: Webhook },
       ...(SHOW_JIRA_SETTINGS ? [{ id: 'integrations' as const, label: 'Integrations', icon: Plug }] : []),
     ],
   },

@@ -827,6 +827,17 @@ mod compose_override_script_tests {
   }
 }
 
+pub async fn push_agent_config<R: Runtime>(
+  app: &AppHandle<R>,
+  name: &str,
+  home_dir: &str,
+  config: &crate::agent_config::AgentConfig,
+) -> Result<()> {
+  let script = crate::agent_config::build_push_script(home_dir, config);
+  run(app, "Set agent hooks and output styles", &["exec", "-d", name, "sh", "-c", &script]).await?;
+  Ok(())
+}
+
 const HOST_SOURCE_PATH: &str = "/run/sandbox/source";
 
 fn set_origin_script(workspace: &str) -> String {

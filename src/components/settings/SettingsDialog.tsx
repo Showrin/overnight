@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 import { SECTION_GROUPS, SHOW_PERFORMANCE_MONITOR, isSettingsTab, sectionLabel, type SettingsSection } from './sections'
 import { SettingsDialogHeader } from './SettingsLayout'
 import { SettingsScreen } from './SettingsScreen'
+import { AgentConfigTab } from './tabs/AgentConfigTab'
 
 function SettingsNav({ current, onSelect }: { current: SettingsSection; onSelect: (section: SettingsSection) => void }) {
   return (
@@ -64,6 +65,7 @@ export function SettingsDialog() {
                   <PerformanceMonitorTab />
                 </div>
               )}
+              {section === 'agent-config' && <AgentConfigTab />}
               {section === 'daemon-logs' && (
                 <div className="flex min-h-0 flex-1 flex-col px-6 pt-4 pb-6">
                   <TelemetryTab />
