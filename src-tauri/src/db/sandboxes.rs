@@ -1,7 +1,7 @@
 use rusqlite::{params, Connection};
 
 use crate::db::error::{Error, Result};
-use crate::db::models::{new_id, now_millis, EnvVar, HostServer, PortMapping, Sandbox, Secret, WorktreeInfo};
+use crate::db::models::{new_id, now_millis, EnvVar, HostServer, PortMapping, Sandbox, Secret, SetupFailure, WorktreeInfo};
 
 fn row_to_sandbox(row: &rusqlite::Row) -> rusqlite::Result<Sandbox> {
   let branches_raw: String = row.get("branches")?;
@@ -10,6 +10,7 @@ fn row_to_sandbox(row: &rusqlite::Row) -> rusqlite::Result<Sandbox> {
   let secrets_raw: String = row.get("secrets")?;
   let last_git_sync_result_raw: String = row.get("last_git_sync_result")?;
   let ports_raw: String = row.get("ports")?;
+  let setup_failures_raw: String = row.get("setup_failures")?;
   Ok(Sandbox {
     id: row.get("id")?,
     project_id: row.get("project_id")?,
@@ -45,6 +46,7 @@ fn row_to_sandbox(row: &rusqlite::Row) -> rusqlite::Result<Sandbox> {
     chrome_host_prep: row.get("chrome_host_prep")?,
     chrome_host_servers: serde_json::from_str(&row.get::<_, String>("chrome_host_commands")?).unwrap_or_default(),
     ports: serde_json::from_str(&ports_raw).unwrap_or_default(),
+    setup_failures: serde_json::from_str(&setup_failures_raw).unwrap_or_default(),
   })
 }
 
@@ -353,9 +355,23 @@ pub fn record_git_sync(
   get(conn, id)
 }
 
+/// Also sets `host_port` to the first mapping, which older UI still reads.
 pub fn set_ports(conn: &Connection, id: &str, ports: &[PortMapping]) -> Result<Sandbox> {
   let json = serde_json::to_string(ports)?;
-  let changed = conn.execute("UPDATE sandboxes SET ports = ?1 WHERE id = ?2", params![json, id])?;
+  let first = ports.first().map(|p| i64::from(p.host_port));
+  let changed = conn.execute(
+    "UPDATE sandboxes SET ports = ?1, host_port = COALESCE(?2, host_port) WHERE id = ?3",
+    params![json, first, id],
+  )?;
+  if changed == 0 {
+    return Err(Error::NotFound);
+  }
+  get(conn, id)
+}
+
+pub fn set_setup_failures(conn: &Connection, id: &str, failures: &[SetupFailure]) -> Result<Sandbox> {
+  let json = serde_json::to_string(failures)?;
+  let changed = conn.execute("UPDATE sandboxes SET setup_failures = ?1 WHERE id = ?2", params![json, id])?;
   if changed == 0 {
     return Err(Error::NotFound);
   }
@@ -691,7 +707,20 @@ mod tests {
     assert!(sandbox.ports.is_empty());
     let ports = vec![PortMapping { sandbox_port: 3000, host_port: 51000 }, PortMapping { sandbox_port: 8080, host_port: 51001 }];
     set_ports(&conn, &sandbox.id, &ports).unwrap();
-    assert_eq!(get(&conn, &sandbox.id).unwrap().ports, ports);
+    let fetched = get(&conn, &sandbox.id).unwrap();
+    assert_eq!(fetched.ports, ports);
+    assert_eq!(fetched.host_port, Some(51000));
+  }
+
+  #[test]
+  fn set_setup_failures_round_trips() {
+    let conn = test_conn();
+    let project_id = make_project(&conn);
+    let sandbox = create(&conn, &project_id, "clone", None, None, "default", None, "claude").unwrap();
+    assert!(sandbox.setup_failures.is_empty());
+    let failures = vec![SetupFailure { step: crate::db::models::SetupStep::Secrets, error: "boom".into() }];
+    set_setup_failures(&conn, &sandbox.id, &failures).unwrap();
+    assert_eq!(get(&conn, &sandbox.id).unwrap().setup_failures, failures);
   }
 
   #[test]

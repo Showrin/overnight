@@ -217,6 +217,7 @@ pub struct Sandbox {
   /// `None` = use the global interval.
   pub backup_interval_minutes: Option<i64>,
   pub ports: Vec<PortMapping>,
+  pub setup_failures: Vec<SetupFailure>,
   /// Whether this sandbox may ask the host to browser-test its app through
   /// Claude in Chrome (see `crate::browser_tests`). Off by default.
   pub chrome_enabled: bool,
@@ -297,6 +298,22 @@ pub struct BrowserTest {
   pub created_at: i64,
   pub started_at: Option<i64>,
   pub finished_at: Option<i64>,
+}
+
+/// A post-create configuration step. Each one is safe to run again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SetupStep {
+  PermissionMode,
+  Ports,
+  EnvVars,
+  Secrets,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetupFailure {
+  pub step: SetupStep,
+  pub error: String,
 }
 
 /// One periodic (or pre-stop/pre-delete) backup of a sandbox's agent home

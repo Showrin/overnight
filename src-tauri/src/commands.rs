@@ -7,7 +7,7 @@ use crate::daemon_log;
 use crate::db::error::{Error, Result};
 use crate::db::models::{
   CommandLogEntry, ContainerMetric, EnvVar, HostMetric, JiraIssue, Kit, PortMapping, Project, Sandbox, SandboxBackup, Secret, SecretSource,
-  SecretTarget, Session, Task,
+  SecretTarget, Session, SetupFailure, SetupStep, Task,
 };
 use crate::db::{
   backups, command_log, container_metrics, host_metrics, jira_issues, kits, metrics, projects, sandboxes, sessions,
@@ -1754,38 +1754,118 @@ async fn provision_sandbox(
     .await
     .map_err(|e| e.to_string())?;
 
-  // Independent once the sandbox is ready: git identity, the
-  // permission-mode alias, env vars, secrets, port publishing/lookup, and
-  // (best-effort) syncing this agent's host auth file in. Run concurrently.
-  let sandbox_ports = ports_to_publish(project);
-  let (permission_result, ports_result, env_result, secret_result, (), (), ()) = tokio::join!(
-    crate::sbx::set_default_permission_mode(app, &name, agent_kit.cli_token, agent_kit.permission_flag, &sandbox.permission_mode),
-    publish_ports(app, &name, &sandbox_ports),
-    async {
-      let merged = full_env_vars_for_sandbox(pool, &project.id, sandbox)?;
-      crate::sbx::set_env_vars(app, &name, &merged).await.map_err(|e| e.to_string())
-    },
-    async {
-      // Already fully placeholder-resolved: a brand-new sandbox's own
-      // secrets are always empty, so this is just the already-persisted
-      // global/project lists — only registering them against this new
-      // sandbox is needed, not resolving anything new.
-      let merged = merged_secrets(pool, &project.id, &sandbox.secrets)?;
-      register_secrets(app, &merged, Some(&name)).await
-    },
+  let ctx = SetupContext { app, pool, project, sandbox, name: &name, agent_kit };
+  // Best-effort syncs stay silent; tracked steps record failures instead of failing the create.
+  let steps = applicable_steps(sandbox);
+  let (failures, (), (), ()) = tokio::join!(
+    run_steps_with(&steps, |step| run_setup_step(&ctx, step)),
     sync_git_identity(app, &name),
     sync_host_agent_auth(app, &name, agent_kit),
     sync_paste_keybinding(app, &name, agent_kit),
   );
-  permission_result.map_err(|e| e.to_string())?;
-  let ports = ports_result.map_err(|e| e.to_string())?;
-  env_result?;
-  secret_result?;
 
   let conn = pool.get().map_err(|e| e.to_string())?;
-  sandboxes::set_ports(&conn, &sandbox.id, &ports).map_err(|e| e.to_string())?;
-  let host_port = ports.first().map(|p| i64::from(p.host_port));
-  sandboxes::update_status(&conn, &sandbox.id, "running", Some(&name), host_port).map_err(|e| e.to_string())
+  sandboxes::update_status(&conn, &sandbox.id, "running", Some(&name), None).map_err(|e| e.to_string())?;
+  sandboxes::set_setup_failures(&conn, &sandbox.id, &failures).map_err(|e| e.to_string())
+}
+
+struct SetupContext<'a> {
+  app: &'a AppHandle,
+  pool: &'a DbPool,
+  project: &'a Project,
+  sandbox: &'a Sandbox,
+  name: &'a str,
+  agent_kit: &'a crate::agents::AgentKit,
+}
+
+const SETUP_STEPS: &[SetupStep] = &[SetupStep::PermissionMode, SetupStep::Ports, SetupStep::EnvVars, SetupStep::Secrets];
+
+fn applicable_steps(_sandbox: &Sandbox) -> Vec<SetupStep> {
+  SETUP_STEPS.to_vec()
+}
+
+async fn run_setup_step(ctx: &SetupContext<'_>, step: SetupStep) -> std::result::Result<(), String> {
+  let SetupContext { app, pool, project, sandbox, name, agent_kit } = *ctx;
+  match step {
+    SetupStep::PermissionMode => {
+      crate::sbx::set_default_permission_mode(app, name, agent_kit.cli_token, agent_kit.permission_flag, &sandbox.permission_mode)
+        .await
+        .map_err(|e| e.to_string())
+    }
+    SetupStep::Ports => {
+      let ports = publish_ports(app, name, &ports_to_publish(project)).await.map_err(|e| e.to_string())?;
+      let conn = pool.get().map_err(|e| e.to_string())?;
+      sandboxes::set_ports(&conn, &sandbox.id, &ports).map_err(|e| e.to_string())?;
+      Ok(())
+    }
+    SetupStep::EnvVars => {
+      let merged = full_env_vars_for_sandbox(pool, &project.id, sandbox)?;
+      crate::sbx::set_env_vars(app, name, &merged).await.map_err(|e| e.to_string())
+    }
+    SetupStep::Secrets => {
+      let merged = merged_secrets(pool, &project.id, &sandbox.secrets)?;
+      register_secrets(app, &merged, Some(name)).await
+    }
+  }
+}
+
+/// Runs every step concurrently and returns only the ones that failed.
+async fn run_steps_with<F, Fut>(steps: &[SetupStep], run: F) -> Vec<SetupFailure>
+where
+  F: Fn(SetupStep) -> Fut,
+  Fut: std::future::Future<Output = std::result::Result<(), String>>,
+{
+  let results = futures::future::join_all(steps.iter().map(|&step| {
+    let fut = run(step);
+    async move { (step, fut.await) }
+  }))
+  .await;
+  results.into_iter().filter_map(|(step, result)| result.err().map(|error| SetupFailure { step, error })).collect()
+}
+
+/// Re-runs only the steps that failed last time.
+#[tauri::command]
+pub async fn retry_sandbox_setup(app: AppHandle, pool: State<'_, DbPool>, id: String) -> std::result::Result<Sandbox, String> {
+  let pool = pool.inner().clone();
+  let (sandbox, project) = {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    let sandbox = sandboxes::get(&conn, &id).map_err(|e| e.to_string())?;
+    let project = projects::get(&conn, &sandbox.project_id).map_err(|e| e.to_string())?;
+    (sandbox, project)
+  };
+  if sandbox.status != "running" {
+    return Err("sandbox must be running to retry setup".to_string());
+  }
+  let name = sandbox.sbx_name.clone().ok_or_else(|| "sandbox has no sbx name".to_string())?;
+  let agent_kit = crate::agents::get(&sandbox.agent).ok_or_else(|| format!("unknown agent: {}", sandbox.agent))?;
+  let steps: Vec<SetupStep> = sandbox.setup_failures.iter().map(|f| f.step).collect();
+  let ctx = SetupContext { app: &app, pool: &pool, project: &project, sandbox: &sandbox, name: &name, agent_kit };
+  let failures = run_steps_with(&steps, |step| run_setup_step(&ctx, step)).await;
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  sandboxes::set_setup_failures(&conn, &id, &failures).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod setup_steps_tests {
+  use super::*;
+
+  #[tokio::test]
+  async fn returns_only_failed_steps() {
+    let failures = run_steps_with(SETUP_STEPS, |step| async move {
+      if step == SetupStep::Secrets {
+        Err("boom".to_string())
+      } else {
+        Ok(())
+      }
+    })
+    .await;
+    assert_eq!(failures, vec![SetupFailure { step: SetupStep::Secrets, error: "boom".to_string() }]);
+  }
+
+  #[tokio::test]
+  async fn all_ok_returns_empty() {
+    assert!(run_steps_with(SETUP_STEPS, |_| async { Ok(()) }).await.is_empty());
+  }
 }
 
 /// Publishes each port, then reads back the host port sbx assigned to it.

@@ -15,6 +15,7 @@ import { formatRelativeTime, permissionTextClass } from '@/lib/sandboxDisplay'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
 import { SandboxActions } from './SandboxActions'
+import { SetupFailuresBanner } from './SetupFailuresBanner'
 import { StatusIndicator } from './StatusIndicator'
 import type { Sandbox } from './types'
 
@@ -236,6 +237,8 @@ export function SandboxCard({
         {sandbox.last_backup_at != null && (
           <p className="text-xs">Last backup: {formatRelativeTime(sandbox.last_backup_at)}</p>
         )}
+
+        <SetupFailuresBanner sandbox={sandbox} />
 
         <SandboxActions sandbox={sandbox} projectName={projectName} onChanged={onChanged} context="card" />
       </CardContent>

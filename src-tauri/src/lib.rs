@@ -84,6 +84,7 @@ pub fn run() {
       commands::list_sandboxes,
       commands::adopt_orphan_sandboxes,
       commands::create_sandbox,
+      commands::retry_sandbox_setup,
       commands::stop_sandbox,
       commands::start_sandbox,
       commands::delete_sandbox,

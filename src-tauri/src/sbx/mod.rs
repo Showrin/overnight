@@ -771,11 +771,31 @@ pub async fn set_default_permission_mode<R: Runtime>(
       name,
       "bash",
       "-c",
-      &format!("echo \"alias {cli_token}='{cli_token} {permission_flag} {mode}'\" >> /etc/sandbox-persistent.sh"),
+      &permission_alias_script(cli_token, permission_flag, mode),
     ],
   )
   .await?;
   Ok(())
+}
+
+/// Appends the alias only when that exact line isn't there yet, so a retry doesn't duplicate it.
+fn permission_alias_script(cli_token: &str, permission_flag: &str, mode: &str) -> String {
+  let line = shell_quote(&format!("alias {cli_token}='{cli_token} {permission_flag} {mode}'"));
+  format!("grep -qxF {line} /etc/sandbox-persistent.sh 2>/dev/null || echo {line} >> /etc/sandbox-persistent.sh")
+}
+
+#[cfg(test)]
+mod permission_alias_script_tests {
+  use super::permission_alias_script;
+
+  #[test]
+  fn appends_only_when_missing() {
+    let script = permission_alias_script("claude", "--permission-mode", "auto");
+    assert!(script.starts_with("grep -qxF "));
+    assert!(script.contains(" || echo "));
+    assert!(script.ends_with(">> /etc/sandbox-persistent.sh"));
+    assert!(script.contains("--permission-mode auto"));
+  }
 }
 
 /// `sbx exec -d <name> git config --global <key> <value>` — pushes one

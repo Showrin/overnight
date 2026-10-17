@@ -4,6 +4,7 @@ import type { DetailTab, Route } from '@/lib/router'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
 import { SandboxActions } from './SandboxActions'
+import { SetupFailuresBanner } from './SetupFailuresBanner'
 import { SandboxBreadcrumb, type BreadcrumbSegment } from './SandboxBreadcrumb'
 import { StatusIndicator } from './StatusIndicator'
 import type { Sandbox } from './types'
@@ -63,6 +64,8 @@ export function SandboxHeader({
         </div>
         {sandbox.sbx_name && <p className="text-xs text-muted-foreground">{sandbox.sbx_name}</p>}
       </div>
+
+      <SetupFailuresBanner sandbox={sandbox} />
 
       <SandboxActions sandbox={sandbox} projectName={project?.name ?? 'Sandbox'} onChanged={loadSandboxes} context="detail" />
 
