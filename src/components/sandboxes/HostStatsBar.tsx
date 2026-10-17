@@ -1,3 +1,4 @@
+import { usageBorderClass, usageColorClass } from '@/lib/usageColor'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
 
@@ -5,15 +6,32 @@ function formatKbPerSec(kbPerSec: number): string {
   return kbPerSec >= 1024 ? `${(kbPerSec / 1024).toFixed(1)}MB/s` : `${kbPerSec.toFixed(0)}KB/s`
 }
 
-function Meter({ label, percent, value, className }: { label: string; percent: number | null; value: string; className: string }) {
+function Meter({ label, percent, value, usage }: { label: string; percent: number | null; value: string; usage: boolean }) {
   const width = percent == null ? 0 : Math.min(100, Math.max(0, percent))
+  // Same color rules as the Sparkline charts on the sandbox list.
+  const color = usage && percent != null ? usageColorClass(percent) : 'text-primary'
+  const border = usage && percent != null ? usageBorderClass(percent) : 'border-primary/20'
   return (
     <div className="flex shrink-0 items-center gap-2">
       <span className="text-muted-foreground">{label}</span>
-      <div className={cn('h-2.5 w-16 overflow-hidden rounded-sm border border-current', className)}>
-        <div className="h-full bg-current" style={{ width: `${width}%` }} />
+      <div className={cn('relative h-4 w-20 overflow-hidden rounded-[2px] border transition-colors duration-300', color, border)}>
+        <div
+          className="absolute inset-0 text-border"
+          style={{
+            backgroundImage: 'radial-gradient(circle, color-mix(in oklch, currentColor 20%, transparent) 1px, transparent 1px)',
+            backgroundSize: '6px 6px',
+          }}
+        />
+        <div
+          className="absolute inset-y-0 left-0 border-r-[1.5px] border-current transition-[width] duration-300"
+          style={{
+            width: `${width}%`,
+            backgroundImage: 'linear-gradient(to right, transparent, color-mix(in oklch, currentColor 35%, transparent))',
+            borderRightWidth: width > 0 ? undefined : 0,
+          }}
+        />
       </div>
-      <span className={cn('tabular-nums', className)}>{value}</span>
+      <span className={cn('tabular-nums', color)}>{value}</span>
     </div>
   )
 }
@@ -31,25 +49,25 @@ export function HostStatsBar() {
       <div className="flex h-7 min-w-0 items-center gap-6 overflow-hidden">
         <Meter
           label="CPU"
-          className="text-red-400"
+          usage
           percent={stats?.cpu_percent ?? null}
           value={stats ? `${stats.cpu_percent.toFixed(0)}%` : '—'}
         />
         <Meter
           label="Memory"
-          className="text-green-500"
+          usage
           percent={stats?.memory_percent ?? null}
           value={stats ? `${(stats.memory_used_mb / 1024).toFixed(1)}/${(stats.memory_total_mb / 1024).toFixed(1)} GB` : '—'}
         />
         <Meter
           label="Disk"
-          className="text-orange-500"
+          usage
           percent={stats?.disk_percent ?? null}
           value={stats ? `${(stats.disk_used_mb / 1024).toFixed(0)}/${(stats.disk_total_mb / 1024).toFixed(0)} GB` : '—'}
         />
         <Meter
           label="Network"
-          className="text-violet-400"
+          usage={false}
           percent={network == null ? null : (network / peak) * 100}
           value={
             stats
