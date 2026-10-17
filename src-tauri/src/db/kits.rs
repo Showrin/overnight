@@ -134,7 +134,7 @@ mod tests {
   #[test]
   fn project_moves_between_kits() {
     let conn = test_conn();
-    let p = projects::create(&conn, "p", "/tmp/p", None, None).unwrap();
+    let p = projects::create(&conn, "p", "/tmp/p").unwrap();
     let a = create(&conn, "a", "").unwrap();
     let b = create(&conn, "b", "").unwrap();
     set_scope(&conn, &a.id, false, std::slice::from_ref(&p.id)).unwrap();
@@ -147,7 +147,7 @@ mod tests {
   #[test]
   fn global_clears_projects() {
     let conn = test_conn();
-    let p = projects::create(&conn, "p", "/tmp/p", None, None).unwrap();
+    let p = projects::create(&conn, "p", "/tmp/p").unwrap();
     let a = create(&conn, "a", "").unwrap();
     set_scope(&conn, &a.id, false, std::slice::from_ref(&p.id)).unwrap();
     let a = set_scope(&conn, &a.id, true, &[]).unwrap();
@@ -158,7 +158,7 @@ mod tests {
   #[test]
   fn delete_unassigns_project() {
     let conn = test_conn();
-    let p = projects::create(&conn, "p", "/tmp/p", None, None).unwrap();
+    let p = projects::create(&conn, "p", "/tmp/p").unwrap();
     let a = create(&conn, "a", "").unwrap();
     set_scope(&conn, &a.id, false, std::slice::from_ref(&p.id)).unwrap();
     delete(&conn, &a.id).unwrap();

@@ -460,6 +460,16 @@ pub fn migrations() -> Migrations<'static> {
     -- Auto Git Sync interval for clone-mode sandboxes. NULL = off.
     ALTER TABLE sandboxes ADD COLUMN git_sync_interval_minutes INTEGER;
     ",
+  ), M::up(
+    "
+    -- Port publishing, browser URLs and the plans path are gone.
+    ALTER TABLE projects DROP COLUMN plans_path;
+    ALTER TABLE projects DROP COLUMN dev_server_port;
+    ALTER TABLE projects DROP COLUMN ports;
+    ALTER TABLE projects DROP COLUMN browser_urls;
+    ALTER TABLE sandboxes DROP COLUMN ports;
+    ALTER TABLE sandboxes DROP COLUMN host_port;
+    ",
   )])
 }
 
@@ -486,5 +496,23 @@ mod tests {
       )
       .unwrap();
     assert_eq!(table_count, 14);
+  }
+
+  fn columns(conn: &rusqlite::Connection, table: &str) -> Vec<String> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})")).unwrap();
+    stmt.query_map([], |row| row.get::<_, String>(1)).unwrap().map(|c| c.unwrap()).collect()
+  }
+
+  #[test]
+  fn removed_port_and_plan_columns_are_gone() {
+    let conn = test_conn();
+    let project_cols = columns(&conn, "projects");
+    for gone in ["plans_path", "dev_server_port", "ports", "browser_urls"] {
+      assert!(!project_cols.iter().any(|c| c == gone), "projects.{gone} still exists");
+    }
+    let sandbox_cols = columns(&conn, "sandboxes");
+    for gone in ["ports", "host_port"] {
+      assert!(!sandbox_cols.iter().any(|c| c == gone), "sandboxes.{gone} still exists");
+    }
   }
 }

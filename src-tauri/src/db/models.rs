@@ -169,7 +169,6 @@ pub struct Sandbox {
   /// docker container id.
   pub sbx_name: Option<String>,
   pub folder_path: Option<String>,
-  pub host_port: Option<i64>,
   pub created_at: i64,
   pub stopped_at: Option<i64>,
   /// Per-sandbox network policy override: `Some("open")` | `Some("locked-down")`
@@ -216,7 +215,6 @@ pub struct Sandbox {
   pub backup_enabled: bool,
   /// `None` = use the global interval.
   pub backup_interval_minutes: Option<i64>,
-  pub ports: Vec<PortMapping>,
   pub setup_failures: Vec<SetupFailure>,
   pub compose_override: Option<String>,
   /// `None` = auto Git Sync off.
@@ -308,12 +306,14 @@ pub struct BrowserTest {
 #[serde(rename_all = "snake_case")]
 pub enum SetupStep {
   PermissionMode,
-  Ports,
   EnvVars,
   Secrets,
   GitOrigin,
   ComposeOverride,
   AgentConfig,
+  /// A step that no longer exists, read from an older row. Never re-run.
+  #[serde(other)]
+  Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -377,23 +377,13 @@ pub struct Project {
   pub id: String,
   pub name: String,
   pub repo_path: String,
-  pub plans_path: Option<String>,
-  pub dev_server_port: Option<i64>,
   pub extra_clone_paths: Vec<String>,
   pub env_vars: Vec<EnvVar>,
   pub secrets: Vec<Secret>,
   pub kit_id: Option<String>,
-  pub ports: Vec<u16>,
-  pub browser_urls: Vec<String>,
   pub compose_override: Option<String>,
   pub created_at: i64,
   pub updated_at: i64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PortMapping {
-  pub sandbox_port: u16,
-  pub host_port: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -11,7 +11,6 @@ import { AGENT_ICONS } from '@/components/agent-icons'
 import { TERMINAL_HOSTS, TERMINAL_HOST_LABELS, TERMINAL_HOST_OPEN_LABELS, type TerminalHost } from '@/lib/terminalHost'
 import { useAppStore } from '@/store/useAppStore'
 import type { BranchSyncOutcome, Sandbox } from './types'
-import { OpenInBrowserButton } from './OpenInBrowserButton'
 import { useOpenInVscode } from './useOpenInVscode'
 
 function backupScopesFor(agent: string): { value: 'all' | 'claude' | 'codex' | 'git'; label: string }[] {
@@ -257,7 +256,6 @@ export function SandboxActions({
                 Terminal
               </Button>
             )}
-            <OpenInBrowserButton sandbox={sandbox} onError={setError} />
             {sandbox.mode === "clone" && (
               <Button
                 size="sm"

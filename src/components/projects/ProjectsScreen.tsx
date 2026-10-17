@@ -80,11 +80,6 @@ export function ProjectsScreen() {
                 </div>
               </CardHeader>
               <CardContent className="flex flex-col gap-2 text-sm text-muted-foreground">
-                <div className="flex gap-2">
-                  {project.dev_server_port != null && (
-                    <Badge variant="outline">port {project.dev_server_port}</Badge>
-                  )}
-                </div>
                 {projectSandboxes.length > 0 && (
                   <div className="flex flex-col gap-1 border-t border-border-subtle pt-2">
                     {projectSandboxes.map((sandbox) => (

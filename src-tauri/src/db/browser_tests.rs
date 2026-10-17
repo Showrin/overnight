@@ -139,7 +139,7 @@ mod tests {
   use crate::db::migrations::test_conn;
 
   fn make_sandbox(conn: &Connection) -> String {
-    let project_id = crate::db::projects::create(conn, "Overnight", "/repo/overnight", None, None).unwrap().id;
+    let project_id = crate::db::projects::create(conn, "Overnight", "/repo/overnight").unwrap().id;
     crate::db::sandboxes::create(conn, &project_id, "mount", None, None, "default", None, "claude").unwrap().id
   }
 

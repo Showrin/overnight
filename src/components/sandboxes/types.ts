@@ -1,4 +1,3 @@
-import type { PortMapping } from '@/lib/browserTargets'
 import type { SetupFailure } from '@/lib/setupSteps'
 
 export type SandboxMode = 'mount' | 'clone'
@@ -14,8 +13,6 @@ export interface Sandbox {
   status: SandboxStatus
   sbx_name: string | null
   folder_path: string | null
-  host_port: number | null
-  ports: PortMapping[]
   setup_failures: SetupFailure[]
   compose_override: string | null
   git_sync_interval_minutes: number | null

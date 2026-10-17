@@ -542,7 +542,7 @@ mod tests {
   fn prune_old_backups_removes_rows_and_directories_beyond_limit() {
     let (pool, db_path) = test_pool();
     let conn = pool.get().unwrap();
-    let project = crate::db::projects::create(&conn, "Overnight", "/repo", None, None).unwrap();
+    let project = crate::db::projects::create(&conn, "Overnight", "/repo").unwrap();
     let sandbox = crate::db::sandboxes::create(&conn, &project.id, "mount", None, None, "default", None, "claude").unwrap();
 
     let dirs: Vec<_> = (0..12)

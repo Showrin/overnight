@@ -178,7 +178,7 @@ mod tests {
     let pool = r2d2::Pool::builder().max_size(2).build(manager).unwrap();
     let mut conn = pool.get().unwrap();
     crate::db::migrations::migrations().to_latest(&mut conn).unwrap();
-    let project = crate::db::projects::create(&conn, "P", "/repo", None, None).unwrap();
+    let project = crate::db::projects::create(&conn, "P", "/repo").unwrap();
     let sandbox = sandboxes::create(&conn, &project.id, "mount", None, None, "default", None, "claude").unwrap();
     let url = (target == "external").then_some("http://localhost:3000");
     let sandbox = sandboxes::set_chrome_settings(&conn, &sandbox.id, true, target, None, url).unwrap();
@@ -246,7 +246,7 @@ mod tests {
     assert_eq!(bad_port.0, StatusCode::BAD_REQUEST);
 
     let conn = f.hub.pool.get().unwrap();
-    let project = crate::db::projects::create(&conn, "Q", "/repo2", None, None).unwrap();
+    let project = crate::db::projects::create(&conn, "Q", "/repo2").unwrap();
     let other = sandboxes::create(&conn, &project.id, "clone", None, None, "default", None, "claude").unwrap();
     let foreign = browser_tests::create(&conn, &other.id, "x", None, None).unwrap();
     drop(conn);

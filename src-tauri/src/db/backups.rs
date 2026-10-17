@@ -182,7 +182,7 @@ mod tests {
   use crate::db::migrations::test_conn;
 
   fn make_sandbox(conn: &Connection) -> String {
-    let project = crate::db::projects::create(conn, "Overnight", "/repo/overnight", None, None).unwrap();
+    let project = crate::db::projects::create(conn, "Overnight", "/repo/overnight").unwrap();
     crate::db::sandboxes::create(conn, &project.id, "mount", None, None, "default", None, "claude").unwrap().id
   }
 

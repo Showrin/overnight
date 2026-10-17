@@ -7,33 +7,26 @@ fn row_to_project(row: &rusqlite::Row) -> rusqlite::Result<Project> {
   let extra_clone_paths_raw: String = row.get("extra_clone_paths")?;
   let env_vars_raw: String = row.get("env_vars")?;
   let secrets_raw: String = row.get("secrets")?;
-  let ports_raw: String = row.get("ports")?;
-  let browser_urls_raw: String = row.get("browser_urls")?;
   Ok(Project {
     id: row.get("id")?,
     name: row.get("name")?,
     repo_path: row.get("repo_path")?,
-    plans_path: row.get("plans_path")?,
-    dev_server_port: row.get("dev_server_port")?,
     extra_clone_paths: serde_json::from_str(&extra_clone_paths_raw).unwrap_or_default(),
     env_vars: serde_json::from_str(&env_vars_raw).unwrap_or_default(),
     secrets: serde_json::from_str(&secrets_raw).unwrap_or_default(),
     kit_id: row.get("kit_id")?,
-    ports: serde_json::from_str(&ports_raw).unwrap_or_default(),
-    browser_urls: serde_json::from_str(&browser_urls_raw).unwrap_or_default(),
     compose_override: row.get("compose_override")?,
     created_at: row.get("created_at")?,
     updated_at: row.get("updated_at")?,
   })
 }
 
-pub fn create(conn: &Connection, name: &str, repo_path: &str, plans_path: Option<&str>, dev_server_port: Option<i64>) -> Result<Project> {
+pub fn create(conn: &Connection, name: &str, repo_path: &str) -> Result<Project> {
   let id = new_id();
   let now = now_millis();
   conn.execute(
-    "INSERT INTO projects (id, name, repo_path, plans_path, dev_server_port, created_at, updated_at)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
-    params![id, name, repo_path, plans_path, dev_server_port, now],
+    "INSERT INTO projects (id, name, repo_path, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)",
+    params![id, name, repo_path, now],
   )?;
   get(conn, &id)
 }
@@ -53,13 +46,11 @@ pub fn list(conn: &Connection) -> Result<Vec<Project>> {
   Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
-pub fn update(conn: &Connection, id: &str, name: &str, repo_path: &str, plans_path: Option<&str>, dev_server_port: Option<i64>) -> Result<Project> {
+pub fn update(conn: &Connection, id: &str, name: &str, repo_path: &str) -> Result<Project> {
   let now = now_millis();
   let changed = conn.execute(
-    "UPDATE projects
-     SET name = ?1, repo_path = ?2, plans_path = ?3, dev_server_port = ?4, updated_at = ?5
-     WHERE id = ?6",
-    params![name, repo_path, plans_path, dev_server_port, now, id],
+    "UPDATE projects SET name = ?1, repo_path = ?2, updated_at = ?3 WHERE id = ?4",
+    params![name, repo_path, now, id],
   )?;
   if changed == 0 {
     return Err(Error::NotFound);
@@ -94,19 +85,6 @@ pub fn set_secrets(conn: &Connection, id: &str, secrets: &[Secret]) -> Result<Pr
   let changed = conn.execute(
     "UPDATE projects SET secrets = ?1, updated_at = ?2 WHERE id = ?3",
     params![json, now, id],
-  )?;
-  if changed == 0 {
-    return Err(Error::NotFound);
-  }
-  get(conn, id)
-}
-
-pub fn set_browser_config(conn: &Connection, id: &str, ports: &[u16], browser_urls: &[String]) -> Result<Project> {
-  let ports_json = serde_json::to_string(ports)?;
-  let urls_json = serde_json::to_string(browser_urls)?;
-  let changed = conn.execute(
-    "UPDATE projects SET ports = ?1, browser_urls = ?2, updated_at = ?3 WHERE id = ?4",
-    params![ports_json, urls_json, now_millis(), id],
   )?;
   if changed == 0 {
     return Err(Error::NotFound);
@@ -151,8 +129,7 @@ pub fn get_or_create_unassigned(conn: &Connection) -> Result<Project> {
   }
   let now = now_millis();
   let result = conn.execute(
-    "INSERT INTO projects (id, name, repo_path, plans_path, dev_server_port, created_at, updated_at)
-     VALUES (?1, 'Unassigned', '', NULL, NULL, ?2, ?2)",
+    "INSERT INTO projects (id, name, repo_path, created_at, updated_at) VALUES (?1, 'Unassigned', '', ?2, ?2)",
     params![UNASSIGNED_PROJECT_ID, now],
   );
   // Tolerate a concurrent creator winning the race (primary key conflict) —
@@ -174,7 +151,7 @@ mod tests {
   #[test]
   fn set_compose_override_round_trips() {
     let conn = test_conn();
-    let project = create(&conn, "P", "/repo/p", None, None).unwrap();
+    let project = create(&conn, "P", "/repo/p").unwrap();
     assert_eq!(project.compose_override, None);
     let updated = set_compose_override(&conn, &project.id, Some("services: {}")).unwrap();
     assert_eq!(updated.compose_override.as_deref(), Some("services: {}"));
@@ -182,23 +159,11 @@ mod tests {
   }
 
   #[test]
-  fn set_browser_config_round_trips() {
-    let conn = test_conn();
-    let project = create(&conn, "P", "/repo/p", None, None).unwrap();
-    assert!(project.ports.is_empty());
-    let urls = vec!["http://app.localhost:{port}/admin".to_string()];
-    let updated = set_browser_config(&conn, &project.id, &[3000, 8080], &urls).unwrap();
-    assert_eq!(updated.ports, vec![3000, 8080]);
-    assert_eq!(get(&conn, &project.id).unwrap().browser_urls, urls);
-  }
-
-  #[test]
   fn create_get_list_update_delete() {
     let conn = test_conn();
 
-    let project = create(&conn, "Overnight", "/repo/overnight", None, Some(5173)).unwrap();
+    let project = create(&conn, "Overnight", "/repo/overnight").unwrap();
     assert_eq!(project.name, "Overnight");
-    assert_eq!(project.dev_server_port, Some(5173));
 
     let fetched = get(&conn, &project.id).unwrap();
     assert_eq!(fetched.id, project.id);
@@ -206,10 +171,8 @@ mod tests {
     let all = list(&conn).unwrap();
     assert_eq!(all.len(), 1);
 
-    let updated = update(&conn, &project.id, "Overnight Renamed", "/repo/overnight", Some(".agent/plans"), Some(5174)).unwrap();
+    let updated = update(&conn, &project.id, "Overnight Renamed", "/repo/overnight").unwrap();
     assert_eq!(updated.name, "Overnight Renamed");
-    assert_eq!(updated.plans_path.as_deref(), Some(".agent/plans"));
-    assert_eq!(updated.dev_server_port, Some(5174));
     assert!(updated.updated_at >= project.updated_at);
 
     delete(&conn, &project.id).unwrap();
@@ -220,7 +183,7 @@ mod tests {
   fn missing_id_operations_return_not_found() {
     let conn = test_conn();
     assert!(matches!(get(&conn, "missing"), Err(Error::NotFound)));
-    assert!(matches!(update(&conn, "missing", "x", "/repo", None, None), Err(Error::NotFound)));
+    assert!(matches!(update(&conn, "missing", "x", "/repo"), Err(Error::NotFound)));
     assert!(matches!(delete(&conn, "missing"), Err(Error::NotFound)));
   }
 
@@ -243,7 +206,7 @@ mod tests {
   #[test]
   fn set_env_vars_roundtrips_and_updates_timestamp() {
     let conn = test_conn();
-    let project = create(&conn, "Overnight", "/repo/overnight", None, None).unwrap();
+    let project = create(&conn, "Overnight", "/repo/overnight").unwrap();
     assert_eq!(project.env_vars, Vec::<EnvVar>::new());
 
     let vars = vec![
@@ -265,7 +228,7 @@ mod tests {
   #[test]
   fn set_secrets_roundtrips_and_updates_timestamp() {
     let conn = test_conn();
-    let project = create(&conn, "Overnight", "/repo/overnight", None, None).unwrap();
+    let project = create(&conn, "Overnight", "/repo/overnight").unwrap();
     assert_eq!(project.secrets, Vec::<Secret>::new());
 
     let secrets = vec![
@@ -293,7 +256,7 @@ mod tests {
   #[test]
   fn deleting_project_nulls_task_project_id() {
     let conn = test_conn();
-    let project = create(&conn, "Overnight", "/repo/overnight", None, None).unwrap();
+    let project = create(&conn, "Overnight", "/repo/overnight").unwrap();
     let task = crate::db::tasks::create(&conn, "Do work", None, None, "todo", None).unwrap();
     conn
       .execute(

@@ -6,7 +6,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::daemon_log;
 use crate::db::error::{Error, Result};
 use crate::db::models::{
-  CommandLogEntry, ContainerMetric, EnvVar, HostMetric, JiraIssue, Kit, PortMapping, Project, Sandbox, SandboxBackup, Secret, SecretSource,
+  CommandLogEntry, ContainerMetric, EnvVar, HostMetric, JiraIssue, Kit, Project, Sandbox, SandboxBackup, Secret, SecretSource,
   SecretTarget, Session, SetupFailure, SetupStep, Task,
 };
 use crate::db::{
@@ -140,12 +140,10 @@ pub fn create_project(
   pool: State<DbPool>,
   name: String,
   repo_path: String,
-  plans_path: Option<String>,
-  dev_server_port: Option<i64>,
 ) -> Result<Project> {
   validate_repo_path(&repo_path)?;
   let conn = pool.get()?;
-  projects::create(&conn, &name, &repo_path, plans_path.as_deref(), dev_server_port)
+  projects::create(&conn, &name, &repo_path)
 }
 
 #[tauri::command]
@@ -154,36 +152,10 @@ pub fn update_project(
   id: String,
   name: String,
   repo_path: String,
-  plans_path: Option<String>,
-  dev_server_port: Option<i64>,
 ) -> Result<Project> {
   validate_repo_path(&repo_path)?;
   let conn = pool.get()?;
-  projects::update(&conn, &id, &name, &repo_path, plans_path.as_deref(), dev_server_port)
-}
-
-#[tauri::command]
-pub fn save_project_browser_config(
-  pool: State<DbPool>,
-  id: String,
-  ports: Vec<u16>,
-  browser_urls: Vec<String>,
-) -> std::result::Result<Project, String> {
-  if ports.contains(&0) {
-    return Err("port must be between 1 and 65535".to_string());
-  }
-  let mut ports_unique = Vec::new();
-  for port in ports {
-    if !ports_unique.contains(&port) {
-      ports_unique.push(port);
-    }
-  }
-  let urls: Vec<String> = browser_urls.into_iter().map(|u| u.trim().to_string()).filter(|u| !u.is_empty()).collect();
-  if let Some(bad) = urls.iter().find(|u| !is_http_url(u)) {
-    return Err(format!("browser url must start with http:// or https://: {bad}"));
-  }
-  let conn = pool.get().map_err(|e| e.to_string())?;
-  projects::set_browser_config(&conn, &id, &ports_unique, &urls).map_err(|e| e.to_string())
+  projects::update(&conn, &id, &name, &repo_path)
 }
 
 fn load_agent_config(pool: &DbPool) -> std::result::Result<crate::agent_config::AgentConfig, String> {
@@ -281,15 +253,6 @@ pub async fn save_sandbox_compose_override(
     crate::sbx::push_compose_override(&app, name, effective_compose_override(&sandbox, &project)).await.map_err(|e| e.to_string())?;
   }
   Ok(sandbox)
-}
-
-/// Sandbox ports to publish: the project's list, else its dev server port, else `SANDBOX_PORT`.
-fn ports_to_publish(project: &Project) -> Vec<u16> {
-  if !project.ports.is_empty() {
-    return project.ports.clone();
-  }
-  let port = project.dev_server_port.and_then(|p| u16::try_from(p).ok()).filter(|p| *p != 0).unwrap_or(SANDBOX_PORT);
-  vec![port]
 }
 
 #[tauri::command]
@@ -1238,7 +1201,6 @@ pub fn list_jira_issues(pool: State<DbPool>) -> std::result::Result<Vec<JiraIssu
 // existing pattern used by the Jira commands above.
 
 const SANDBOX_MEMORY_MB: u32 = 2048;
-const SANDBOX_PORT: u16 = 8080;
 const SANDBOX_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 const SANDBOX_READY_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 
@@ -1508,7 +1470,7 @@ pub async fn set_sandbox_network_preset_override(
   // override the user actually asked for.
   if let Ok(Some(status)) = crate::sbx::current_status(&app, &name).await {
     let conn = pool.get().map_err(|e| e.to_string())?;
-    sandboxes::update_status(&conn, &id, &status, None, None).map_err(|e| e.to_string())?;
+    sandboxes::update_status(&conn, &id, &status, None).map_err(|e| e.to_string())?;
   }
 
   let conn = pool.get().map_err(|e| e.to_string())?;
@@ -1610,7 +1572,7 @@ fn adopt_orphan_sandboxes_from_rows(pool: &DbPool, rows: Vec<crate::sbx::SbxList
       }
     };
 
-    match sandboxes::update_status(&conn, &created.id, &row.status, Some(&row.sbx_name), None) {
+    match sandboxes::update_status(&conn, &created.id, &row.status, Some(&row.sbx_name)) {
       Ok(updated) => adopted.push(updated),
       Err(e) => log::warn!("adopt_orphan_sandboxes: could not finalize adopted row for {}: {e}", row.sbx_name),
     }
@@ -1651,7 +1613,7 @@ mod adopt_orphan_sandboxes_tests {
   fn adopts_sandbox_matching_a_known_project_as_mount_mode() {
     let pool = test_pool();
     let conn = pool.get().unwrap();
-    let project = projects::create(&conn, "Overnight", "/repo/overnight", None, None).unwrap();
+    let project = projects::create(&conn, "Overnight", "/repo/overnight").unwrap();
     drop(conn);
 
     let adopted =
@@ -1689,9 +1651,9 @@ mod adopt_orphan_sandboxes_tests {
   fn skips_sandboxes_already_known_by_sbx_name() {
     let pool = test_pool();
     let conn = pool.get().unwrap();
-    let project = projects::create(&conn, "Overnight", "/repo/overnight", None, None).unwrap();
+    let project = projects::create(&conn, "Overnight", "/repo/overnight").unwrap();
     let existing = sandboxes::create(&conn, &project.id, "mount", None, None, "default", None, "claude").unwrap();
-    sandboxes::update_status(&conn, &existing.id, "running", Some("already-known"), None).unwrap();
+    sandboxes::update_status(&conn, &existing.id, "running", Some("already-known")).unwrap();
     drop(conn);
 
     let adopted =
@@ -1823,7 +1785,7 @@ pub async fn create_sandbox(
     Ok(result) => Ok(result),
     Err(e) => {
       if let Ok(conn) = pool.get() {
-        let _ = sandboxes::update_status(&conn, &sandbox.id, "error", None, None);
+        let _ = sandboxes::update_status(&conn, &sandbox.id, "error", None);
       }
       Err(e)
     }
@@ -1873,7 +1835,7 @@ async fn provision_sandbox(
   );
 
   let conn = pool.get().map_err(|e| e.to_string())?;
-  sandboxes::update_status(&conn, &sandbox.id, "running", Some(&name), None).map_err(|e| e.to_string())?;
+  sandboxes::update_status(&conn, &sandbox.id, "running", Some(&name)).map_err(|e| e.to_string())?;
   sandboxes::set_setup_failures(&conn, &sandbox.id, &failures).map_err(|e| e.to_string())
 }
 
@@ -1937,7 +1899,7 @@ struct SetupContext<'a> {
 }
 
 const SETUP_STEPS: &[SetupStep] =
-  &[SetupStep::PermissionMode, SetupStep::Ports, SetupStep::EnvVars, SetupStep::Secrets, SetupStep::GitOrigin, SetupStep::ComposeOverride, SetupStep::AgentConfig];
+  &[SetupStep::PermissionMode, SetupStep::EnvVars, SetupStep::Secrets, SetupStep::GitOrigin, SetupStep::ComposeOverride, SetupStep::AgentConfig];
 
 fn applicable_steps(sandbox: &Sandbox, project: &Project, has_agent_config: bool) -> Vec<SetupStep> {
   SETUP_STEPS
@@ -1969,12 +1931,6 @@ async fn run_setup_step(ctx: &SetupContext<'_>, step: SetupStep) -> std::result:
         .await
         .map_err(|e| e.to_string())
     }
-    SetupStep::Ports => {
-      let ports = publish_ports(app, name, &ports_to_publish(project)).await.map_err(|e| e.to_string())?;
-      let conn = pool.get().map_err(|e| e.to_string())?;
-      sandboxes::set_ports(&conn, &sandbox.id, &ports).map_err(|e| e.to_string())?;
-      Ok(())
-    }
     SetupStep::EnvVars => {
       let merged = full_env_vars_for_sandbox(pool, &project.id, sandbox)?;
       crate::sbx::set_env_vars(app, name, &merged).await.map_err(|e| e.to_string())
@@ -1991,6 +1947,7 @@ async fn run_setup_step(ctx: &SetupContext<'_>, step: SetupStep) -> std::result:
       let config = load_agent_config(pool)?;
       crate::sbx::push_agent_config(app, name, agent_kit.home_dir, &config).await.map_err(|e| e.to_string())
     }
+    SetupStep::Unknown => Ok(()),
   }
 }
 
@@ -2023,7 +1980,7 @@ pub async fn retry_sandbox_setup(app: AppHandle, pool: State<'_, DbPool>, id: St
   }
   let name = sandbox.sbx_name.clone().ok_or_else(|| "sandbox has no sbx name".to_string())?;
   let agent_kit = crate::agents::get(&sandbox.agent).ok_or_else(|| format!("unknown agent: {}", sandbox.agent))?;
-  let steps: Vec<SetupStep> = sandbox.setup_failures.iter().map(|f| f.step).collect();
+  let steps: Vec<SetupStep> = sandbox.setup_failures.iter().map(|f| f.step).filter(|s| *s != SetupStep::Unknown).collect();
   let ctx = SetupContext { app: &app, pool: &pool, project: &project, sandbox: &sandbox, name: &name, agent_kit };
   let failures = run_steps_with(&steps, |step| run_setup_step(&ctx, step)).await;
   let conn = pool.get().map_err(|e| e.to_string())?;
@@ -2050,8 +2007,8 @@ mod setup_steps_tests {
   #[test]
   fn git_origin_only_for_clone_mode() {
     let conn = crate::db::migrations::test_conn();
-    let first = projects::create(&conn, "P1", "/r1", None, None).unwrap();
-    let second = projects::create(&conn, "P2", "/r2", None, None).unwrap();
+    let first = projects::create(&conn, "P1", "/r1").unwrap();
+    let second = projects::create(&conn, "P2", "/r2").unwrap();
     let clone = sandboxes::create(&conn, &first.id, "clone", None, None, "default", None, "claude").unwrap();
     let mount = sandboxes::create(&conn, &second.id, "mount", Some("/r2"), None, "default", None, "claude").unwrap();
     assert!(applicable_steps(&clone, &first, false).contains(&SetupStep::GitOrigin));
@@ -2061,7 +2018,7 @@ mod setup_steps_tests {
   #[test]
   fn compose_override_prefers_sandbox_and_skips_blank() {
     let conn = crate::db::migrations::test_conn();
-    let project = projects::set_compose_override(&conn, &projects::create(&conn, "P", "/r", None, None).unwrap().id, Some("p: 1")).unwrap();
+    let project = projects::set_compose_override(&conn, &projects::create(&conn, "P", "/r").unwrap().id, Some("p: 1")).unwrap();
     let sandbox = sandboxes::create(&conn, &project.id, "clone", None, None, "default", None, "claude").unwrap();
     assert_eq!(effective_compose_override(&sandbox, &project), Some("p: 1"));
     let sandbox = sandboxes::set_compose_override(&conn, &sandbox.id, Some("s: 1")).unwrap();
@@ -2078,22 +2035,16 @@ mod setup_steps_tests {
     assert_eq!(setup_step_key(SetupStep::GitOrigin), "git_origin");
   }
 
+  #[test]
+  fn removed_step_in_old_row_still_loads() {
+    let failures: Vec<SetupFailure> = serde_json::from_str(r#"[{"step":"ports","error":"x"}]"#).unwrap();
+    assert_eq!(failures[0].step, SetupStep::Unknown);
+  }
+
   #[tokio::test]
   async fn all_ok_returns_empty() {
     assert!(run_steps_with(SETUP_STEPS, |_| async { Ok(()) }).await.is_empty());
   }
-}
-
-/// Publishes each port, then reads back the host port sbx assigned to it.
-async fn publish_ports(app: &AppHandle, name: &str, sandbox_ports: &[u16]) -> crate::sbx::Result<Vec<PortMapping>> {
-  let mut mappings = Vec::new();
-  for &sandbox_port in sandbox_ports {
-    crate::sbx::publish_port(app, name, sandbox_port).await?;
-    if let Some(host_port) = crate::sbx::host_port(app, name, sandbox_port).await? {
-      mappings.push(PortMapping { sandbox_port, host_port });
-    }
-  }
-  Ok(mappings)
 }
 
 /// Pushes the host's global git identity into a freshly created sandbox.
@@ -2284,12 +2235,12 @@ where
 {
   {
     let conn = pool.get().map_err(|e| e.to_string())?;
-    sandboxes::update_status(&conn, id, "stopping", None, None).map_err(|e| e.to_string())?;
+    sandboxes::update_status(&conn, id, "stopping", None).map_err(|e| e.to_string())?;
   }
   stop().await.map_err(|e| e.to_string())?;
 
   let conn = pool.get().map_err(|e| e.to_string())?;
-  sandboxes::update_status(&conn, id, "stopped", None, None).map_err(|e| e.to_string())
+  sandboxes::update_status(&conn, id, "stopped", None).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -2334,7 +2285,7 @@ mod stop_sandbox_tests {
     let (pool, path) = test_pool();
     let sandbox_id = {
       let conn = pool.get().unwrap();
-      let project = projects::create(&conn, "Overnight", "/repo", None, None).unwrap();
+      let project = projects::create(&conn, "Overnight", "/repo").unwrap();
       sandboxes::create(&conn, &project.id, "mount", None, None, "default", None, "claude").unwrap().id
     };
 
@@ -2392,7 +2343,7 @@ mod env_var_tests {
   fn merged_env_vars_lets_higher_scope_win() {
     let (pool, path) = test_pool();
     let conn = pool.get().unwrap();
-    let project = projects::create(&conn, "Overnight", "/repo", None, None).unwrap();
+    let project = projects::create(&conn, "Overnight", "/repo").unwrap();
     settings::set_json(&conn, GLOBAL_ENV_VARS_KEY, &vec![ev("SHARED", "global"), ev("ONLY_GLOBAL", "g")]).unwrap();
     projects::set_env_vars(&conn, &project.id, &[ev("SHARED", "project"), ev("ONLY_PROJECT", "p")]).unwrap();
     drop(conn);
@@ -2517,7 +2468,7 @@ mod secret_tests {
   fn merged_secrets_lets_higher_scope_win_by_key() {
     let (pool, path) = test_pool();
     let conn = pool.get().unwrap();
-    let project = projects::create(&conn, "Overnight", "/repo", None, None).unwrap();
+    let project = projects::create(&conn, "Overnight", "/repo").unwrap();
     settings::set_json(
       &conn,
       GLOBAL_SECRETS_KEY,
@@ -2586,7 +2537,7 @@ pub async fn start_sandbox(app: AppHandle, pool: State<'_, DbPool>, id: String) 
   }
 
   let conn = pool.get().map_err(|e| e.to_string())?;
-  sandboxes::update_status(&conn, &id, "running", None, None).map_err(|e| e.to_string())
+  sandboxes::update_status(&conn, &id, "running", None).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -3218,46 +3169,6 @@ pub fn open_path_in_explorer(pool: State<DbPool>, path: String) -> std::result::
   result.map(|_| ()).map_err(|e| e.to_string())
 }
 
-fn is_http_url(url: &str) -> bool {
-  url.starts_with("http://") || url.starts_with("https://")
-}
-
-/// Hands the URL straight to the OS opener. `window.open` from the webview
-/// goes through a new-window request that leaves an extra blank tab.
-#[tauri::command]
-pub fn open_url(pool: State<DbPool>, url: String) -> std::result::Result<(), String> {
-  if !is_http_url(&url) {
-    return Err(format!("invalid url: {url}"));
-  }
-  #[cfg(target_os = "windows")]
-  let (program, result) = {
-    let mut cmd = std::process::Command::new("rundll32");
-    cmd.args(["url.dll,FileProtocolHandler", &url]);
-    crate::git::hide_console(&mut cmd);
-    ("rundll32", cmd.spawn())
-  };
-  #[cfg(target_os = "macos")]
-  let (program, result) = ("open", std::process::Command::new("open").arg(&url).spawn());
-  #[cfg(target_os = "linux")]
-  let (program, result) = ("xdg-open", std::process::Command::new("xdg-open").arg(&url).spawn());
-
-  log_spawn_result(&pool, "Open URL in browser", program, std::slice::from_ref(&url), &result);
-  result.map(|_| ()).map_err(|e| e.to_string())
-}
-
-#[cfg(test)]
-mod open_url_tests {
-  use super::is_http_url;
-
-  #[test]
-  fn accepts_only_http_schemes() {
-    assert!(is_http_url("http://localhost:8080"));
-    assert!(is_http_url("https://example.com"));
-    assert!(!is_http_url("file:///etc/passwd"));
-    assert!(!is_http_url("calc.exe"));
-  }
-}
-
 /// `git fetch sandbox-<name>` on the host repo, fast-forwarding any local
 /// branch that can take the update cleanly. Plain host-side git — no `sbx`
 /// involved, since the daemon and remote are already wired up by `sbx`
@@ -3691,39 +3602,4 @@ pub fn open_testing_chrome(app: AppHandle, pool: State<'_, DbPool>, setup: bool)
 #[tauri::command]
 pub fn save_testing_chrome_path(pool: State<'_, DbPool>, path: Option<String>) -> std::result::Result<(), String> {
   crate::browser_tests::chrome::save_chrome_path_override(pool.inner(), path.as_deref())
-}
-
-#[cfg(test)]
-mod ports_to_publish_tests {
-  use super::*;
-
-  fn project(ports: Vec<u16>, dev_server_port: Option<i64>) -> Project {
-    Project {
-      id: "p".into(),
-      name: "p".into(),
-      repo_path: "/r".into(),
-      plans_path: None,
-      dev_server_port,
-      extra_clone_paths: vec![],
-      env_vars: vec![],
-      secrets: vec![],
-      kit_id: None,
-      ports,
-      browser_urls: vec![],
-      compose_override: None,
-      created_at: 0,
-      updated_at: 0,
-    }
-  }
-
-  #[test]
-  fn uses_project_ports_first() {
-    assert_eq!(ports_to_publish(&project(vec![3000, 5173], Some(9000))), vec![3000, 5173]);
-  }
-
-  #[test]
-  fn falls_back_to_dev_server_port_then_default() {
-    assert_eq!(ports_to_publish(&project(vec![], Some(5173))), vec![5173]);
-    assert_eq!(ports_to_publish(&project(vec![], None)), vec![SANDBOX_PORT]);
-  }
 }

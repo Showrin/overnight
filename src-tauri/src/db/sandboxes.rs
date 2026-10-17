@@ -1,7 +1,7 @@
 use rusqlite::{params, Connection};
 
 use crate::db::error::{Error, Result};
-use crate::db::models::{new_id, now_millis, EnvVar, HostServer, PortMapping, Sandbox, Secret, SetupFailure, WorktreeInfo};
+use crate::db::models::{new_id, now_millis, EnvVar, HostServer, Sandbox, Secret, SetupFailure, WorktreeInfo};
 
 fn row_to_sandbox(row: &rusqlite::Row) -> rusqlite::Result<Sandbox> {
   let branches_raw: String = row.get("branches")?;
@@ -9,7 +9,6 @@ fn row_to_sandbox(row: &rusqlite::Row) -> rusqlite::Result<Sandbox> {
   let env_vars_raw: String = row.get("env_vars")?;
   let secrets_raw: String = row.get("secrets")?;
   let last_git_sync_result_raw: String = row.get("last_git_sync_result")?;
-  let ports_raw: String = row.get("ports")?;
   let setup_failures_raw: String = row.get("setup_failures")?;
   Ok(Sandbox {
     id: row.get("id")?,
@@ -21,7 +20,6 @@ fn row_to_sandbox(row: &rusqlite::Row) -> rusqlite::Result<Sandbox> {
     status: row.get("status")?,
     sbx_name: row.get("sbx_name")?,
     folder_path: row.get("folder_path")?,
-    host_port: row.get("host_port")?,
     created_at: row.get("created_at")?,
     stopped_at: row.get("stopped_at")?,
     network_preset_override: row.get("network_preset_override")?,
@@ -45,7 +43,6 @@ fn row_to_sandbox(row: &rusqlite::Row) -> rusqlite::Result<Sandbox> {
     chrome_token: row.get("chrome_token")?,
     chrome_host_prep: row.get("chrome_host_prep")?,
     chrome_host_servers: serde_json::from_str(&row.get::<_, String>("chrome_host_commands")?).unwrap_or_default(),
-    ports: serde_json::from_str(&ports_raw).unwrap_or_default(),
     setup_failures: serde_json::from_str(&setup_failures_raw).unwrap_or_default(),
     compose_override: row.get("compose_override")?,
     git_sync_interval_minutes: row.get("git_sync_interval_minutes")?,
@@ -121,7 +118,7 @@ pub fn find_by_sbx_name(conn: &Connection, sbx_name: &str) -> Result<Option<Sand
   }
 }
 
-/// Updates lifecycle status. `sbx_name`/`host_port` are only applied
+/// Updates lifecycle status. `sbx_name` is only applied
 /// when `Some` (e.g. once `sbx create` succeeds), leaving prior values
 /// intact otherwise. `stopped_at` is set automatically when `status` is
 /// "stopped" and cleared for any other status (e.g. resuming via "running").
@@ -130,14 +127,13 @@ pub fn update_status(
   id: &str,
   status: &str,
   sbx_name: Option<&str>,
-  host_port: Option<i64>,
 ) -> Result<Sandbox> {
   let stopped_at = if status == "stopped" { Some(now_millis()) } else { None };
   let changed = conn.execute(
     "UPDATE sandboxes
-     SET status = ?1, sbx_name = COALESCE(?2, sbx_name), host_port = COALESCE(?3, host_port), stopped_at = ?4
-     WHERE id = ?5",
-    params![status, sbx_name, host_port, stopped_at, id],
+     SET status = ?1, sbx_name = COALESCE(?2, sbx_name), stopped_at = ?3
+     WHERE id = ?4",
+    params![status, sbx_name, stopped_at, id],
   )?;
   if changed == 0 {
     return Err(Error::NotFound);
@@ -357,20 +353,6 @@ pub fn record_git_sync(
   get(conn, id)
 }
 
-/// Also sets `host_port` to the first mapping, which older UI still reads.
-pub fn set_ports(conn: &Connection, id: &str, ports: &[PortMapping]) -> Result<Sandbox> {
-  let json = serde_json::to_string(ports)?;
-  let first = ports.first().map(|p| i64::from(p.host_port));
-  let changed = conn.execute(
-    "UPDATE sandboxes SET ports = ?1, host_port = COALESCE(?2, host_port) WHERE id = ?3",
-    params![json, first, id],
-  )?;
-  if changed == 0 {
-    return Err(Error::NotFound);
-  }
-  get(conn, id)
-}
-
 pub fn set_setup_failures(conn: &Connection, id: &str, failures: &[SetupFailure]) -> Result<Sandbox> {
   let json = serde_json::to_string(failures)?;
   let changed = conn.execute("UPDATE sandboxes SET setup_failures = ?1 WHERE id = ?2", params![json, id])?;
@@ -411,7 +393,7 @@ mod tests {
   use crate::db::models::{SecretSource, SecretTarget};
 
   fn make_project(conn: &Connection) -> String {
-    crate::db::projects::create(conn, "Overnight", "/repo/overnight", None, None).unwrap().id
+    crate::db::projects::create(conn, "Overnight", "/repo/overnight").unwrap().id
   }
 
   #[test]
@@ -516,15 +498,14 @@ mod tests {
     let for_project = list_for_project(&conn, &project_id).unwrap();
     assert_eq!(for_project.len(), 1);
 
-    let running = update_status(&conn, &sandbox.id, "running", Some("container123"), Some(4173)).unwrap();
+    let running = update_status(&conn, &sandbox.id, "running", Some("container123")).unwrap();
     assert_eq!(running.status, "running");
     assert_eq!(running.sbx_name.as_deref(), Some("container123"));
-    assert_eq!(running.host_port, Some(4173));
     assert_eq!(running.stopped_at, None);
 
-    let stopped = update_status(&conn, &sandbox.id, "stopped", None, None).unwrap();
+    let stopped = update_status(&conn, &sandbox.id, "stopped", None).unwrap();
     assert_eq!(stopped.status, "stopped");
-    // sbx_name/host_port preserved even though None was passed this time.
+    // sbx_name preserved even though None was passed this time.
     assert_eq!(stopped.sbx_name.as_deref(), Some("container123"));
     assert!(stopped.stopped_at.is_some());
 
@@ -537,7 +518,7 @@ mod tests {
     let conn = test_conn();
     assert!(matches!(get(&conn, "missing"), Err(Error::NotFound)));
     assert!(matches!(
-      update_status(&conn, "missing", "running", None, None),
+      update_status(&conn, "missing", "running", None),
       Err(Error::NotFound)
     ));
     assert!(matches!(delete(&conn, "missing"), Err(Error::NotFound)));
@@ -549,10 +530,10 @@ mod tests {
     // Separate projects, since a partial unique index allows only one
     // "starting" sandbox per project at a time.
     let running = create(&conn, &make_project(&conn), "clone", None, None, "default", None, "claude").unwrap();
-    update_status(&conn, &running.id, "running", Some("sbx-a"), None).unwrap();
+    update_status(&conn, &running.id, "running", Some("sbx-a")).unwrap();
     let starting = create(&conn, &make_project(&conn), "clone", None, None, "default", None, "claude").unwrap();
     let already_stopped = create(&conn, &make_project(&conn), "clone", None, None, "default", None, "claude").unwrap();
-    update_status(&conn, &already_stopped.id, "stopped", Some("sbx-c"), None).unwrap();
+    update_status(&conn, &already_stopped.id, "stopped", Some("sbx-c")).unwrap();
 
     let affected = stop_all_for_policy_reset(&conn).unwrap();
     assert_eq!(affected, 2); // running + starting, not the already-stopped one
@@ -572,7 +553,7 @@ mod tests {
     let named = create(&conn, &project_id, "clone", None, Some("staging"), "default", None, "claude").unwrap();
     assert_eq!(named.name.as_deref(), Some("staging"));
     assert_eq!(get(&conn, &named.id).unwrap().name.as_deref(), Some("staging"));
-    update_status(&conn, &named.id, "running", Some("sbx-1"), None).unwrap();
+    update_status(&conn, &named.id, "running", Some("sbx-1")).unwrap();
 
     let unnamed = create(&conn, &project_id, "clone", None, None, "default", None, "claude").unwrap();
     assert_eq!(unnamed.name, None);
@@ -597,7 +578,7 @@ mod tests {
     assert_eq!(claude_sandbox.agent, "claude");
     // Move the first sandbox out of "starting" so the second create() below
     // doesn't trip ux_sandboxes_one_starting_per_project (same project).
-    update_status(&conn, &claude_sandbox.id, "running", Some("sbx-1"), None).unwrap();
+    update_status(&conn, &claude_sandbox.id, "running", Some("sbx-1")).unwrap();
 
     let codex_sandbox = create(&conn, &project_id, "clone", None, None, "on-request", None, "codex").unwrap();
     assert_eq!(codex_sandbox.agent, "codex");
@@ -614,7 +595,7 @@ mod tests {
     assert!(matches!(second, Err(Error::DuplicateMountSandbox)));
 
     // Still rejected once the first is "running", not just "starting".
-    update_status(&conn, &mount.id, "running", Some("sbx-1"), None).unwrap();
+    update_status(&conn, &mount.id, "running", Some("sbx-1")).unwrap();
     let second_after_running = create(&conn, &project_id, "mount", None, None, "default", None, "claude");
     assert!(matches!(second_after_running, Err(Error::DuplicateMountSandbox)));
 
@@ -634,7 +615,7 @@ mod tests {
 
     // Once the first finishes starting, clone mode still allows several
     // sandboxes running at once for the same project.
-    update_status(&conn, &first.id, "running", Some("sbx-1"), None).unwrap();
+    update_status(&conn, &first.id, "running", Some("sbx-1")).unwrap();
     create(&conn, &project_id, "clone", None, None, "default", None, "claude").unwrap();
   }
 
@@ -715,19 +696,6 @@ mod tests {
     let other_project_id = make_project(&conn);
     let no_base_branch = create(&conn, &other_project_id, "clone", None, None, "default", None, "claude").unwrap();
     assert_eq!(no_base_branch.base_branch, None);
-  }
-
-  #[test]
-  fn set_ports_round_trips() {
-    let conn = test_conn();
-    let project_id = make_project(&conn);
-    let sandbox = create(&conn, &project_id, "clone", None, None, "default", None, "claude").unwrap();
-    assert!(sandbox.ports.is_empty());
-    let ports = vec![PortMapping { sandbox_port: 3000, host_port: 51000 }, PortMapping { sandbox_port: 8080, host_port: 51001 }];
-    set_ports(&conn, &sandbox.id, &ports).unwrap();
-    let fetched = get(&conn, &sandbox.id).unwrap();
-    assert_eq!(fetched.ports, ports);
-    assert_eq!(fetched.host_port, Some(51000));
   }
 
   #[test]
@@ -843,7 +811,7 @@ mod tests {
     let conn = test_conn();
     let project_id = make_project(&conn);
     let sandbox = create(&conn, &project_id, "mount", None, None, "default", None, "claude").unwrap();
-    update_status(&conn, &sandbox.id, "running", Some("my-sbx-name"), None).unwrap();
+    update_status(&conn, &sandbox.id, "running", Some("my-sbx-name")).unwrap();
 
     let found = find_by_sbx_name(&conn, "my-sbx-name").unwrap();
     assert_eq!(found.map(|s| s.id), Some(sandbox.id));

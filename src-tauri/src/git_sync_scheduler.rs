@@ -67,16 +67,16 @@ mod tests {
   #[test]
   fn picks_only_due_running_clone_sandboxes_with_interval() {
     let conn = test_conn();
-    let p1 = projects::create(&conn, "P1", "/r1", None, None).unwrap();
-    let p2 = projects::create(&conn, "P2", "/r2", None, None).unwrap();
-    let p3 = projects::create(&conn, "P3", "/r3", None, None).unwrap();
+    let p1 = projects::create(&conn, "P1", "/r1").unwrap();
+    let p2 = projects::create(&conn, "P2", "/r2").unwrap();
+    let p3 = projects::create(&conn, "P3", "/r3").unwrap();
     let due = sandboxes::create(&conn, &p1.id, "clone", None, None, "default", None, "claude").unwrap();
-    sandboxes::update_status(&conn, &due.id, "running", Some("due"), None).unwrap();
+    sandboxes::update_status(&conn, &due.id, "running", Some("due")).unwrap();
     let due = sandboxes::set_git_sync_interval(&conn, &due.id, Some(15)).unwrap();
     let off = sandboxes::create(&conn, &p2.id, "clone", None, None, "default", None, "claude").unwrap();
-    let off = sandboxes::update_status(&conn, &off.id, "running", Some("off"), None).unwrap();
+    let off = sandboxes::update_status(&conn, &off.id, "running", Some("off")).unwrap();
     let mount = sandboxes::create(&conn, &p3.id, "mount", Some("/r3"), None, "default", None, "claude").unwrap();
-    sandboxes::update_status(&conn, &mount.id, "running", Some("mount"), None).unwrap();
+    sandboxes::update_status(&conn, &mount.id, "running", Some("mount")).unwrap();
     let mount = sandboxes::set_git_sync_interval(&conn, &mount.id, Some(15)).unwrap();
 
     let list = vec![due.clone(), off, mount];
