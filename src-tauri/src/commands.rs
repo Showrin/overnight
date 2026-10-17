@@ -1801,15 +1801,15 @@ pub async fn create_sandbox(
 
   check_free_memory()?;
 
-  let kit_dir = match kit_id.filter(|k| !k.trim().is_empty()) {
+  let kit = match kit_id.filter(|k| !k.trim().is_empty()) {
     Some(id) => {
-      let kit = {
-        let conn = pool.get().map_err(|e| e.to_string())?;
-        kits::get(&conn, &id).map_err(|e| e.to_string())?
-      };
-      let base = app.path().app_data_dir().map_err(|e| e.to_string())?;
-      Some(write_kit_dir(&base, &kit).map_err(|e| format!("failed to write kit: {e}"))?)
+      let conn = pool.get().map_err(|e| e.to_string())?;
+      Some(kits::get(&conn, &id).map_err(|e| e.to_string())?)
     }
+    None => None,
+  };
+  let kit_dir = match &kit {
+    Some(kit) => Some(write_kit_dir_for(&app, kit)?),
     None => None,
   };
 
@@ -1827,8 +1827,12 @@ pub async fn create_sandbox(
     let sandbox =
       sandboxes::create(&conn, &project_id, &mode, initial_folder, name.as_deref(), &permission_mode, base_branch.as_deref(), &agent)
         .map_err(|e| e.to_string())?;
-    match compose_override_id.filter(|id| !id.trim().is_empty()) {
+    let sandbox = match compose_override_id.filter(|id| !id.trim().is_empty()) {
       Some(id) => sandboxes::set_compose_override_id(&conn, &sandbox.id, Some(&id)).map_err(|e| e.to_string())?,
+      None => sandbox,
+    };
+    match &kit {
+      Some(kit) => sandboxes::add_kit_id(&conn, &sandbox.id, &kit.id).map_err(|e| e.to_string())?,
       None => sandbox,
     }
   };
@@ -2190,6 +2194,31 @@ fn host_home_dir() -> Option<String> {
   {
     std::env::var("HOME").ok()
   }
+}
+
+fn write_kit_dir_for(app: &AppHandle, kit: &Kit) -> std::result::Result<std::path::PathBuf, String> {
+  let base = app.path().app_data_dir().map_err(|e| e.to_string())?;
+  write_kit_dir(&base, kit).map_err(|e| format!("failed to write kit: {e}"))
+}
+
+/// Applies a library kit to a running sandbox with `sbx kit add`, which restarts it.
+#[tauri::command]
+pub async fn apply_sandbox_kit(app: AppHandle, pool: State<'_, DbPool>, id: String, kit_id: String) -> std::result::Result<Sandbox, String> {
+  let pool = pool.inner().clone();
+  let (sandbox, kit) = {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    let sandbox = sandboxes::get(&conn, &id).map_err(|e| e.to_string())?;
+    let kit = kits::get(&conn, &kit_id).map_err(|e| e.to_string())?;
+    (sandbox, kit)
+  };
+  if sandbox.status != "running" {
+    return Err("start the sandbox before applying a kit".to_string());
+  }
+  let name = sandbox.sbx_name.clone().ok_or_else(|| "sandbox has no sbx name".to_string())?;
+  let dir = write_kit_dir_for(&app, &kit)?;
+  crate::sbx::kit_add(&app, &name, &dir.to_string_lossy()).await.map_err(|e| e.to_string())?;
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  sandboxes::add_kit_id(&conn, &id, &kit.id).map_err(|e| e.to_string())
 }
 
 fn write_kit_dir(base: &std::path::Path, kit: &Kit) -> std::io::Result<std::path::PathBuf> {

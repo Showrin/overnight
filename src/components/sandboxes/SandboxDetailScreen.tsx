@@ -8,7 +8,9 @@ import { SandboxBackupsTab } from './SandboxBackupsTab'
 import { SandboxBranchTab } from './SandboxBranchTab'
 import { SandboxBreadcrumb } from './SandboxBreadcrumb'
 import { SandboxBrowserTab } from './SandboxBrowserTab'
+import { SandboxComposeTab } from './SandboxComposeTab'
 import { SandboxCredentialsTab } from './SandboxCredentialsTab'
+import { SandboxKitsTab } from './SandboxKitsTab'
 import { SandboxHeader } from './SandboxHeader'
 import { SandboxMetricsTab } from './SandboxMetricsTab'
 import { SandboxPlansTab } from './SandboxPlansTab'
@@ -110,6 +112,18 @@ export function SandboxDetailScreen({
       {tab === 'credentials' && (
         <div className="min-h-0 flex-1 overflow-auto">
           <SandboxCredentialsTab sandbox={sandbox} />
+        </div>
+      )}
+
+      {tab === 'compose' && (
+        <div className="min-h-0 flex-1 overflow-auto">
+          <SandboxComposeTab sandbox={sandbox} />
+        </div>
+      )}
+
+      {tab === 'kits' && (
+        <div className="min-h-0 flex-1 overflow-auto">
+          <SandboxKitsTab sandbox={sandbox} />
         </div>
       )}
     </div>

@@ -15,6 +15,7 @@ export interface Sandbox {
   folder_path: string | null
   setup_failures: SetupFailure[]
   compose_override_id: string | null
+  kit_ids: string[]
   git_sync_interval_minutes: number | null
   created_at: number
   stopped_at: number | null

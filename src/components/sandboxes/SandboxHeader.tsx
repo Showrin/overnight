@@ -99,6 +99,12 @@ export function SandboxHeader({
         <button type="button" onClick={() => selectTab('credentials')} className={cn(TAB_LINK_CLASS, activeTab === 'credentials' && TAB_LINK_ACTIVE_CLASS)}>
           Credentials
         </button>
+        <button type="button" onClick={() => selectTab('compose')} className={cn(TAB_LINK_CLASS, activeTab === 'compose' && TAB_LINK_ACTIVE_CLASS)}>
+          Compose
+        </button>
+        <button type="button" onClick={() => selectTab('kits')} className={cn(TAB_LINK_CLASS, activeTab === 'kits' && TAB_LINK_ACTIVE_CLASS)}>
+          Kits
+        </button>
       </div>
     </div>
   )

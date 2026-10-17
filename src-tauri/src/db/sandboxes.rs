@@ -45,6 +45,7 @@ fn row_to_sandbox(row: &rusqlite::Row) -> rusqlite::Result<Sandbox> {
     chrome_host_servers: serde_json::from_str(&row.get::<_, String>("chrome_host_commands")?).unwrap_or_default(),
     setup_failures: serde_json::from_str(&setup_failures_raw).unwrap_or_default(),
     compose_override_id: row.get("compose_override_id")?,
+    kit_ids: serde_json::from_str(&row.get::<_, String>("kit_ids")?).unwrap_or_default(),
     git_sync_interval_minutes: row.get("git_sync_interval_minutes")?,
   })
 }
@@ -368,6 +369,17 @@ pub fn set_compose_override_id(conn: &Connection, id: &str, override_id: Option<
     return Err(Error::NotFound);
   }
   get(conn, id)
+}
+
+/// Records a kit as applied. Already-applied ids are left as they are.
+pub fn add_kit_id(conn: &Connection, id: &str, kit_id: &str) -> Result<Sandbox> {
+  let mut sandbox = get(conn, id)?;
+  if sandbox.kit_ids.iter().any(|k| k == kit_id) {
+    return Ok(sandbox);
+  }
+  sandbox.kit_ids.push(kit_id.to_string());
+  conn.execute("UPDATE sandboxes SET kit_ids = ?1 WHERE id = ?2", params![serde_json::to_string(&sandbox.kit_ids)?, id])?;
+  Ok(sandbox)
 }
 
 pub fn set_git_sync_interval(conn: &Connection, id: &str, minutes: Option<i64>) -> Result<Sandbox> {
@@ -821,5 +833,17 @@ mod tests {
     crate::db::projects::delete(&conn, &project_id).unwrap();
 
     assert!(matches!(get(&conn, &sandbox.id), Err(Error::NotFound)));
+  }
+
+  #[test]
+  fn add_kit_id_is_idempotent() {
+    let conn = test_conn();
+    let project_id = make_project(&conn);
+    let sandbox = create(&conn, &project_id, "clone", None, None, "default", None, "claude").unwrap();
+    assert!(sandbox.kit_ids.is_empty());
+    add_kit_id(&conn, &sandbox.id, "k1").unwrap();
+    add_kit_id(&conn, &sandbox.id, "k2").unwrap();
+    add_kit_id(&conn, &sandbox.id, "k1").unwrap();
+    assert_eq!(get(&conn, &sandbox.id).unwrap().kit_ids, vec!["k1".to_string(), "k2".to_string()]);
   }
 }

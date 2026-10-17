@@ -217,6 +217,8 @@ pub struct Sandbox {
   pub backup_interval_minutes: Option<i64>,
   pub setup_failures: Vec<SetupFailure>,
   pub compose_override_id: Option<String>,
+  /// Kits applied to this sandbox. sbx can't remove a kit, so ids only get added.
+  pub kit_ids: Vec<String>,
   /// `None` = auto Git Sync off.
   pub git_sync_interval_minutes: Option<i64>,
   /// Whether this sandbox may ask the host to browser-test its app through

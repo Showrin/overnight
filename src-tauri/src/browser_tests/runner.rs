@@ -583,7 +583,7 @@ mod tests {
       "last_git_sync_at": null, "last_git_sync_result": [], "backup_enabled": true, "backup_interval_minutes": null,
       "chrome_enabled": true, "chrome_target": "external", "chrome_sandbox_port": null, "chrome_external_url": "http://localhost:3000",
       "chrome_host_prep": false, "chrome_host_servers": [],
-      "setup_failures": [], "compose_override": null, "git_sync_interval_minutes": null
+      "setup_failures": [], "compose_override_id": null, "kit_ids": [], "git_sync_interval_minutes": null
     });
     let sandbox: Sandbox = serde_json::from_value(sandbox_json).unwrap();
     let prompt = build_prompt(&test_row(Some("feat/login")), &sandbox, "http://localhost:3000");

@@ -486,6 +486,11 @@ pub fn migrations() -> Migrations<'static> {
     ALTER TABLE projects ADD COLUMN compose_override_id TEXT REFERENCES compose_overrides(id) ON DELETE SET NULL;
     ALTER TABLE sandboxes ADD COLUMN compose_override_id TEXT REFERENCES compose_overrides(id) ON DELETE SET NULL;
     ",
+  ), M::up(
+    "
+    -- JSON array of kit ids applied to this sandbox (at create or via sbx kit add).
+    ALTER TABLE sandboxes ADD COLUMN kit_ids TEXT NOT NULL DEFAULT '[]';
+    ",
   )])
 }
 

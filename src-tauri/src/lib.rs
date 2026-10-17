@@ -62,6 +62,7 @@ pub fn run() {
       commands::update_kit,
       commands::delete_kit,
       commands::set_kit_scope,
+      commands::apply_sandbox_kit,
       commands::get_project_env_vars,
       commands::save_project_env_vars,
       commands::get_sandbox_env_vars,

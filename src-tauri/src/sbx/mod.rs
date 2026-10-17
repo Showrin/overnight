@@ -731,6 +731,24 @@ fn create_args(name: &str, clone: bool, kit_dir: Option<&str>, agent_token: &str
   args
 }
 
+/// Applies a mixin kit to an existing sandbox. sbx restarts the sandbox to do it.
+pub async fn kit_add<R: Runtime>(app: &AppHandle<R>, name: &str, kit_dir: &str) -> Result<()> {
+  run(app, "Add kit to sandbox", &kit_add_args(name, kit_dir)).await?;
+  Ok(())
+}
+
+fn kit_add_args<'a>(name: &'a str, kit_dir: &'a str) -> [&'a str; 4] {
+  ["kit", "add", name, kit_dir]
+}
+
+#[cfg(test)]
+mod kit_add_tests {
+  #[test]
+  fn kit_add_args_name_sandbox_then_dir() {
+    assert_eq!(super::kit_add_args("my-sbx", "/data/kits/k1"), ["kit", "add", "my-sbx", "/data/kits/k1"]);
+  }
+}
+
 /// Makes a bare `<cli_token>` typed inside a manually-opened terminal
 /// (`open_sandbox_terminal`'s `sbx exec -it <name> bash`) use the same
 /// permission mode the sandbox was created with, not just app-launched
