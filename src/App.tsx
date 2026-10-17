@@ -6,6 +6,7 @@ import { OperationsIndicator } from '@/components/OperationsIndicator'
 import { BackupsScreen } from '@/components/backups/BackupsScreen'
 import { JiraIssueList } from '@/components/dashboard/JiraIssueList'
 import { ProjectsScreen } from '@/components/projects/ProjectsScreen'
+import { HostStatsPanel } from '@/components/sandboxes/HostStatsPanel'
 import { GitSyncToast } from '@/components/sandboxes/GitSyncToast'
 import { SandboxesScreen } from '@/components/sandboxes/SandboxesScreen'
 import { SettingsDialog } from '@/components/settings/SettingsDialog'
@@ -56,6 +57,9 @@ function App() {
     }
   }, [navigate])
 
+  // The sandbox list page has its own stats panel.
+  const showStatsBar = !(route.screen === 'sandboxes' && !route.sandboxId)
+
   return (
     <div className="flex h-screen flex-col bg-background">
       <Titlebar
@@ -66,6 +70,7 @@ function App() {
       />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar current={route.screen} onNavigate={navigate} collapsed={sidebarCollapsed} />
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <main className="flex flex-1 justify-center overflow-auto">
           {route.screen === 'sandboxes' && route.branch ? (
             <div className="@container flex h-full w-full flex-col overflow-hidden p-6">
@@ -101,6 +106,12 @@ function App() {
             </div>
           )}
         </main>
+        {showStatsBar && (
+          <div className="shrink-0 border-t border-border-subtle bg-background p-4">
+            <HostStatsPanel layout="bar" />
+          </div>
+        )}
+        </div>
       </div>
       <OperationsIndicator navigate={navigate} />
       <GitSyncToast />
