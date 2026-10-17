@@ -17,6 +17,7 @@ export interface Sandbox {
   host_port: number | null
   ports: PortMapping[]
   setup_failures: SetupFailure[]
+  compose_override: string | null
   created_at: number
   stopped_at: number | null
   // "open" | "locked-down" | null (null = inherit the global default)

@@ -778,6 +778,55 @@ pub async fn set_default_permission_mode<R: Runtime>(
   Ok(())
 }
 
+/// Writes (or removes, when `content` is `None`) the compose override next to
+/// the workspace's base compose file, and hides it from git.
+fn build_compose_override_script(workspace: &str, content: Option<&str>) -> String {
+  let ws = shell_quote(workspace);
+  let mut script = format!(
+    "cd {ws} || exit 1\nf=docker-compose.override.yml\n{{ [ -f compose.yaml ] || [ -f compose.yml ]; }} && f=compose.override.yaml\n"
+  );
+  match content {
+    Some(content) => {
+      let delimiter = format!("OVERNIGHT_COMPOSE_{}", uuid::Uuid::new_v4().simple());
+      let body = if content.ends_with('\n') { content.to_string() } else { format!("{content}\n") };
+      script.push_str(&format!("cat > \"$f\" <<'{delimiter}'\n{body}{delimiter}\n"));
+      script.push_str(
+        "if [ -d .git ]; then mkdir -p .git/info; grep -qxF \"$f\" .git/info/exclude 2>/dev/null || echo \"$f\" >> .git/info/exclude; fi\n",
+      );
+    }
+    None => script.push_str("rm -f \"$f\"\n"),
+  }
+  script
+}
+
+pub async fn push_compose_override<R: Runtime>(app: &AppHandle<R>, name: &str, content: Option<&str>) -> Result<()> {
+  let workspace = workspace_path(app, name).await?.unwrap_or_else(|| SANDBOX_HOME.to_string());
+  run(app, "Set compose override", &["exec", "-d", name, "sh", "-c", &build_compose_override_script(&workspace, content)]).await?;
+  Ok(())
+}
+
+#[cfg(test)]
+mod compose_override_script_tests {
+  use super::build_compose_override_script;
+
+  #[test]
+  fn writes_file_via_heredoc_and_excludes_it() {
+    let script = build_compose_override_script("/ws", Some("services:\n  web:\n    ports: ['3000:3000']"));
+    assert!(script.starts_with("cd '/ws' || exit 1\n"));
+    assert!(script.contains("f=compose.override.yaml"));
+    assert!(script.contains("cat > \"$f\" <<'OVERNIGHT_COMPOSE_"));
+    assert!(script.contains("    ports: ['3000:3000']\nOVERNIGHT_COMPOSE_"));
+    assert!(script.contains(".git/info/exclude"));
+  }
+
+  #[test]
+  fn removes_file_when_cleared() {
+    let script = build_compose_override_script("/ws", None);
+    assert!(script.ends_with("rm -f \"$f\"\n"));
+    assert!(!script.contains("cat >"));
+  }
+}
+
 const HOST_SOURCE_PATH: &str = "/run/sandbox/source";
 
 fn set_origin_script(workspace: &str) -> String {

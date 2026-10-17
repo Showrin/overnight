@@ -218,6 +218,7 @@ pub struct Sandbox {
   pub backup_interval_minutes: Option<i64>,
   pub ports: Vec<PortMapping>,
   pub setup_failures: Vec<SetupFailure>,
+  pub compose_override: Option<String>,
   /// Whether this sandbox may ask the host to browser-test its app through
   /// Claude in Chrome (see `crate::browser_tests`). Off by default.
   pub chrome_enabled: bool,
@@ -309,6 +310,7 @@ pub enum SetupStep {
   EnvVars,
   Secrets,
   GitOrigin,
+  ComposeOverride,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -380,6 +382,7 @@ pub struct Project {
   pub kit_id: Option<String>,
   pub ports: Vec<u16>,
   pub browser_urls: Vec<String>,
+  pub compose_override: Option<String>,
   pub created_at: i64,
   pub updated_at: i64,
 }

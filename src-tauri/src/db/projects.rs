@@ -21,6 +21,7 @@ fn row_to_project(row: &rusqlite::Row) -> rusqlite::Result<Project> {
     kit_id: row.get("kit_id")?,
     ports: serde_json::from_str(&ports_raw).unwrap_or_default(),
     browser_urls: serde_json::from_str(&browser_urls_raw).unwrap_or_default(),
+    compose_override: row.get("compose_override")?,
     created_at: row.get("created_at")?,
     updated_at: row.get("updated_at")?,
   })
@@ -113,6 +114,17 @@ pub fn set_browser_config(conn: &Connection, id: &str, ports: &[u16], browser_ur
   get(conn, id)
 }
 
+pub fn set_compose_override(conn: &Connection, id: &str, content: Option<&str>) -> Result<Project> {
+  let changed = conn.execute(
+    "UPDATE projects SET compose_override = ?1, updated_at = ?2 WHERE id = ?3",
+    params![content, now_millis(), id],
+  )?;
+  if changed == 0 {
+    return Err(Error::NotFound);
+  }
+  get(conn, id)
+}
+
 pub fn delete(conn: &Connection, id: &str) -> Result<()> {
   let changed = conn.execute("DELETE FROM projects WHERE id = ?1", params![id])?;
   if changed == 0 {
@@ -158,6 +170,16 @@ mod tests {
   use super::*;
   use crate::db::migrations::test_conn;
   use crate::db::models::{SecretSource, SecretTarget};
+
+  #[test]
+  fn set_compose_override_round_trips() {
+    let conn = test_conn();
+    let project = create(&conn, "P", "/repo/p", None, None).unwrap();
+    assert_eq!(project.compose_override, None);
+    let updated = set_compose_override(&conn, &project.id, Some("services: {}")).unwrap();
+    assert_eq!(updated.compose_override.as_deref(), Some("services: {}"));
+    assert_eq!(set_compose_override(&conn, &project.id, None).unwrap().compose_override, None);
+  }
 
   #[test]
   fn set_browser_config_round_trips() {

@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { ComposeOverrideEditor, composeOverrideError } from '@/components/settings/ComposeOverrideEditor'
 import { parsePorts } from '@/lib/browserTargets'
 import type { Project } from './types'
 
@@ -25,6 +26,7 @@ export function ProjectForm({
   )
   const [ports, setPorts] = useState((initial?.ports ?? []).join(', '))
   const [browserUrls, setBrowserUrls] = useState((initial?.browser_urls ?? []).join('\n'))
+  const [composeOverride, setComposeOverride] = useState(initial?.compose_override ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -44,6 +46,10 @@ export function ProjectForm({
       setError('Ports must be numbers between 1 and 65535, separated by commas.')
       return
     }
+    if (composeOverrideError(composeOverride)) {
+      setError('Fix the compose override YAML first.')
+      return
+    }
     setSaving(true)
     setError(null)
     try {
@@ -61,6 +67,9 @@ export function ProjectForm({
         ports: parsedPorts,
         browserUrls: browserUrls.split('\n').map((u) => u.trim()).filter((u) => u.length > 0),
       })
+      if (composeOverride !== (initial?.compose_override ?? '')) {
+        await invoke('save_project_compose_override', { id: saved.id, content: composeOverride.trim() ? composeOverride : null })
+      }
       onSaved()
     } catch (e) {
       setError(String(e))
@@ -136,6 +145,11 @@ export function ProjectForm({
             className="rounded-md border border-input bg-transparent px-3 py-2 font-mono text-xs outline-none focus-visible:border-ring"
           />
           <p className="text-xs text-muted-foreground">{'{port}'} is replaced with the first published host port.</p>
+        </div>
+        <div className="flex flex-col gap-1">
+          <Label>Docker compose override (optional)</Label>
+          <ComposeOverrideEditor value={composeOverride} onChange={setComposeOverride} />
+          <p className="text-xs text-muted-foreground">Applied to new sandboxes and pushed to running ones without their own override.</p>
         </div>
         {error && <p className="text-sm text-destructive">{error}</p>}
         <div className="flex gap-2">

@@ -186,6 +186,57 @@ pub fn save_project_browser_config(
   projects::set_browser_config(&conn, &id, &ports_unique, &urls).map_err(|e| e.to_string())
 }
 
+fn normalize_compose_override(content: Option<String>) -> Option<String> {
+  content.filter(|c| !c.trim().is_empty())
+}
+
+/// Saves the project override, then pushes it to running sandboxes that have no override of their own.
+#[tauri::command]
+pub async fn save_project_compose_override(
+  app: AppHandle,
+  pool: State<'_, DbPool>,
+  id: String,
+  content: Option<String>,
+) -> std::result::Result<Project, String> {
+  let content = normalize_compose_override(content);
+  let (project, targets) = {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    let project = projects::set_compose_override(&conn, &id, content.as_deref()).map_err(|e| e.to_string())?;
+    let targets: Vec<String> = sandboxes::list_for_project(&conn, &id)
+      .map_err(|e| e.to_string())?
+      .into_iter()
+      .filter(|s| s.status == "running" && s.compose_override.is_none())
+      .filter_map(|s| s.sbx_name)
+      .collect();
+    (project, targets)
+  };
+  for name in targets {
+    crate::sbx::push_compose_override(&app, &name, content.as_deref()).await.map_err(|e| e.to_string())?;
+  }
+  Ok(project)
+}
+
+/// Saves the sandbox override and pushes the effective value when running.
+#[tauri::command]
+pub async fn save_sandbox_compose_override(
+  app: AppHandle,
+  pool: State<'_, DbPool>,
+  id: String,
+  content: Option<String>,
+) -> std::result::Result<Sandbox, String> {
+  let content = normalize_compose_override(content);
+  let (sandbox, project) = {
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    let sandbox = sandboxes::set_compose_override(&conn, &id, content.as_deref()).map_err(|e| e.to_string())?;
+    let project = projects::get(&conn, &sandbox.project_id).map_err(|e| e.to_string())?;
+    (sandbox, project)
+  };
+  if let (true, Some(name)) = (sandbox.status == "running", sandbox.sbx_name.as_deref()) {
+    crate::sbx::push_compose_override(&app, name, effective_compose_override(&sandbox, &project)).await.map_err(|e| e.to_string())?;
+  }
+  Ok(sandbox)
+}
+
 /// Sandbox ports to publish: the project's list, else its dev server port, else `SANDBOX_PORT`.
 fn ports_to_publish(project: &Project) -> Vec<u16> {
   if !project.ports.is_empty() {
@@ -1766,7 +1817,7 @@ async fn provision_sandbox(
 
   let ctx = SetupContext { app, pool, project, sandbox, name: &name, agent_kit };
   // Best-effort syncs stay silent; tracked steps record failures instead of failing the create.
-  let steps = applicable_steps(sandbox);
+  let steps = applicable_steps(sandbox, project);
   let (failures, (), (), ()) = tokio::join!(
     run_steps_with(&steps, |step| progress.track_step(step, run_setup_step(&ctx, step))),
     sync_git_identity(app, &name),
@@ -1839,18 +1890,27 @@ struct SetupContext<'a> {
 }
 
 const SETUP_STEPS: &[SetupStep] =
-  &[SetupStep::PermissionMode, SetupStep::Ports, SetupStep::EnvVars, SetupStep::Secrets, SetupStep::GitOrigin];
+  &[SetupStep::PermissionMode, SetupStep::Ports, SetupStep::EnvVars, SetupStep::Secrets, SetupStep::GitOrigin, SetupStep::ComposeOverride];
 
-fn applicable_steps(sandbox: &Sandbox) -> Vec<SetupStep> {
+fn applicable_steps(sandbox: &Sandbox, project: &Project) -> Vec<SetupStep> {
   SETUP_STEPS
     .iter()
     .copied()
     .filter(|step| match step {
       // /run/sandbox/source only exists in clone mode.
       SetupStep::GitOrigin => sandbox.mode == "clone",
+      SetupStep::ComposeOverride => effective_compose_override(sandbox, project).is_some(),
       _ => true,
     })
     .collect()
+}
+
+fn effective_compose_override<'a>(sandbox: &'a Sandbox, project: &'a Project) -> Option<&'a str> {
+  sandbox
+    .compose_override
+    .as_deref()
+    .or(project.compose_override.as_deref())
+    .filter(|c| !c.trim().is_empty())
 }
 
 async fn run_setup_step(ctx: &SetupContext<'_>, step: SetupStep) -> std::result::Result<(), String> {
@@ -1876,6 +1936,9 @@ async fn run_setup_step(ctx: &SetupContext<'_>, step: SetupStep) -> std::result:
       register_secrets(app, &merged, Some(name)).await
     }
     SetupStep::GitOrigin => crate::sbx::set_git_origin_to_source(app, name).await.map_err(|e| e.to_string()),
+    SetupStep::ComposeOverride => crate::sbx::push_compose_override(app, name, effective_compose_override(sandbox, project))
+      .await
+      .map_err(|e| e.to_string()),
   }
 }
 
@@ -1939,8 +2002,22 @@ mod setup_steps_tests {
     let second = projects::create(&conn, "P2", "/r2", None, None).unwrap();
     let clone = sandboxes::create(&conn, &first.id, "clone", None, None, "default", None, "claude").unwrap();
     let mount = sandboxes::create(&conn, &second.id, "mount", Some("/r2"), None, "default", None, "claude").unwrap();
-    assert!(applicable_steps(&clone).contains(&SetupStep::GitOrigin));
-    assert!(!applicable_steps(&mount).contains(&SetupStep::GitOrigin));
+    assert!(applicable_steps(&clone, &first).contains(&SetupStep::GitOrigin));
+    assert!(!applicable_steps(&mount, &second).contains(&SetupStep::GitOrigin));
+  }
+
+  #[test]
+  fn compose_override_prefers_sandbox_and_skips_blank() {
+    let conn = crate::db::migrations::test_conn();
+    let project = projects::set_compose_override(&conn, &projects::create(&conn, "P", "/r", None, None).unwrap().id, Some("p: 1")).unwrap();
+    let sandbox = sandboxes::create(&conn, &project.id, "clone", None, None, "default", None, "claude").unwrap();
+    assert_eq!(effective_compose_override(&sandbox, &project), Some("p: 1"));
+    let sandbox = sandboxes::set_compose_override(&conn, &sandbox.id, Some("s: 1")).unwrap();
+    assert_eq!(effective_compose_override(&sandbox, &project), Some("s: 1"));
+    let sandbox = sandboxes::set_compose_override(&conn, &sandbox.id, Some("  ")).unwrap();
+    let blank_project = projects::set_compose_override(&conn, &project.id, None).unwrap();
+    assert_eq!(effective_compose_override(&sandbox, &blank_project), None);
+    assert!(!applicable_steps(&sandbox, &blank_project).contains(&SetupStep::ComposeOverride));
   }
 
   #[test]
@@ -3567,6 +3644,7 @@ mod ports_to_publish_tests {
       kit_id: None,
       ports,
       browser_urls: vec![],
+      compose_override: None,
       created_at: 0,
       updated_at: 0,
     }

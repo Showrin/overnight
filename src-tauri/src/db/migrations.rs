@@ -449,6 +449,12 @@ pub fn migrations() -> Migrations<'static> {
     -- JSON array of {step, error}: post-create steps that failed and can be retried.
     ALTER TABLE sandboxes ADD COLUMN setup_failures TEXT NOT NULL DEFAULT '[]';
     ",
+  ), M::up(
+    "
+    -- docker compose override YAML. Sandbox value wins over project value.
+    ALTER TABLE projects ADD COLUMN compose_override TEXT;
+    ALTER TABLE sandboxes ADD COLUMN compose_override TEXT;
+    ",
   )])
 }
 

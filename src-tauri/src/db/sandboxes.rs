@@ -47,6 +47,7 @@ fn row_to_sandbox(row: &rusqlite::Row) -> rusqlite::Result<Sandbox> {
     chrome_host_servers: serde_json::from_str(&row.get::<_, String>("chrome_host_commands")?).unwrap_or_default(),
     ports: serde_json::from_str(&ports_raw).unwrap_or_default(),
     setup_failures: serde_json::from_str(&setup_failures_raw).unwrap_or_default(),
+    compose_override: row.get("compose_override")?,
   })
 }
 
@@ -372,6 +373,14 @@ pub fn set_ports(conn: &Connection, id: &str, ports: &[PortMapping]) -> Result<S
 pub fn set_setup_failures(conn: &Connection, id: &str, failures: &[SetupFailure]) -> Result<Sandbox> {
   let json = serde_json::to_string(failures)?;
   let changed = conn.execute("UPDATE sandboxes SET setup_failures = ?1 WHERE id = ?2", params![json, id])?;
+  if changed == 0 {
+    return Err(Error::NotFound);
+  }
+  get(conn, id)
+}
+
+pub fn set_compose_override(conn: &Connection, id: &str, content: Option<&str>) -> Result<Sandbox> {
+  let changed = conn.execute("UPDATE sandboxes SET compose_override = ?1 WHERE id = ?2", params![content, id])?;
   if changed == 0 {
     return Err(Error::NotFound);
   }
@@ -710,6 +719,15 @@ mod tests {
     let fetched = get(&conn, &sandbox.id).unwrap();
     assert_eq!(fetched.ports, ports);
     assert_eq!(fetched.host_port, Some(51000));
+  }
+
+  #[test]
+  fn set_compose_override_round_trips() {
+    let conn = test_conn();
+    let project_id = make_project(&conn);
+    let sandbox = create(&conn, &project_id, "clone", None, None, "default", None, "claude").unwrap();
+    set_compose_override(&conn, &sandbox.id, Some("services: {}")).unwrap();
+    assert_eq!(get(&conn, &sandbox.id).unwrap().compose_override.as_deref(), Some("services: {}"));
   }
 
   #[test]

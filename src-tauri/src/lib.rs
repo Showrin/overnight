@@ -42,6 +42,8 @@ pub fn run() {
       commands::update_project,
       commands::delete_project,
       commands::save_project_browser_config,
+      commands::save_project_compose_override,
+      commands::save_sandbox_compose_override,
       commands::get_settings,
       commands::save_settings,
       commands::save_skill_folders,

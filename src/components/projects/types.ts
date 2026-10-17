@@ -7,6 +7,7 @@ export interface Project {
   kit_id: string | null
   ports: number[]
   browser_urls: string[]
+  compose_override: string | null
   created_at: number
   updated_at: number
 }
