@@ -6,7 +6,7 @@ import { OperationsIndicator } from '@/components/OperationsIndicator'
 import { BackupsScreen } from '@/components/backups/BackupsScreen'
 import { JiraIssueList } from '@/components/dashboard/JiraIssueList'
 import { ProjectsScreen } from '@/components/projects/ProjectsScreen'
-import { HostStatsPanel } from '@/components/sandboxes/HostStatsPanel'
+import { HostStatsBar } from '@/components/sandboxes/HostStatsBar'
 import { CreateProgressPopout } from '@/components/sandboxes/CreateProgressPopout'
 import { GitSyncToast } from '@/components/sandboxes/GitSyncToast'
 import { SandboxesScreen } from '@/components/sandboxes/SandboxesScreen'
@@ -128,11 +128,7 @@ function App() {
             </div>
           )}
         </main>
-        {showStatsBar && (
-          <div className="shrink-0 border-t border-border-subtle bg-background p-4">
-            <HostStatsPanel layout="bar" />
-          </div>
-        )}
+        {showStatsBar && <HostStatsBar />}
         </div>
       </div>
       <OperationsIndicator navigate={navigate} />
