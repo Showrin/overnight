@@ -30,11 +30,13 @@ export function SandboxActions({
   sandbox,
   projectName,
   onChanged,
+  onDeleted,
   context,
 }: {
   sandbox: Sandbox
   projectName: string
   onChanged: () => void
+  onDeleted?: () => void
   context: 'card' | 'detail'
 }) {
   const defaultTerminalHost = useAppStore((s) => s.defaultTerminalHost)
@@ -60,6 +62,7 @@ export function SandboxActions({
       if (which === 'stop') notify('Sandbox stopped', `${title} has been stopped.`, sandbox.id)
       if (which === 'delete') notify('Sandbox deleted', `${title} has been deleted.`, sandbox.id)
       onChanged()
+      if (which === 'delete') onDeleted?.()
     } catch (e) {
       const message = String(e)
       setError(message)

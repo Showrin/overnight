@@ -38,7 +38,7 @@ export function CreateSandboxDialog({
   const [name, setName] = useState('')
   const [agent, setAgent] = useState(defaultAgent)
   const [permissionMode, setPermissionMode] = useState('')
-  const [mode, setMode] = useState<SandboxMode>('mount')
+  const [mode, setMode] = useState<SandboxMode>('clone')
   const [networkPresetOverride, setNetworkPresetOverride] = useState('')
   const [pendingNetworkRules, setPendingNetworkRules] = useState<{ decision: NetworkRuleDecision; host: string }[]>([])
   const [pendingRuleDecision, setPendingRuleDecision] = useState<NetworkRuleDecision>('allow')

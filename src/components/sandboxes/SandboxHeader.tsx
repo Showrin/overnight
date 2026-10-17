@@ -67,7 +67,10 @@ export function SandboxHeader({
 
       <SetupFailuresBanner sandbox={sandbox} />
 
-      <SandboxActions sandbox={sandbox} projectName={project?.name ?? 'Sandbox'} onChanged={loadSandboxes} context="detail" />
+      <SandboxActions sandbox={sandbox} projectName={project?.name ?? 'Sandbox'} onChanged={loadSandboxes}
+        onDeleted={() => navigate({ screen: 'sandboxes' })}
+        context="detail"
+      />
 
       <div className="flex gap-4 border-b border-border">
         <button type="button" onClick={() => selectTab('overview')} className={cn(TAB_LINK_CLASS, activeTab === 'overview' && TAB_LINK_ACTIVE_CLASS)}>
