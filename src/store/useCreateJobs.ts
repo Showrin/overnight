@@ -21,6 +21,7 @@ export interface CreateParams {
   permissionMode: string | null
   agent: string
   kitId: string | null
+  composeOverrideId: string | null
   networkPresetOverride: string | null
   networkRules: { decision: NetworkRuleDecision; host: string }[]
 }
@@ -83,6 +84,7 @@ export const useCreateJobs = create<CreateJobsStore>((set, get) => {
         permissionMode: params.permissionMode,
         agent: params.agent,
         kitId: params.kitId,
+        composeOverrideId: params.composeOverrideId,
         progressId: id,
       })
       patchJob(id, () => ({ sandboxId: sandbox.id }))

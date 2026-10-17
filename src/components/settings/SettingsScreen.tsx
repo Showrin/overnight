@@ -13,6 +13,7 @@ import { BackupsTab } from './tabs/BackupsTab'
 import { CredentialsTab } from './tabs/CredentialsTab'
 import { GeneralTab } from './tabs/GeneralTab'
 import { IntegrationsTab } from './tabs/IntegrationsTab'
+import { ComposeOverridesTab } from './tabs/ComposeOverridesTab'
 import { KitsTab } from './tabs/KitsTab'
 import { BrowserTestingTab } from './tabs/BrowserTestingTab'
 import { NetworkTab } from './tabs/NetworkTab'
@@ -468,6 +469,7 @@ export function SettingsScreen({ section }: { section: SettingsTab }) {
       },
     },
     kits: { dirty: false, canSave: false, saving: false, error: null, onSave: noop, onCancel: noop },
+    compose: { dirty: false, canSave: false, saving: false, error: null, onSave: noop, onCancel: noop },
     browser: { dirty: false, canSave: false, saving: false, error: null, onSave: noop, onCancel: noop },
     integrations: { dirty: false, canSave: false, saving: false, error: null, onSave: noop, onCancel: noop },
   }
@@ -547,6 +549,8 @@ export function SettingsScreen({ section }: { section: SettingsTab }) {
 
         {section === 'kits' && <KitsTab />}
 
+        {section === 'compose' && <ComposeOverridesTab />}
+
         {section === 'browser' && <BrowserTestingTab />}
 
         {SHOW_JIRA_SETTINGS && section === 'integrations' && (
@@ -559,7 +563,7 @@ export function SettingsScreen({ section }: { section: SettingsTab }) {
         )}
       </div>
 
-      {section !== 'integrations' && section !== 'kits' && section !== 'browser' && (
+      {section !== 'integrations' && section !== 'kits' && section !== 'compose' && section !== 'browser' && (
         <div className="flex shrink-0 justify-end border-t border-border px-6 py-3">
           <SettingsActions {...activeActions} />
         </div>

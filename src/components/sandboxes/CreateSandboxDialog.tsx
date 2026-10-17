@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { AGENTS, AGENT_LABELS, type Agent } from '@/lib/agentHost'
+import { defaultComposeOverrideId } from '@/lib/composeOverrides'
 import { defaultKitId } from '@/lib/kits'
 import type { NetworkRuleDecision } from '@/lib/networkPolicy'
 import { SANDBOX_NETWORK_PRESET_OVERRIDE_LABELS, SANDBOX_NETWORK_PRESET_OVERRIDES } from '@/lib/networkPolicy'
@@ -16,6 +17,7 @@ import type { SandboxMode } from './types'
 const DEFAULT_PERMISSION_MODE = '__settings_default__'
 const DEFAULT_NETWORK_OVERRIDE = '__global_default__'
 const NO_KIT = '__no_kit__'
+const NO_OVERRIDE = '__no_override__'
 
 export function CreateSandboxDialog({
   defaultProjectId,
@@ -35,6 +37,11 @@ export function CreateSandboxDialog({
     defaultKitId(kits, projects.find((p) => p.id === (defaultProjectId ?? projects[0]?.id)))
   )
   const projectDefaultKitId = defaultKitId(kits, projects.find((p) => p.id === projectId))
+  const composeOverrides = useAppStore((s) => s.composeOverrides)
+  const [composeOverrideId, setComposeOverrideId] = useState<string | null>(() =>
+    defaultComposeOverrideId(composeOverrides, projects.find((p) => p.id === (defaultProjectId ?? projects[0]?.id)))
+  )
+  const projectDefaultOverrideId = defaultComposeOverrideId(composeOverrides, projects.find((p) => p.id === projectId))
   const [name, setName] = useState('')
   const [agent, setAgent] = useState(defaultAgent)
   const [permissionMode, setPermissionMode] = useState('')
@@ -74,6 +81,7 @@ export function CreateSandboxDialog({
         permissionMode: permissionMode || null,
         agent,
         kitId,
+        composeOverrideId,
         networkPresetOverride: networkPresetOverride || null,
         networkRules: pendingNetworkRules,
       },
@@ -95,6 +103,7 @@ export function CreateSandboxDialog({
             onValueChange={(value) => {
               setProjectId(value)
               setKitId(defaultKitId(kits, projects.find((p) => p.id === value)))
+              setComposeOverrideId(defaultComposeOverrideId(composeOverrides, projects.find((p) => p.id === value)))
             }}
           >
             <SelectTrigger id="sandbox-project">
@@ -161,6 +170,26 @@ export function CreateSandboxDialog({
             </SelectContent>
           </Select>
           <p className="text-xs text-muted-foreground">Kit install commands run once while the sandbox is created.</p>
+        </div>
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="sandbox-compose-override">Compose override</Label>
+          <Select
+            value={composeOverrideId ?? NO_OVERRIDE}
+            onValueChange={(value) => setComposeOverrideId(value === NO_OVERRIDE ? null : value)}
+          >
+            <SelectTrigger id="sandbox-compose-override">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NO_OVERRIDE}>No override</SelectItem>
+              {composeOverrides.map((o) => (
+                <SelectItem key={o.id} value={o.id}>
+                  {o.name}
+                  {o.id === projectDefaultOverrideId ? ' (default)' : ''}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         <div className="flex flex-col gap-1">
           <Label htmlFor="sandbox-permission-mode">Permission mode</Label>

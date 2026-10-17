@@ -15,7 +15,7 @@ export function defaultKitId(kits: Kit[], project: Project | undefined): string 
   return kits.find((k) => k.is_global)?.id ?? null
 }
 
-export function kitScopeLabel(kit: Kit): string {
+export function kitScopeLabel(kit: { is_global: boolean; project_ids: string[] }): string {
   if (kit.is_global) return 'Global'
   const count = kit.project_ids.length
   if (count === 0) return 'Not applied'

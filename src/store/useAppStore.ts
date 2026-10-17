@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import type { Project } from '@/components/projects/types'
 import type { BranchSyncOutcome, HostMetric, Sandbox } from '@/components/sandboxes/types'
 import type { ActiveBackup, ActiveOperation } from '@/components/backups/types'
+import { STARTER_COMPOSE_OVERRIDE, type ComposeOverride } from '@/lib/composeOverrides'
 import { starterSpec, type Kit } from '@/lib/kits'
 import type { NetworkPolicySettings } from '@/lib/networkPolicy'
 import type { SettingsSection } from '@/components/settings/sections'
@@ -30,6 +31,7 @@ export interface GitSyncToastState {
 interface AppStore {
   projects: Project[]
   kits: Kit[]
+  composeOverrides: ComposeOverride[]
   sandboxes: Sandbox[]
   settings: AppSettings | null
   platform: string | null
@@ -56,6 +58,11 @@ interface AppStore {
   updateKit: (id: string, name: string, spec: string) => Promise<void>
   deleteKit: (id: string) => Promise<void>
   setKitScope: (id: string, global: boolean, projectIds: string[]) => Promise<void>
+  loadComposeOverrides: () => Promise<void>
+  createComposeOverride: (name: string) => Promise<ComposeOverride>
+  updateComposeOverride: (id: string, name: string, content: string) => Promise<void>
+  deleteComposeOverride: (id: string) => Promise<void>
+  setComposeOverrideScope: (id: string, global: boolean, projectIds: string[]) => Promise<void>
   loadSandboxes: () => Promise<void>
   loadSettings: () => Promise<void>
   saveSettings: (agent: string, defaultPermissionMode: string) => Promise<void>
@@ -94,6 +101,7 @@ interface AppStore {
 export const useAppStore = create<AppStore>((set, get) => ({
   projects: [],
   kits: [],
+  composeOverrides: [],
   sandboxes: [],
   settings: null,
   platform: null,
@@ -145,6 +153,41 @@ export const useAppStore = create<AppStore>((set, get) => ({
   async setKitScope(id, global, projectIds) {
     await invoke('set_kit_scope', { id, global, projectIds })
     await Promise.all([get().loadKits(), get().loadProjects()])
+  },
+
+  async loadComposeOverrides() {
+    const composeOverrides = await invoke<ComposeOverride[]>('list_compose_overrides')
+    set({ composeOverrides })
+  },
+
+  async createComposeOverride(name) {
+    const item = await invoke<ComposeOverride>('create_compose_override', { name, content: STARTER_COMPOSE_OVERRIDE })
+    set((state) => ({ composeOverrides: [...state.composeOverrides, item] }))
+    return item
+  },
+
+  // Saves first, then the backend pushes to running sandboxes. A push error still leaves the save in place.
+  async updateComposeOverride(id, name, content) {
+    try {
+      const item = await invoke<ComposeOverride>('update_compose_override', { id, name, content })
+      set((state) => ({ composeOverrides: state.composeOverrides.map((o) => (o.id === id ? item : o)) }))
+    } catch (e) {
+      await get().loadComposeOverrides()
+      throw e
+    }
+  },
+
+  async deleteComposeOverride(id) {
+    try {
+      await invoke('delete_compose_override', { id })
+    } finally {
+      await Promise.all([get().loadComposeOverrides(), get().loadProjects(), get().loadSandboxes()])
+    }
+  },
+
+  async setComposeOverrideScope(id, global, projectIds) {
+    await invoke('set_compose_override_scope', { id, global, projectIds })
+    await Promise.all([get().loadComposeOverrides(), get().loadProjects()])
   },
 
   async loadSandboxes() {
@@ -338,6 +381,7 @@ export function initAppStore() {
   initialized = true
   useAppStore.getState().loadProjects()
   useAppStore.getState().loadKits()
+  useAppStore.getState().loadComposeOverrides()
   useAppStore.getState().loadSandboxes()
   useAppStore.getState().loadSettings()
   useAppStore.getState().loadPlatform()

@@ -2,6 +2,7 @@ import {
   Activity,
   Archive,
   Boxes,
+  Container,
   Globe,
   KeyRound,
   Network,
@@ -16,7 +17,7 @@ import {
 export const SHOW_JIRA_SETTINGS = false
 export const SHOW_PERFORMANCE_MONITOR = false
 
-export type SettingsTab = 'general' | 'backups' | 'network' | 'credentials' | 'kits' | 'browser' | 'integrations'
+export type SettingsTab = 'general' | 'backups' | 'network' | 'credentials' | 'kits' | 'compose' | 'browser' | 'integrations'
 export type SettingsSection = SettingsTab | 'agent-config' | 'performance-monitor' | 'daemon-logs' | 'command-logs'
 
 export interface SectionItem {
@@ -34,6 +35,7 @@ export const SECTION_GROUPS: { label: string; items: SectionItem[] }[] = [
       { id: 'network', label: 'Network', icon: Network },
       { id: 'credentials', label: 'Credentials', icon: KeyRound },
       { id: 'kits', label: 'Kits', icon: Boxes },
+      { id: 'compose', label: 'Compose Overrides', icon: Container },
       { id: 'browser', label: 'Browser Testing', icon: Globe },
       { id: 'agent-config', label: 'Hooks & Styles', icon: Webhook },
       ...(SHOW_JIRA_SETTINGS ? [{ id: 'integrations' as const, label: 'Integrations', icon: Plug }] : []),
@@ -51,7 +53,7 @@ export const SECTION_GROUPS: { label: string; items: SectionItem[] }[] = [
   },
 ]
 
-const SETTINGS_TABS: readonly string[] = ['general', 'backups', 'network', 'credentials', 'kits', 'browser', 'integrations']
+const SETTINGS_TABS: readonly string[] = ['general', 'backups', 'network', 'credentials', 'kits', 'compose', 'browser', 'integrations']
 
 export function isSettingsTab(section: SettingsSection): section is SettingsTab {
   return SETTINGS_TABS.includes(section)
