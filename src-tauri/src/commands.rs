@@ -1778,10 +1778,19 @@ struct SetupContext<'a> {
   agent_kit: &'a crate::agents::AgentKit,
 }
 
-const SETUP_STEPS: &[SetupStep] = &[SetupStep::PermissionMode, SetupStep::Ports, SetupStep::EnvVars, SetupStep::Secrets];
+const SETUP_STEPS: &[SetupStep] =
+  &[SetupStep::PermissionMode, SetupStep::Ports, SetupStep::EnvVars, SetupStep::Secrets, SetupStep::GitOrigin];
 
-fn applicable_steps(_sandbox: &Sandbox) -> Vec<SetupStep> {
-  SETUP_STEPS.to_vec()
+fn applicable_steps(sandbox: &Sandbox) -> Vec<SetupStep> {
+  SETUP_STEPS
+    .iter()
+    .copied()
+    .filter(|step| match step {
+      // /run/sandbox/source only exists in clone mode.
+      SetupStep::GitOrigin => sandbox.mode == "clone",
+      _ => true,
+    })
+    .collect()
 }
 
 async fn run_setup_step(ctx: &SetupContext<'_>, step: SetupStep) -> std::result::Result<(), String> {
@@ -1806,6 +1815,7 @@ async fn run_setup_step(ctx: &SetupContext<'_>, step: SetupStep) -> std::result:
       let merged = merged_secrets(pool, &project.id, &sandbox.secrets)?;
       register_secrets(app, &merged, Some(name)).await
     }
+    SetupStep::GitOrigin => crate::sbx::set_git_origin_to_source(app, name).await.map_err(|e| e.to_string()),
   }
 }
 
@@ -1860,6 +1870,17 @@ mod setup_steps_tests {
     })
     .await;
     assert_eq!(failures, vec![SetupFailure { step: SetupStep::Secrets, error: "boom".to_string() }]);
+  }
+
+  #[test]
+  fn git_origin_only_for_clone_mode() {
+    let conn = crate::db::migrations::test_conn();
+    let first = projects::create(&conn, "P1", "/r1", None, None).unwrap();
+    let second = projects::create(&conn, "P2", "/r2", None, None).unwrap();
+    let clone = sandboxes::create(&conn, &first.id, "clone", None, None, "default", None, "claude").unwrap();
+    let mount = sandboxes::create(&conn, &second.id, "mount", Some("/r2"), None, "default", None, "claude").unwrap();
+    assert!(applicable_steps(&clone).contains(&SetupStep::GitOrigin));
+    assert!(!applicable_steps(&mount).contains(&SetupStep::GitOrigin));
   }
 
   #[tokio::test]

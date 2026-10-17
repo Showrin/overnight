@@ -778,6 +778,35 @@ pub async fn set_default_permission_mode<R: Runtime>(
   Ok(())
 }
 
+const HOST_SOURCE_PATH: &str = "/run/sandbox/source";
+
+fn set_origin_script(workspace: &str) -> String {
+  let ws = shell_quote(workspace);
+  format!(
+    "git -C {ws} remote set-url origin {HOST_SOURCE_PATH} 2>/dev/null || git -C {ws} remote add origin {HOST_SOURCE_PATH}"
+  )
+}
+
+/// Points a clone-mode workspace's `origin` at the read-only host repo mount.
+pub async fn set_git_origin_to_source<R: Runtime>(app: &AppHandle<R>, name: &str) -> Result<()> {
+  let workspace = workspace_path(app, name).await?.unwrap_or_else(|| SANDBOX_HOME.to_string());
+  run(app, "Set git origin", &["exec", "-d", name, "sh", "-c", &set_origin_script(&workspace)]).await?;
+  Ok(())
+}
+
+#[cfg(test)]
+mod set_origin_script_tests {
+  use super::set_origin_script;
+
+  #[test]
+  fn sets_or_adds_origin() {
+    assert_eq!(
+      set_origin_script("/home/agent/my repo"),
+      "git -C '/home/agent/my repo' remote set-url origin /run/sandbox/source 2>/dev/null || git -C '/home/agent/my repo' remote add origin /run/sandbox/source"
+    );
+  }
+}
+
 /// Appends the alias only when that exact line isn't there yet, so a retry doesn't duplicate it.
 fn permission_alias_script(cli_token: &str, permission_flag: &str, mode: &str) -> String {
   let line = shell_quote(&format!("alias {cli_token}='{cli_token} {permission_flag} {mode}'"));

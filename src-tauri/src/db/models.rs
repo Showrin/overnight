@@ -308,6 +308,7 @@ pub enum SetupStep {
   Ports,
   EnvVars,
   Secrets,
+  GitOrigin,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

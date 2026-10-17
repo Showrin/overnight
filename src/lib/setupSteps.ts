@@ -1,5 +1,5 @@
 // Mirrors db/models.rs::SetupStep.
-export type SetupStep = 'permission_mode' | 'ports' | 'env_vars' | 'secrets'
+export type SetupStep = 'permission_mode' | 'ports' | 'env_vars' | 'secrets' | 'git_origin'
 
 export interface SetupFailure {
   step: SetupStep
@@ -13,5 +13,6 @@ export const SETUP_STEP_LABELS: Record<string, string> = {
   ports: 'Ports',
   env_vars: 'Environment variables',
   secrets: 'Secrets',
+  git_origin: 'Git origin',
   network_rules: 'Network rules',
 }
