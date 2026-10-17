@@ -1,7 +1,7 @@
 use rusqlite::{params, Connection};
 
 use crate::db::error::{Error, Result};
-use crate::db::models::{new_id, now_millis, EnvVar, HostServer, Sandbox, Secret, WorktreeInfo};
+use crate::db::models::{new_id, now_millis, EnvVar, HostServer, PortMapping, Sandbox, Secret, WorktreeInfo};
 
 fn row_to_sandbox(row: &rusqlite::Row) -> rusqlite::Result<Sandbox> {
   let branches_raw: String = row.get("branches")?;
@@ -9,6 +9,7 @@ fn row_to_sandbox(row: &rusqlite::Row) -> rusqlite::Result<Sandbox> {
   let env_vars_raw: String = row.get("env_vars")?;
   let secrets_raw: String = row.get("secrets")?;
   let last_git_sync_result_raw: String = row.get("last_git_sync_result")?;
+  let ports_raw: String = row.get("ports")?;
   Ok(Sandbox {
     id: row.get("id")?,
     project_id: row.get("project_id")?,
@@ -43,6 +44,7 @@ fn row_to_sandbox(row: &rusqlite::Row) -> rusqlite::Result<Sandbox> {
     chrome_token: row.get("chrome_token")?,
     chrome_host_prep: row.get("chrome_host_prep")?,
     chrome_host_servers: serde_json::from_str(&row.get::<_, String>("chrome_host_commands")?).unwrap_or_default(),
+    ports: serde_json::from_str(&ports_raw).unwrap_or_default(),
   })
 }
 
@@ -345,6 +347,15 @@ pub fn record_git_sync(
     "UPDATE sandboxes SET last_git_sync_at = ?1, last_git_sync_result = ?2 WHERE id = ?3",
     params![at, json, id],
   )?;
+  if changed == 0 {
+    return Err(Error::NotFound);
+  }
+  get(conn, id)
+}
+
+pub fn set_ports(conn: &Connection, id: &str, ports: &[PortMapping]) -> Result<Sandbox> {
+  let json = serde_json::to_string(ports)?;
+  let changed = conn.execute("UPDATE sandboxes SET ports = ?1 WHERE id = ?2", params![json, id])?;
   if changed == 0 {
     return Err(Error::NotFound);
   }
@@ -670,6 +681,17 @@ mod tests {
     let other_project_id = make_project(&conn);
     let no_base_branch = create(&conn, &other_project_id, "clone", None, None, "default", None, "claude").unwrap();
     assert_eq!(no_base_branch.base_branch, None);
+  }
+
+  #[test]
+  fn set_ports_round_trips() {
+    let conn = test_conn();
+    let project_id = make_project(&conn);
+    let sandbox = create(&conn, &project_id, "clone", None, None, "default", None, "claude").unwrap();
+    assert!(sandbox.ports.is_empty());
+    let ports = vec![PortMapping { sandbox_port: 3000, host_port: 51000 }, PortMapping { sandbox_port: 8080, host_port: 51001 }];
+    set_ports(&conn, &sandbox.id, &ports).unwrap();
+    assert_eq!(get(&conn, &sandbox.id).unwrap().ports, ports);
   }
 
   #[test]

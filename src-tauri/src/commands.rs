@@ -6,7 +6,7 @@ use tauri::{AppHandle, Manager, State};
 use crate::daemon_log;
 use crate::db::error::{Error, Result};
 use crate::db::models::{
-  CommandLogEntry, ContainerMetric, EnvVar, HostMetric, JiraIssue, Kit, Project, Sandbox, SandboxBackup, Secret, SecretSource,
+  CommandLogEntry, ContainerMetric, EnvVar, HostMetric, JiraIssue, Kit, PortMapping, Project, Sandbox, SandboxBackup, Secret, SecretSource,
   SecretTarget, Session, Task,
 };
 use crate::db::{
@@ -160,6 +160,39 @@ pub fn update_project(
   validate_repo_path(&repo_path)?;
   let conn = pool.get()?;
   projects::update(&conn, &id, &name, &repo_path, plans_path.as_deref(), dev_server_port)
+}
+
+#[tauri::command]
+pub fn save_project_browser_config(
+  pool: State<DbPool>,
+  id: String,
+  ports: Vec<u16>,
+  browser_urls: Vec<String>,
+) -> std::result::Result<Project, String> {
+  if ports.contains(&0) {
+    return Err("port must be between 1 and 65535".to_string());
+  }
+  let mut ports_unique = Vec::new();
+  for port in ports {
+    if !ports_unique.contains(&port) {
+      ports_unique.push(port);
+    }
+  }
+  let urls: Vec<String> = browser_urls.into_iter().map(|u| u.trim().to_string()).filter(|u| !u.is_empty()).collect();
+  if let Some(bad) = urls.iter().find(|u| !is_http_url(u)) {
+    return Err(format!("browser url must start with http:// or https://: {bad}"));
+  }
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  projects::set_browser_config(&conn, &id, &ports_unique, &urls).map_err(|e| e.to_string())
+}
+
+/// Sandbox ports to publish: the project's list, else its dev server port, else `SANDBOX_PORT`.
+fn ports_to_publish(project: &Project) -> Vec<u16> {
+  if !project.ports.is_empty() {
+    return project.ports.clone();
+  }
+  let port = project.dev_server_port.and_then(|p| u16::try_from(p).ok()).filter(|p| *p != 0).unwrap_or(SANDBOX_PORT);
+  vec![port]
 }
 
 #[tauri::command]
@@ -1724,12 +1757,10 @@ async fn provision_sandbox(
   // Independent once the sandbox is ready: git identity, the
   // permission-mode alias, env vars, secrets, port publishing/lookup, and
   // (best-effort) syncing this agent's host auth file in. Run concurrently.
-  let (permission_result, host_port_result, env_result, secret_result, (), (), ()) = tokio::join!(
+  let sandbox_ports = ports_to_publish(project);
+  let (permission_result, ports_result, env_result, secret_result, (), (), ()) = tokio::join!(
     crate::sbx::set_default_permission_mode(app, &name, agent_kit.cli_token, agent_kit.permission_flag, &sandbox.permission_mode),
-    async {
-      crate::sbx::publish_port(app, &name, SANDBOX_PORT).await?;
-      crate::sbx::host_port(app, &name, SANDBOX_PORT).await
-    },
+    publish_ports(app, &name, &sandbox_ports),
     async {
       let merged = full_env_vars_for_sandbox(pool, &project.id, sandbox)?;
       crate::sbx::set_env_vars(app, &name, &merged).await.map_err(|e| e.to_string())
@@ -1747,13 +1778,26 @@ async fn provision_sandbox(
     sync_paste_keybinding(app, &name, agent_kit),
   );
   permission_result.map_err(|e| e.to_string())?;
-  let host_port = host_port_result.map_err(|e| e.to_string())?;
+  let ports = ports_result.map_err(|e| e.to_string())?;
   env_result?;
   secret_result?;
 
   let conn = pool.get().map_err(|e| e.to_string())?;
-  sandboxes::update_status(&conn, &sandbox.id, "running", Some(&name), host_port.map(i64::from))
-    .map_err(|e| e.to_string())
+  sandboxes::set_ports(&conn, &sandbox.id, &ports).map_err(|e| e.to_string())?;
+  let host_port = ports.first().map(|p| i64::from(p.host_port));
+  sandboxes::update_status(&conn, &sandbox.id, "running", Some(&name), host_port).map_err(|e| e.to_string())
+}
+
+/// Publishes each port, then reads back the host port sbx assigned to it.
+async fn publish_ports(app: &AppHandle, name: &str, sandbox_ports: &[u16]) -> crate::sbx::Result<Vec<PortMapping>> {
+  let mut mappings = Vec::new();
+  for &sandbox_port in sandbox_ports {
+    crate::sbx::publish_port(app, name, sandbox_port).await?;
+    if let Some(host_port) = crate::sbx::host_port(app, name, sandbox_port).await? {
+      mappings.push(PortMapping { sandbox_port, host_port });
+    }
+  }
+  Ok(mappings)
 }
 
 /// Pushes the host's global git identity into a freshly created sandbox.
@@ -3337,4 +3381,38 @@ pub fn open_testing_chrome(app: AppHandle, pool: State<'_, DbPool>, setup: bool)
 #[tauri::command]
 pub fn save_testing_chrome_path(pool: State<'_, DbPool>, path: Option<String>) -> std::result::Result<(), String> {
   crate::browser_tests::chrome::save_chrome_path_override(pool.inner(), path.as_deref())
+}
+
+#[cfg(test)]
+mod ports_to_publish_tests {
+  use super::*;
+
+  fn project(ports: Vec<u16>, dev_server_port: Option<i64>) -> Project {
+    Project {
+      id: "p".into(),
+      name: "p".into(),
+      repo_path: "/r".into(),
+      plans_path: None,
+      dev_server_port,
+      extra_clone_paths: vec![],
+      env_vars: vec![],
+      secrets: vec![],
+      kit_id: None,
+      ports,
+      browser_urls: vec![],
+      created_at: 0,
+      updated_at: 0,
+    }
+  }
+
+  #[test]
+  fn uses_project_ports_first() {
+    assert_eq!(ports_to_publish(&project(vec![3000, 5173], Some(9000))), vec![3000, 5173]);
+  }
+
+  #[test]
+  fn falls_back_to_dev_server_port_then_default() {
+    assert_eq!(ports_to_publish(&project(vec![], Some(5173))), vec![5173]);
+    assert_eq!(ports_to_publish(&project(vec![], None)), vec![SANDBOX_PORT]);
+  }
 }

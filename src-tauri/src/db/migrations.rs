@@ -436,6 +436,14 @@ pub fn migrations() -> Migrations<'static> {
     -- What a running test is doing right now (\"Starting servers\"...).
     ALTER TABLE browser_tests ADD COLUMN progress TEXT;
     ",
+  ), M::up(
+    "
+    -- Sandbox ports to publish and extra browser URLs ({port} = first host port).
+    ALTER TABLE projects ADD COLUMN ports TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE projects ADD COLUMN browser_urls TEXT NOT NULL DEFAULT '[]';
+    -- JSON array of {sandbox_port, host_port}.
+    ALTER TABLE sandboxes ADD COLUMN ports TEXT NOT NULL DEFAULT '[]';
+    ",
   )])
 }
 

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { Check, ChevronDown, Code, DatabaseBackup, ExternalLink, GitBranch, Loader2, Play, Square, TerminalSquare, Trash2 } from 'lucide-react'
+import { Check, ChevronDown, Code, DatabaseBackup, GitBranch, Loader2, Play, Square, TerminalSquare, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
@@ -11,6 +11,7 @@ import { AGENT_ICONS } from '@/components/agent-icons'
 import { TERMINAL_HOSTS, TERMINAL_HOST_LABELS, TERMINAL_HOST_OPEN_LABELS, type TerminalHost } from '@/lib/terminalHost'
 import { useAppStore } from '@/store/useAppStore'
 import type { BranchSyncOutcome, Sandbox } from './types'
+import { OpenInBrowserButton } from './OpenInBrowserButton'
 import { useOpenInVscode } from './useOpenInVscode'
 
 function backupScopesFor(agent: string): { value: 'all' | 'claude' | 'codex' | 'git'; label: string }[] {
@@ -98,12 +99,6 @@ export function SandboxActions({
       await attemptDelete(false)
     } else {
       await run(action, () => invoke('stop_sandbox', { id: sandbox.id }))
-    }
-  }
-
-  function openInBrowser() {
-    if (sandbox.host_port != null) {
-      invoke('open_url', { url: `http://localhost:${sandbox.host_port}` }).catch((e) => setError(String(e)))
     }
   }
 
@@ -259,12 +254,7 @@ export function SandboxActions({
                 Terminal
               </Button>
             )}
-            {sandbox.host_port != null && (
-              <Button size="sm" variant="outline" onClick={openInBrowser}>
-                <ExternalLink className="size-3.5" />
-                Open in browser
-              </Button>
-            )}
+            <OpenInBrowserButton sandbox={sandbox} onError={setError} />
             {sandbox.mode === "clone" && (
               <Button
                 size="sm"

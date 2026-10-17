@@ -216,6 +216,7 @@ pub struct Sandbox {
   pub backup_enabled: bool,
   /// `None` = use the global interval.
   pub backup_interval_minutes: Option<i64>,
+  pub ports: Vec<PortMapping>,
   /// Whether this sandbox may ask the host to browser-test its app through
   /// Claude in Chrome (see `crate::browser_tests`). Off by default.
   pub chrome_enabled: bool,
@@ -359,8 +360,16 @@ pub struct Project {
   pub env_vars: Vec<EnvVar>,
   pub secrets: Vec<Secret>,
   pub kit_id: Option<String>,
+  pub ports: Vec<u16>,
+  pub browser_urls: Vec<String>,
   pub created_at: i64,
   pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PortMapping {
+  pub sandbox_port: u16,
+  pub host_port: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

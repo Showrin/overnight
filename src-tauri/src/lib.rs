@@ -41,6 +41,7 @@ pub fn run() {
       commands::create_project,
       commands::update_project,
       commands::delete_project,
+      commands::save_project_browser_config,
       commands::get_settings,
       commands::save_settings,
       commands::save_skill_folders,

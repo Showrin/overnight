@@ -1,3 +1,5 @@
+import type { PortMapping } from '@/lib/browserTargets'
+
 export type SandboxMode = 'mount' | 'clone'
 export type SandboxStatus = 'starting' | 'running' | 'stopping' | 'stopped' | 'error'
 
@@ -12,6 +14,7 @@ export interface Sandbox {
   sbx_name: string | null
   folder_path: string | null
   host_port: number | null
+  ports: PortMapping[]
   created_at: number
   stopped_at: number | null
   // "open" | "locked-down" | null (null = inherit the global default)

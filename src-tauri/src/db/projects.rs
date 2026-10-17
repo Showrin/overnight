@@ -7,6 +7,8 @@ fn row_to_project(row: &rusqlite::Row) -> rusqlite::Result<Project> {
   let extra_clone_paths_raw: String = row.get("extra_clone_paths")?;
   let env_vars_raw: String = row.get("env_vars")?;
   let secrets_raw: String = row.get("secrets")?;
+  let ports_raw: String = row.get("ports")?;
+  let browser_urls_raw: String = row.get("browser_urls")?;
   Ok(Project {
     id: row.get("id")?,
     name: row.get("name")?,
@@ -17,6 +19,8 @@ fn row_to_project(row: &rusqlite::Row) -> rusqlite::Result<Project> {
     env_vars: serde_json::from_str(&env_vars_raw).unwrap_or_default(),
     secrets: serde_json::from_str(&secrets_raw).unwrap_or_default(),
     kit_id: row.get("kit_id")?,
+    ports: serde_json::from_str(&ports_raw).unwrap_or_default(),
+    browser_urls: serde_json::from_str(&browser_urls_raw).unwrap_or_default(),
     created_at: row.get("created_at")?,
     updated_at: row.get("updated_at")?,
   })
@@ -96,6 +100,19 @@ pub fn set_secrets(conn: &Connection, id: &str, secrets: &[Secret]) -> Result<Pr
   get(conn, id)
 }
 
+pub fn set_browser_config(conn: &Connection, id: &str, ports: &[u16], browser_urls: &[String]) -> Result<Project> {
+  let ports_json = serde_json::to_string(ports)?;
+  let urls_json = serde_json::to_string(browser_urls)?;
+  let changed = conn.execute(
+    "UPDATE projects SET ports = ?1, browser_urls = ?2, updated_at = ?3 WHERE id = ?4",
+    params![ports_json, urls_json, now_millis(), id],
+  )?;
+  if changed == 0 {
+    return Err(Error::NotFound);
+  }
+  get(conn, id)
+}
+
 pub fn delete(conn: &Connection, id: &str) -> Result<()> {
   let changed = conn.execute("DELETE FROM projects WHERE id = ?1", params![id])?;
   if changed == 0 {
@@ -141,6 +158,17 @@ mod tests {
   use super::*;
   use crate::db::migrations::test_conn;
   use crate::db::models::{SecretSource, SecretTarget};
+
+  #[test]
+  fn set_browser_config_round_trips() {
+    let conn = test_conn();
+    let project = create(&conn, "P", "/repo/p", None, None).unwrap();
+    assert!(project.ports.is_empty());
+    let urls = vec!["http://app.localhost:{port}/admin".to_string()];
+    let updated = set_browser_config(&conn, &project.id, &[3000, 8080], &urls).unwrap();
+    assert_eq!(updated.ports, vec![3000, 8080]);
+    assert_eq!(get(&conn, &project.id).unwrap().browser_urls, urls);
+  }
 
   #[test]
   fn create_get_list_update_delete() {
