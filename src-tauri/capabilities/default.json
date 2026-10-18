@@ -9,6 +9,8 @@
     "core:default",
     "notification:default",
     "dialog:allow-open",
+    "updater:default",
+    "process:allow-restart",
     "core:window:allow-close",
     "core:window:allow-minimize",
     "core:window:allow-maximize",

@@ -9,11 +9,14 @@ import { ProjectsScreen } from '@/components/projects/ProjectsScreen'
 import { HostStatsBar } from '@/components/sandboxes/HostStatsBar'
 import { CreateProgressPopout } from '@/components/sandboxes/CreateProgressPopout'
 import { GitSyncToast } from '@/components/sandboxes/GitSyncToast'
+import { UpdateDialog } from '@/components/updates/UpdateDialog'
+import { UpdateToast } from '@/components/updates/UpdateToast'
 import { SandboxesScreen } from '@/components/sandboxes/SandboxesScreen'
 import { SettingsDialog } from '@/components/settings/SettingsDialog'
 import { parseRoute, pushRoute, type Route } from '@/lib/router'
 import { initAppStore, useAppStore } from '@/store/useAppStore'
 import { initCreateJobs } from '@/store/useCreateJobs'
+import { initUpdater } from '@/store/useUpdater'
 import { cn } from '@/lib/utils'
 import type { BranchSyncOutcome } from '@/components/sandboxes/types'
 
@@ -31,6 +34,7 @@ function App() {
   useEffect(() => {
     initAppStore()
     initCreateJobs()
+    initUpdater()
 
     const splash = document.getElementById('splash')
     if (splash) {
@@ -140,8 +144,10 @@ function App() {
         <CreateProgressPopout />
         <OperationsIndicator navigate={navigate} />
         <GitSyncToast />
+        <UpdateToast />
       </div>
       <SettingsDialog />
+      <UpdateDialog />
     </div>
   )
 }

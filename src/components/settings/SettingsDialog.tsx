@@ -1,6 +1,7 @@
 import { CommandLogTab } from '@/components/developer/CommandLogTab'
 import { TelemetryTab } from '@/components/developer/TelemetryTab'
 import { PerformanceMonitorTab } from '@/components/sandboxes/PerformanceMonitorTab'
+import { UpdatesTab } from '@/components/updates/UpdatesTab'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { useAppStore } from '@/store/useAppStore'
 import { cn } from '@/lib/utils'
@@ -68,6 +69,11 @@ export function SettingsDialog() {
                 </div>
               )}
               {section === 'agent-config' && <AgentConfigTab />}
+              {section === 'updates' && (
+                <div className="min-h-0 flex-1 overflow-auto px-6 pt-1 pb-6">
+                  <UpdatesTab />
+                </div>
+              )}
               {section === 'daemon-logs' && (
                 <div className="flex min-h-0 flex-1 flex-col px-6 pt-4 pb-6">
                   <TelemetryTab />

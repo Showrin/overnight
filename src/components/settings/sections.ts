@@ -3,6 +3,7 @@ import {
   Archive,
   Boxes,
   Container,
+  Download,
   Globe,
   KeyRound,
   Network,
@@ -18,7 +19,7 @@ export const SHOW_JIRA_SETTINGS = false
 export const SHOW_PERFORMANCE_MONITOR = false
 
 export type SettingsTab = 'general' | 'backups' | 'network' | 'credentials' | 'kits' | 'compose' | 'browser' | 'integrations'
-export type SettingsSection = SettingsTab | 'agent-config' | 'performance-monitor' | 'daemon-logs' | 'command-logs'
+export type SettingsSection = SettingsTab | 'agent-config' | 'performance-monitor' | 'daemon-logs' | 'command-logs' | 'updates'
 
 export interface SectionItem {
   id: SettingsSection
@@ -40,6 +41,7 @@ export const SECTION_GROUPS: { label: string; items: SectionItem[] }[] = [
       { id: 'browser', label: 'Browser Testing', icon: Globe, experimental: true },
       { id: 'agent-config', label: 'Hooks & Styles', icon: Webhook, experimental: true },
       ...(SHOW_JIRA_SETTINGS ? [{ id: 'integrations' as const, label: 'Integrations', icon: Plug }] : []),
+      { id: 'updates', label: 'Updates', icon: Download },
     ],
   },
   {
