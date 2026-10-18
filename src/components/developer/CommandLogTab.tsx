@@ -219,11 +219,11 @@ export function CommandLogTab() {
             Refresh
           </Button>
           <Button variant="ghost" size="lg" onClick={handleResetFilters} disabled={!filtersActive}>
-            Reset all filters
+            Reset
           </Button>
           <Button variant="destructive" size="lg" className="ml-auto" onClick={() => setPurgeOpen(true)}>
             <Trash2 />
-            Purge logs
+            Purge
           </Button>
         </div>
       </div>
