@@ -3,6 +3,7 @@ import { Archive, Box, FolderGit2, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { SidebarSandboxList } from '@/components/sandboxes/SidebarSandboxList'
 import { useAppStore } from '@/store/useAppStore'
+import { useUpdater } from '@/store/useUpdater'
 import type { Route, Screen } from '@/lib/router'
 
 const MIN_WIDTH = 208
@@ -34,6 +35,7 @@ export function Sidebar({
   const setSidebarWidth = useAppStore((s) => s.setSidebarWidth)
   const saveSidebarWidth = useAppStore((s) => s.saveSidebarWidth)
   const openSettings = useAppStore((s) => s.openSettings)
+  const currentVersion = useUpdater((s) => s.currentVersion)
   const resizing = useRef(false)
 
   const handleMouseDown = useCallback(
@@ -98,7 +100,7 @@ export function Sidebar({
       </div>
       <SidebarSandboxList onNavigate={onNavigate} />
       <div className="flex items-center justify-between border-t border-sidebar-border py-1.5 pr-1.5 pl-3 text-xs text-muted-foreground">
-        <span>Overnight v0.0.0</span>
+        <span>Overnight{currentVersion && ` v${currentVersion}`}</span>
         <Button variant="ghost" size="icon-sm" aria-label="Settings" onClick={() => openSettings()}>
           <Settings className="size-4" strokeWidth={1.5} />
         </Button>
