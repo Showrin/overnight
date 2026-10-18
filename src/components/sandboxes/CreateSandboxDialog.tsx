@@ -12,6 +12,7 @@ import { SANDBOX_NETWORK_PRESET_OVERRIDE_LABELS, SANDBOX_NETWORK_PRESET_OVERRIDE
 import { fullPermissionMode, PERMISSION_MODES } from '@/lib/permissionModes'
 import { useAppStore } from '@/store/useAppStore'
 import { useCreateJobs } from '@/store/useCreateJobs'
+import { ExperimentalBadge } from '@/components/settings/ExperimentalBadge'
 import type { SandboxMode } from './types'
 
 const DEFAULT_PERMISSION_MODE = '__settings_default__'
@@ -222,6 +223,8 @@ export function CreateSandboxDialog({
               onClick={() => setMode('mount')}
             >
               Mount existing folder
+              {/* Info blue is unreadable on the selected (primary) button, so it inherits the label color there. */}
+              <ExperimentalBadge compact className={mode === 'mount' ? 'text-current' : undefined} />
             </Button>
             <Button
               type="button"
