@@ -131,9 +131,12 @@ function App() {
         {showStatsBar && <HostStatsBar />}
         </div>
       </div>
-      <OperationsIndicator navigate={navigate} />
-      <CreateProgressPopout />
-      <GitSyncToast />
+      {/* Bottom-right popouts share one stack so they never overlap. */}
+      <div className="pointer-events-none fixed right-4 bottom-4 z-50 flex flex-col items-end gap-2 *:pointer-events-auto">
+        <CreateProgressPopout />
+        <OperationsIndicator navigate={navigate} />
+        <GitSyncToast />
+      </div>
       <SettingsDialog />
     </div>
   )

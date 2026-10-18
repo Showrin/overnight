@@ -138,12 +138,11 @@ function JobCard({ job }: { job: CreateJob }) {
   )
 }
 
-// Bottom-left; OperationsIndicator owns bottom-right.
 export function CreateProgressPopout() {
   const jobs = useCreateJobs((s) => s.jobs)
   if (jobs.length === 0) return null
   return (
-    <div className="fixed bottom-4 left-4 z-40 flex flex-col gap-2">
+    <div className="flex flex-col gap-2">
       {jobs.map((job) => (
         <JobCard key={job.id} job={job} />
       ))}

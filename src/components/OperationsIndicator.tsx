@@ -21,7 +21,7 @@ export function OperationsIndicator({ navigate }: { navigate: (route: Route) => 
   }
 
   return (
-    <div className="fixed right-4 bottom-4 z-40 flex flex-col gap-2">
+    <div className="flex flex-col gap-2">
       {operations.map((op, index) => (
         <div
           key={`${op.kind}-${op.sandbox_id}-${op.started_at}-${index}`}

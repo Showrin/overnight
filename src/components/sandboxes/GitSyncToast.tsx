@@ -22,7 +22,7 @@ export function GitSyncToast() {
   if (!toast) return null
 
   return (
-    <div className="fixed right-4 bottom-4 z-50 flex w-72 flex-col gap-2 rounded-lg border border-border bg-card p-3 shadow-md">
+    <div className="flex w-72 flex-col gap-2 rounded-lg border border-border bg-card p-3 shadow-md">
       <div className="flex items-center justify-between gap-2">
         <span className="text-sm font-medium text-foreground">{toast.label}</span>
         <button
