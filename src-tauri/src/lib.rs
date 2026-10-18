@@ -141,6 +141,7 @@ pub fn run() {
       commands::get_sandbox_resource_history,
       commands::list_command_log,
       commands::count_command_log,
+      commands::purge_command_log_before,
       commands::list_command_log_operations,
       commands::get_daemon_log_path,
       commands::save_daemon_log_path,

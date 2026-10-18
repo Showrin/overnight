@@ -3615,6 +3615,15 @@ pub fn count_command_log(
 }
 
 #[tauri::command]
+pub fn purge_command_log_before(pool: State<DbPool>, before_ms: i64) -> std::result::Result<usize, String> {
+  if before_ms > crate::db::models::now_millis() {
+    return Err("purge date can't be in the future".to_string());
+  }
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  command_log::prune_older_than(&conn, before_ms).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn list_command_log_operations(pool: State<DbPool>) -> std::result::Result<Vec<String>, String> {
   let conn = pool.get().map_err(|e| e.to_string())?;
   command_log::list_operations(&conn).map_err(|e| e.to_string())

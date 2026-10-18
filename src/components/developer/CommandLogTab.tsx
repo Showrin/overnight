@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { Check, Copy } from 'lucide-react'
+import { Check, Copy, Trash2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useAppStore } from '@/store/useAppStore'
 import { DateTimeRangeFilter } from './DateTimeRangeFilter'
+import { PurgeCommandLogDialog } from './PurgeCommandLogDialog'
 import type { CommandLogEntry } from './types'
 
 function CommandBlock({ command }: { command: string }) {
@@ -96,6 +97,8 @@ export function CommandLogTab() {
   const [totalCount, setTotalCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [purgeOpen, setPurgeOpen] = useState(false)
+  const [purgeNotice, setPurgeNotice] = useState<string | null>(null)
 
   async function load() {
     setLoading(true)
@@ -218,10 +221,25 @@ export function CommandLogTab() {
           <Button variant="ghost" size="lg" onClick={handleResetFilters} disabled={!filtersActive}>
             Reset all filters
           </Button>
+          <Button variant="destructive" size="lg" className="ml-auto" onClick={() => setPurgeOpen(true)}>
+            <Trash2 />
+            Purge logs
+          </Button>
         </div>
       </div>
 
       {error && <p className="text-sm text-destructive">{error}</p>}
+      {purgeNotice && <p className="text-sm text-muted-foreground">{purgeNotice}</p>}
+
+      <PurgeCommandLogDialog
+        open={purgeOpen}
+        onOpenChange={setPurgeOpen}
+        onPurged={(removed, date) => {
+          setPurgeNotice(`Purged ${removed} ${removed === 1 ? 'entry' : 'entries'} before ${date}.`)
+          setPage(1)
+          load()
+        }}
+      />
 
       <div className="min-h-0 flex-1 overflow-auto">
         {entries.length === 0 && !loading ? (
