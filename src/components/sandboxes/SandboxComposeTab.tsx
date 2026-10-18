@@ -41,7 +41,7 @@ export function SandboxComposeTab({ sandbox }: { sandbox: Sandbox }) {
   }
 
   return (
-    <SettingsSection title="Docker Compose Override">
+    <SettingsSection title="Docker Compose Override" experimental>
       <div className="flex flex-col gap-3 py-4">
         <p className="text-xs text-muted-foreground">
           Written next to the workspace compose file as docker-compose.override.yml (or compose.override.yaml) and

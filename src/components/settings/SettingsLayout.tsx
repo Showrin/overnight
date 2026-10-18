@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { TriangleAlert, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { ExperimentalBadge } from './ExperimentalBadge'
 import { useAppStore } from '@/store/useAppStore'
 
 /**
@@ -43,10 +44,23 @@ export function SettingsRow({
  * `divider` on every section but the last one, so sections are separated
  * from each other but nothing trails after the final section.
  */
-export function SettingsSection({ title, divider = false, children }: { title: string; divider?: boolean; children: ReactNode }) {
+export function SettingsSection({
+  title,
+  experimental = false,
+  divider = false,
+  children,
+}: {
+  title: string
+  experimental?: boolean
+  divider?: boolean
+  children: ReactNode
+}) {
   return (
     <div className="flex flex-col gap-1 pt-6 first:pt-0">
-      <h2 className="text-base font-semibold text-foreground">{title}</h2>
+      <div className="flex items-center gap-2">
+        <h2 className="text-base font-semibold text-foreground">{title}</h2>
+        {experimental && <ExperimentalBadge />}
+      </div>
       <div className="flex flex-col">{children}</div>
       {divider && <div className="mt-6 border-t border-border" />}
     </div>
@@ -89,11 +103,22 @@ export function UnsavedChangesNotice({ className }: { className?: string }) {
   )
 }
 
-export function SettingsDialogHeader({ title, dirty = false }: { title: string; dirty?: boolean }) {
+export function SettingsDialogHeader({
+  title,
+  experimental = false,
+  dirty = false,
+}: {
+  title: string
+  experimental?: boolean
+  dirty?: boolean
+}) {
   const closeSettings = useAppStore((s) => s.closeSettings)
   return (
     <div className="flex h-14 shrink-0 items-center gap-4 border-b border-border pr-3 pl-6">
-      <h1 className="text-lg font-medium">{title}</h1>
+      <div className="flex items-center gap-2">
+        <h1 className="text-lg font-medium">{title}</h1>
+        {experimental && <ExperimentalBadge />}
+      </div>
       {dirty && <UnsavedChangesNotice className="py-1.5" />}
       <Button variant="ghost" size="icon-sm" aria-label="Close settings" className="ml-auto" onClick={closeSettings}>
         <X className="size-4" strokeWidth={1.5} />

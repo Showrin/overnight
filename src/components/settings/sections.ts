@@ -24,6 +24,7 @@ export interface SectionItem {
   id: SettingsSection
   label: string
   icon: LucideIcon
+  experimental?: boolean
 }
 
 export const SECTION_GROUPS: { label: string; items: SectionItem[] }[] = [
@@ -34,10 +35,10 @@ export const SECTION_GROUPS: { label: string; items: SectionItem[] }[] = [
       { id: 'backups', label: 'Backups', icon: Archive },
       { id: 'network', label: 'Network', icon: Network },
       { id: 'credentials', label: 'Credentials', icon: KeyRound },
-      { id: 'kits', label: 'Kits', icon: Boxes },
-      { id: 'compose', label: 'Compose Overrides', icon: Container },
-      { id: 'browser', label: 'Browser Testing', icon: Globe },
-      { id: 'agent-config', label: 'Hooks & Styles', icon: Webhook },
+      { id: 'kits', label: 'Kits', icon: Boxes, experimental: true },
+      { id: 'compose', label: 'Compose Overrides', icon: Container, experimental: true },
+      { id: 'browser', label: 'Browser Testing', icon: Globe, experimental: true },
+      { id: 'agent-config', label: 'Hooks & Styles', icon: Webhook, experimental: true },
       ...(SHOW_JIRA_SETTINGS ? [{ id: 'integrations' as const, label: 'Integrations', icon: Plug }] : []),
     ],
   },
@@ -61,4 +62,8 @@ export function isSettingsTab(section: SettingsSection): section is SettingsTab 
 
 export function sectionLabel(section: SettingsSection): string {
   return SECTION_GROUPS.flatMap((g) => g.items).find((i) => i.id === section)?.label ?? 'Settings'
+}
+
+export function isExperimental(section: SettingsSection): boolean {
+  return SECTION_GROUPS.flatMap((g) => g.items).find((i) => i.id === section)?.experimental ?? false
 }

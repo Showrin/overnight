@@ -49,7 +49,7 @@ export function SandboxKitsTab({ sandbox }: { sandbox: Sandbox }) {
   }
 
   return (
-    <SettingsSection title="Kits">
+    <SettingsSection title="Kits" experimental>
       <div className="flex flex-col gap-4 py-4">
         <p className="text-xs text-muted-foreground">
           Applying a kit restarts the sandbox. Installed packages and agent history are kept. Only env vars, install

@@ -8,7 +8,7 @@ import { useAppStore } from '@/store/useAppStore'
 import type { JiraConfig } from './JiraConfigForm'
 import { EnvVarsSavedDialog } from './EnvVarsSavedDialog'
 import { SettingsActions, SettingsDialogHeader, type TabActions } from './SettingsLayout'
-import { SHOW_JIRA_SETTINGS, type SettingsTab, sectionLabel } from './sections'
+import { SHOW_JIRA_SETTINGS, type SettingsTab, isExperimental, sectionLabel } from './sections'
 import { BackupsTab } from './tabs/BackupsTab'
 import { CredentialsTab } from './tabs/CredentialsTab'
 import { GeneralTab } from './tabs/GeneralTab'
@@ -478,7 +478,7 @@ export function SettingsScreen({ section }: { section: SettingsTab }) {
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col">
-      <SettingsDialogHeader title={sectionLabel(section)} dirty={activeActions.dirty} />
+      <SettingsDialogHeader title={sectionLabel(section)} experimental={isExperimental(section)} dirty={activeActions.dirty} />
       {activeActions.error && <p className="shrink-0 px-6 pt-4 text-sm text-destructive">{activeActions.error}</p>}
 
       <div className="min-h-0 flex-1 overflow-auto px-6 pb-6">

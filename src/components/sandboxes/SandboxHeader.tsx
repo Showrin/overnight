@@ -1,6 +1,7 @@
 import { DatabaseBackup, GitBranch } from 'lucide-react'
 import type { Project } from '@/components/projects/types'
 import type { DetailTab, Route } from '@/lib/router'
+import { ExperimentalBadge } from '@/components/settings/ExperimentalBadge'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
 import { SandboxActions } from './SandboxActions'
@@ -92,6 +93,7 @@ export function SandboxHeader({
         </button>
         <button type="button" onClick={() => selectTab('browser')} className={cn(TAB_LINK_CLASS, activeTab === 'browser' && TAB_LINK_ACTIVE_CLASS)}>
           Browser
+          <ExperimentalBadge compact />
         </button>
         <button type="button" onClick={() => selectTab('backups')} className={cn(TAB_LINK_CLASS, activeTab === 'backups' && TAB_LINK_ACTIVE_CLASS)}>
           Backups
@@ -101,9 +103,11 @@ export function SandboxHeader({
         </button>
         <button type="button" onClick={() => selectTab('compose')} className={cn(TAB_LINK_CLASS, activeTab === 'compose' && TAB_LINK_ACTIVE_CLASS)}>
           Compose
+          <ExperimentalBadge compact />
         </button>
         <button type="button" onClick={() => selectTab('kits')} className={cn(TAB_LINK_CLASS, activeTab === 'kits' && TAB_LINK_ACTIVE_CLASS)}>
           Kits
+          <ExperimentalBadge compact />
         </button>
       </div>
     </div>

@@ -4,7 +4,8 @@ import { PerformanceMonitorTab } from '@/components/sandboxes/PerformanceMonitor
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { useAppStore } from '@/store/useAppStore'
 import { cn } from '@/lib/utils'
-import { SECTION_GROUPS, SHOW_PERFORMANCE_MONITOR, isSettingsTab, sectionLabel, type SettingsSection } from './sections'
+import { ExperimentalBadge } from './ExperimentalBadge'
+import { SECTION_GROUPS, SHOW_PERFORMANCE_MONITOR, isExperimental, isSettingsTab, sectionLabel, type SettingsSection } from './sections'
 import { SettingsDialogHeader } from './SettingsLayout'
 import { SettingsScreen } from './SettingsScreen'
 import { AgentConfigTab } from './tabs/AgentConfigTab'
@@ -15,7 +16,7 @@ function SettingsNav({ current, onSelect }: { current: SettingsSection; onSelect
       {SECTION_GROUPS.map((group) => (
         <div key={group.label} className="flex flex-col gap-1">
           <span className="px-2.5 text-xs text-muted-foreground">{group.label}</span>
-          {group.items.map(({ id, label, icon: Icon }) => {
+          {group.items.map(({ id, label, icon: Icon, experimental }) => {
             const isActive = current === id
             return (
               <button
@@ -32,6 +33,7 @@ function SettingsNav({ current, onSelect }: { current: SettingsSection; onSelect
                 {isActive && <span className="absolute top-1 bottom-1 left-0 w-0.5 rounded-full bg-primary" />}
                 <Icon className="size-4 shrink-0" strokeWidth={1.5} />
                 {label}
+                {experimental && <ExperimentalBadge compact className="ml-auto" />}
               </button>
             )
           })}
@@ -56,7 +58,7 @@ export function SettingsDialog() {
           <>
             <SettingsNav current={section} onSelect={openSettings} />
             <div className="@container flex min-w-0 flex-1 flex-col overflow-hidden">
-              {!isSettingsTab(section) && <SettingsDialogHeader title={sectionLabel(section)} />}
+              {!isSettingsTab(section) && <SettingsDialogHeader title={sectionLabel(section)} experimental={isExperimental(section)} />}
               <div className={cn('flex min-h-0 flex-1 flex-col', !isSettingsTab(section) && 'hidden')}>
                 <SettingsScreen section={isSettingsTab(section) ? section : 'general'} />
               </div>
