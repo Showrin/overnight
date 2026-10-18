@@ -2,17 +2,19 @@ import { FlaskConical } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 
-/** `compact` shows the icon only (nav items); otherwise icon + label (titles). */
+/** `compact` shows a bare icon (nav items, tabs); otherwise an icon + label badge (titles). */
 export function ExperimentalBadge({ compact = false, className }: { compact?: boolean; className?: string }) {
+  if (compact) {
+    return (
+      <span title="Experimental" aria-label="Experimental" className={cn('inline-flex shrink-0 text-info', className)}>
+        <FlaskConical className="size-3.5" />
+      </span>
+    )
+  }
   return (
-    <Badge
-      variant="outline-warning"
-      title="Experimental"
-      aria-label={compact ? 'Experimental' : undefined}
-      className={cn(compact && 'px-1', className)}
-    >
+    <Badge variant="outline-info" title="Experimental" className={className}>
       <FlaskConical />
-      {!compact && 'Experimental'}
+      Experimental
     </Badge>
   )
 }
