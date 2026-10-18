@@ -12,7 +12,7 @@ import { AgentConfigTab } from './tabs/AgentConfigTab'
 
 function SettingsNav({ current, onSelect }: { current: SettingsSection; onSelect: (section: SettingsSection) => void }) {
   return (
-    <nav className="flex w-52 shrink-0 flex-col gap-6 overflow-auto border-r border-sidebar-border bg-sidebar p-2 pt-5">
+    <nav className="flex w-60 shrink-0 flex-col gap-6 overflow-auto border-r border-sidebar-border bg-sidebar p-2 pt-5">
       {SECTION_GROUPS.map((group) => (
         <div key={group.label} className="flex flex-col gap-1">
           <span className="px-2.5 text-xs text-muted-foreground">{group.label}</span>
@@ -52,7 +52,7 @@ export function SettingsDialog() {
     <Dialog open={section !== null} onOpenChange={(open) => !open && closeSettings()}>
       <DialogContent
         title="Settings"
-        className="flex h-[85vh] w-[calc(100vw-4rem)] max-w-6xl overflow-hidden rounded-xl border border-border bg-background p-0"
+        className="flex h-[85vh] w-[calc(100vw-4rem)] max-w-[76rem] overflow-hidden rounded-xl border border-border bg-background p-0"
       >
         {section && (
           <>
