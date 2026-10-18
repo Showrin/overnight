@@ -50,6 +50,17 @@ export function branchSyncStatusLabel(status: BranchSyncStatus): string {
   }
 }
 
+export function branchSyncShortLabel(status: BranchSyncStatus): string {
+  switch (status) {
+    case 'fast_forwarded':
+      return 'fast-forward'
+    case 'needs_manual_merge':
+      return 'diverged'
+    case 'new_branch':
+      return 'new'
+  }
+}
+
 export function branchSyncBadgeVariant(status: BranchSyncStatus): BadgeVariant {
   switch (status) {
     case 'fast_forwarded':

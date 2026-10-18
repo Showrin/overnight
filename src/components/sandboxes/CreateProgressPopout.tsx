@@ -23,6 +23,7 @@ function JobCard({ job }: { job: CreateJob }) {
   const loadNetworkPolicyPreset = useAppStore((s) => s.loadNetworkPolicyPreset)
   const loadSandboxes = useAppStore((s) => s.loadSandboxes)
   const sandbox = useAppStore((s) => s.sandboxes.find((sb) => sb.id === job.sandboxId))
+  const projectName = useAppStore((s) => s.projects.find((p) => p.id === job.params.projectId)?.name)
   const [retrying, setRetrying] = useState(false)
   const [retryError, setRetryError] = useState<string | null>(null)
 
@@ -64,7 +65,7 @@ function JobCard({ job }: { job: CreateJob }) {
   }
 
   return (
-    <div className="flex w-80 flex-col gap-2 rounded-lg border border-border bg-card p-3 text-sm shadow-md">
+    <div className="flex w-80 flex-col gap-2 rounded-lg border border-border bg-card p-3 text-sm shadow-md shadow-primary/30 ring-2 ring-primary/50">
       <div className="flex items-center gap-2">
         {job.status === 'running' ? (
           <Loader2 className="size-3.5 shrink-0 animate-spin text-primary" />
@@ -73,9 +74,15 @@ function JobCard({ job }: { job: CreateJob }) {
         ) : (
           <XCircle className="size-3.5 shrink-0 text-destructive" />
         )}
-        <span className="truncate font-medium">
-          {job.status === 'running' ? 'Creating' : job.status === 'done' ? 'Created' : 'Problem creating'} {job.label}
-        </span>
+        <div className="flex min-w-0 flex-col">
+          <span className="truncate font-medium" title={sandbox?.name ?? sandbox?.sbx_name ?? job.label}>
+            {sandbox?.name ?? sandbox?.sbx_name ?? job.label}
+          </span>
+          <span className="truncate text-xs text-muted-foreground">
+            {job.status === 'running' ? 'Creating sandbox' : job.status === 'done' ? 'Sandbox created' : 'Problem creating sandbox'}
+            {projectName && ` · ${projectName}`}
+          </span>
+        </div>
         {job.status !== 'running' && (
           <Button size="icon-sm" variant="ghost" className="ml-auto" title="Dismiss" onClick={() => dismiss(job.id)}>
             <X className="size-3.5" />

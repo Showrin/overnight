@@ -128,7 +128,7 @@ export function SandboxActions({
         ? `${fastForwarded} of ${outcomes.length} branch(es) fast-forwarded — ${needsManualMerge} need${needsManualMerge === 1 ? '' : 's'} manual merge.`
         : `${fastForwarded} of ${outcomes.length} branch(es) fast-forwarded.`
       notify('Git Sync complete', summary, sandbox.id, true)
-      showGitSyncToast({ sandboxId: sandbox.id, label: `Git Sync — ${sandbox.name ?? projectName}`, outcomes })
+      showGitSyncToast({ sandboxId: sandbox.id, label: 'Git Sync', outcomes })
       onChanged()
     } catch (e) {
       setError(String(e))

@@ -58,10 +58,9 @@ function App() {
       const { sandbox_id, outcomes } = event.payload
       useAppStore.getState().loadSandboxes()
       if (!outcomes.some((o) => o.status === 'needs_manual_merge')) return
-      const sandbox = useAppStore.getState().sandboxes.find((s) => s.id === sandbox_id)
       useAppStore.getState().showGitSyncToast({
         sandboxId: sandbox_id,
-        label: `Auto Git Sync — ${sandbox?.name ?? sandbox?.sbx_name ?? 'sandbox'}`,
+        label: 'Auto Git Sync',
         outcomes,
       })
     })
