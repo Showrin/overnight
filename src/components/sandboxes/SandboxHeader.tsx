@@ -101,6 +101,9 @@ export function SandboxHeader({
         <button type="button" onClick={() => selectTab('credentials')} className={cn(TAB_LINK_CLASS, activeTab === 'credentials' && TAB_LINK_ACTIVE_CLASS)}>
           Credentials
         </button>
+        <button type="button" onClick={() => selectTab('network')} className={cn(TAB_LINK_CLASS, activeTab === 'network' && TAB_LINK_ACTIVE_CLASS)}>
+          Network
+        </button>
         <button type="button" onClick={() => selectTab('compose')} className={cn(TAB_LINK_CLASS, activeTab === 'compose' && TAB_LINK_ACTIVE_CLASS)}>
           Compose
           <ExperimentalBadge compact />

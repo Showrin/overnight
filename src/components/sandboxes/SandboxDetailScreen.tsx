@@ -13,6 +13,7 @@ import { SandboxCredentialsTab } from './SandboxCredentialsTab'
 import { SandboxKitsTab } from './SandboxKitsTab'
 import { SandboxHeader } from './SandboxHeader'
 import { SandboxMetricsTab } from './SandboxMetricsTab'
+import { SandboxNetworkTab } from './SandboxNetworkTab'
 import { SandboxPlansTab } from './SandboxPlansTab'
 
 export function SandboxDetailScreen({
@@ -112,6 +113,12 @@ export function SandboxDetailScreen({
       {tab === 'credentials' && (
         <div className="min-h-0 flex-1 overflow-auto">
           <SandboxCredentialsTab sandbox={sandbox} />
+        </div>
+      )}
+
+      {tab === 'network' && (
+        <div className="min-h-0 flex-1 overflow-auto">
+          <SandboxNetworkTab sandbox={sandbox} />
         </div>
       )}
 
