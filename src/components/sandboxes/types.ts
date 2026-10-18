@@ -129,7 +129,10 @@ export interface BranchDiff {
 // list view which only ever renders `stat`.
 export interface BranchStat {
   branch: string
+  // Host ref this branch was compared against; null when there was none.
+  base: string | null
   stat: string
+  error: string | null
 }
 
 export interface SandboxDiffStats {

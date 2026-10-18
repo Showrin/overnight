@@ -5,30 +5,56 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { branchSyncBadgeVariant, branchSyncStatusLabel, formatRelativeTime, parseDiffStat } from '@/lib/sandboxDisplay'
 import type { Route } from '@/lib/router'
+import { dropStaleCompareBases, setCompareBase, useCompareBases } from '@/lib/compareBase'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
 import { AutoGitSyncSelect } from './AutoGitSyncSelect'
+import { BaseBranchPicker } from './BaseBranchPicker'
+import { useHostBranches, type HostBranches } from './useHostBranches'
 import { SandboxHeader } from './SandboxHeader'
 import type { BranchStat, SandboxDiffStats } from './types'
 
-const BASE_BRANCH_UNKNOWN_COPY = 'Base branch unknown — this sandbox predates branch tracking.'
-
-function BranchCard({ diff, onShowDiffs }: { diff: BranchStat; onShowDiffs: () => void }) {
+function BranchCard({
+  diff,
+  hostBranches,
+  defaultBase,
+  override,
+  onChangeBase,
+  onShowDiffs,
+}: {
+  diff: BranchStat
+  hostBranches: HostBranches
+  defaultBase: string | null
+  override: string | null
+  onChangeBase: (base: string | null) => void
+  onShowDiffs: () => void
+}) {
   const stats = parseDiffStat(diff.stat)
 
   return (
     <div className="flex items-center justify-between gap-4 rounded-lg border border-border p-3">
       <div className="flex min-w-0 flex-col gap-1">
         <span className="truncate font-mono text-sm text-foreground">{diff.branch}</span>
-        <span className="text-xs text-muted-foreground">
-          {stats.filesChanged} file{stats.filesChanged === 1 ? '' : 's'} changed
-          {stats.insertions > 0 && <span className="text-success"> +{stats.insertions}</span>}
-          {stats.deletions > 0 && <span className="text-destructive"> -{stats.deletions}</span>}
-        </span>
+        {diff.error ? (
+          <span className="truncate text-xs text-destructive" title={diff.error}>
+            {diff.error}
+          </span>
+        ) : diff.base === null ? (
+          <span className="text-xs text-muted-foreground">No base branch — pick one to compare against.</span>
+        ) : (
+          <span className="text-xs text-muted-foreground">
+            {stats.filesChanged} file{stats.filesChanged === 1 ? '' : 's'} changed
+            {stats.insertions > 0 && <span className="text-success"> +{stats.insertions}</span>}
+            {stats.deletions > 0 && <span className="text-destructive"> -{stats.deletions}</span>}
+          </span>
+        )}
       </div>
-      <Button size="sm" variant="outline" onClick={onShowDiffs}>
-        Show Diffs
-      </Button>
+      <div className="flex shrink-0 items-center gap-2">
+        <BaseBranchPicker hostBranches={hostBranches} defaultBase={defaultBase} value={override} onChange={onChangeBase} />
+        <Button size="sm" variant="outline" disabled={diff.base === null} onClick={onShowDiffs}>
+          Show Diffs
+        </Button>
+      </div>
     </div>
   )
 }
@@ -36,6 +62,8 @@ function BranchCard({ diff, onShowDiffs }: { diff: BranchStat; onShowDiffs: () =
 export function BranchesPage({ sandboxId, navigate }: { sandboxId: string; navigate: (route: Route) => void }) {
   const sandbox = useAppStore((s) => s.sandboxes.find((sb) => sb.id === sandboxId))
   const project = useAppStore((s) => s.projects.find((p) => p.id === sandbox?.project_id))
+  const bases = useCompareBases(sandboxId)
+  const hostBranches = useHostBranches(sandboxId)
   const [diff, setDiff] = useState<SandboxDiffStats | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -44,8 +72,9 @@ export function BranchesPage({ sandboxId, navigate }: { sandboxId: string; navig
     setLoading(true)
     setError(null)
     try {
-      const result = await invoke<SandboxDiffStats>('get_sandbox_diff_stats', { id: sandboxId })
+      const result = await invoke<SandboxDiffStats>('get_sandbox_diff_stats', { id: sandboxId, bases })
       setDiff(result)
+      dropStaleCompareBases(sandboxId, { sandboxBranches: result.branches.map((b) => b.branch) })
     } catch (e) {
       setError(String(e))
     } finally {
@@ -56,7 +85,7 @@ export function BranchesPage({ sandboxId, navigate }: { sandboxId: string; navig
   useEffect(() => {
     load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sandboxId])
+  }, [sandboxId, bases])
 
   if (!sandbox) {
     return <p className="text-sm text-muted-foreground">This sandbox couldn't be found — it may have been deleted.</p>
@@ -82,8 +111,8 @@ export function BranchesPage({ sandboxId, navigate }: { sandboxId: string; navig
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 
-      {!diff || diff.base_branch === null ? (
-        <p className="text-sm text-muted-foreground">{loading && !diff ? 'Loading…' : BASE_BRANCH_UNKNOWN_COPY}</p>
+      {!diff ? (
+        loading && <p className="text-sm text-muted-foreground">Loading…</p>
       ) : diff.branches.length === 0 ? (
         <p className="flex items-center gap-2 text-sm text-muted-foreground">
           <GitBranch className="size-4" />
@@ -95,6 +124,10 @@ export function BranchesPage({ sandboxId, navigate }: { sandboxId: string; navig
             <BranchCard
               key={branchDiff.branch}
               diff={branchDiff}
+              hostBranches={hostBranches}
+              defaultBase={sandbox.base_branch}
+              override={bases[branchDiff.branch] ?? null}
+              onChangeBase={(base) => setCompareBase(sandboxId, branchDiff.branch, base)}
               onShowDiffs={() => navigate({ screen: 'sandboxes', sandboxId, branches: true, branch: branchDiff.branch })}
             />
           ))}

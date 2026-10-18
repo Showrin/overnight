@@ -134,6 +134,7 @@ pub fn run() {
       commands::save_sandbox_git_sync_interval,
       commands::get_sandbox_diff_stats,
       commands::get_branch_diff,
+      commands::list_host_branches,
       commands::get_branch_commits,
       commands::open_path_in_explorer,
       commands::open_backups_root_folder,

@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { clearCompareBases } from '@/lib/compareBase'
 import { notify } from '@/lib/notify'
 import { AGENT_ACCENT_CLASSES, AGENT_LABELS, type Agent } from '@/lib/agentHost'
 import { AGENT_ICONS } from '@/components/agent-icons'
@@ -61,7 +62,10 @@ export function SandboxActions({
       if (which === 'stop') notify('Sandbox stopped', `${title} has been stopped.`, sandbox.id)
       if (which === 'delete') notify('Sandbox deleted', `${title} has been deleted.`, sandbox.id)
       onChanged()
-      if (which === 'delete') onDeleted?.()
+      if (which === 'delete') {
+        clearCompareBases(sandbox.id)
+        onDeleted?.()
+      }
     } catch (e) {
       const message = String(e)
       setError(message)

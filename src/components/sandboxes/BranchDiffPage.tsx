@@ -4,8 +4,11 @@ import { GitCommitHorizontal } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { buildFileTree } from '@/lib/buildFileTree'
 import type { Route } from '@/lib/router'
+import { useCompareBase } from '@/lib/compareBase'
 import { parseDiffStat } from '@/lib/sandboxDisplay'
 import { useAppStore } from '@/store/useAppStore'
+import { BaseBranchPicker } from './BaseBranchPicker'
+import { useHostBranches } from './useHostBranches'
 import { BranchCommitsDialog } from './BranchCommitsDialog'
 import { DiffViewer, splitPatchByFile } from './DiffViewer'
 import { FileTreePanel } from './FileTreePanel'
@@ -23,6 +26,8 @@ export function BranchDiffPage({
 }) {
   const sandbox = useAppStore((s) => s.sandboxes.find((sb) => sb.id === sandboxId))
   const project = useAppStore((s) => s.projects.find((p) => p.id === sandbox?.project_id))
+  const [base, setBase] = useCompareBase(sandboxId, branch)
+  const hostBranches = useHostBranches(sandboxId)
   const [diff, setDiff] = useState<BranchDiff | null>(null)
   const [commits, setCommits] = useState<CommitInfo[] | null>(null)
   const [commitsOpen, setCommitsOpen] = useState(false)
@@ -30,11 +35,22 @@ export function BranchDiffPage({
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    invoke<BranchDiff>('get_branch_diff', { id: sandboxId, branch }).then(setDiff).catch((e) => setError(String(e)))
-    invoke<CommitInfo[]>('get_branch_commits', { id: sandboxId, branch })
+    invoke<BranchDiff>('get_branch_diff', { id: sandboxId, branch, base }).then(setDiff).catch((e) => setError(String(e)))
+    invoke<CommitInfo[]>('get_branch_commits', { id: sandboxId, branch, base })
       .then(setCommits)
       .catch((e) => setError(String(e)))
-  }, [sandboxId, branch])
+  }, [sandboxId, branch, base])
+
+  // Clears the old comparison here, in the event, so the page shows
+  // "Loading…" instead of the previous base's diff while the new one loads.
+  function changeBase(next: string | null) {
+    if (next === base) return
+    setDiff(null)
+    setCommits(null)
+    setError(null)
+    setClickedFile(null)
+    setBase(next)
+  }
 
   const files = useMemo(() => (diff ? splitPatchByFile(diff.patch) : []), [diff])
   const tree = useMemo(() => buildFileTree(files.map((f) => f.filePath)), [files])
@@ -69,7 +85,7 @@ export function BranchDiffPage({
         </div>
         <div className="flex min-w-0 flex-col gap-0.5">
           <span className="text-xs text-muted-foreground/70">Base Branch</span>
-          <span className="truncate font-mono text-foreground">{sandbox.base_branch ?? '—'}</span>
+          <BaseBranchPicker hostBranches={hostBranches} defaultBase={sandbox.base_branch} value={base} onChange={changeBase} />
         </div>
         <div className="flex min-w-0 flex-col gap-0.5">
           <span className="text-xs text-muted-foreground/70">Changes</span>

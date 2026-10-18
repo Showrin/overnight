@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import type { Project } from '@/components/projects/types'
 import type { BranchSyncOutcome, HostMetric, Sandbox } from '@/components/sandboxes/types'
 import type { ActiveBackup, ActiveOperation } from '@/components/backups/types'
+import { pruneCompareBases } from '@/lib/compareBase'
 import { STARTER_COMPOSE_OVERRIDE, type ComposeOverride } from '@/lib/composeOverrides'
 import { starterSpec, type Kit } from '@/lib/kits'
 import type { NetworkPolicySettings } from '@/lib/networkPolicy'
@@ -193,6 +194,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   async loadSandboxes() {
     const sandboxes = await invoke<Sandbox[]>('list_sandboxes')
     set({ sandboxes })
+    pruneCompareBases(sandboxes.map((sb) => sb.id))
   },
 
   async loadSettings() {

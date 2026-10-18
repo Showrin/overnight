@@ -249,6 +249,26 @@ pub fn log(repo_path: &str, base_ref: &str, target_ref: Option<&str>) -> Result<
   )
 }
 
+/// Local branches then remote-tracking ones (`origin/main`), for picking a
+/// comparison base on the host. Skips symbolic `<remote>/HEAD` refs and the
+/// `sandbox-*` remotes, whose branches are the sandbox's own, not the host's.
+pub fn list_branches(repo_path: &str) -> Result<Vec<String>> {
+  let listing = run(repo_path, &["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes"])?;
+  let mut local = Vec::new();
+  let mut remote = Vec::new();
+  for line in listing.lines() {
+    if let Some(branch) = line.strip_prefix("refs/heads/") {
+      local.push(branch.to_string());
+    } else if let Some(branch) = line.strip_prefix("refs/remotes/") {
+      if !branch.ends_with("/HEAD") && !branch.starts_with("sandbox-") {
+        remote.push(branch.to_string());
+      }
+    }
+  }
+  local.extend(remote);
+  Ok(local)
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -615,5 +635,18 @@ mod tests {
 
     fs::remove_dir_all(upstream_dir).unwrap();
     fs::remove_dir_all(local_dir).unwrap();
+  }
+
+  #[test]
+  fn list_branches_puts_local_first_and_skips_sandbox_remotes() {
+    let (host_dir, sandbox_dir) = host_and_sandbox();
+    let host = host_dir.to_str().unwrap();
+    run(host, &["branch", "develop"]).unwrap();
+    run(host, &["update-ref", "refs/remotes/origin/main", "HEAD"]).unwrap();
+    run(host, &["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"]).unwrap();
+
+    assert_eq!(list_branches(host).unwrap(), vec!["develop", "main", "origin/main"]);
+    fs::remove_dir_all(host_dir).unwrap();
+    fs::remove_dir_all(sandbox_dir).unwrap();
   }
 }

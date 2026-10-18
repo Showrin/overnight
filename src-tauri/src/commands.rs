@@ -3318,12 +3318,17 @@ pub struct BranchDiff {
   pub patch: String,
 }
 
-/// One branch's diff *summary* against `base_branch` — no patch text, for
-/// the Branches list view which only ever renders `stat`.
+/// One branch's diff *summary* against its comparison base — no patch
+/// text, for the Branches list view which only ever renders `stat`. `base`
+/// is `None` (and `stat` empty) when the branch has no base to compare
+/// against; `error` holds a failed comparison so one bad base doesn't sink
+/// the whole list.
 #[derive(Serialize)]
 pub struct BranchStat {
   pub branch: String,
+  pub base: Option<String>,
   pub stat: String,
+  pub error: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -3332,23 +3337,60 @@ pub struct SandboxDiffStats {
   pub branches: Vec<BranchStat>,
 }
 
-/// Backs the Branches list, which only ever shows "N files changed +X -Y"
-/// per branch. Skips computing/transferring full patch text, and computes
-/// every branch's stat in parallel instead of one at a time.
+/// The comparison base for one sandbox branch: a host ref the user picked
+/// for it, else the branch the sandbox was created from. A picked ref goes
+/// straight into git's argv, so one that could parse as an option is refused.
+fn comparison_base(sandbox: &Sandbox, base: Option<String>) -> std::result::Result<Option<String>, String> {
+  match base {
+    Some(base) if base.starts_with('-') => Err(format!("invalid base branch: {base}")),
+    Some(base) => Ok(Some(base)),
+    None => Ok(sandbox.base_branch.clone()),
+  }
+}
+
+/// Branches in the sandbox's project repo on the host, offered as
+/// comparison bases on the Branches/Diff pages.
 #[tauri::command]
-pub fn get_sandbox_diff_stats(pool: State<DbPool>, id: String) -> std::result::Result<SandboxDiffStats, String> {
+pub fn list_host_branches(pool: State<DbPool>, id: String) -> std::result::Result<Vec<String>, String> {
   let conn = pool.get().map_err(|e| e.to_string())?;
   let sandbox = sandboxes::get(&conn, &id).map_err(|e| e.to_string())?;
-  let Some(base_branch) = sandbox.base_branch.clone() else {
-    return Ok(SandboxDiffStats { base_branch: None, branches: vec![] });
-  };
   let project = projects::get(&conn, &sandbox.project_id).map_err(|e| e.to_string())?;
+  crate::git::list_branches(&project.repo_path).map_err(|e| e.to_string())
+}
+
+fn branch_stat(sandbox: &Sandbox, repo_path: &str, branch: String, base: Option<String>, target_ref: Option<&str>) -> BranchStat {
+  match comparison_base(sandbox, base) {
+    Err(error) => BranchStat { branch, base: None, stat: String::new(), error: Some(error) },
+    Ok(None) => BranchStat { branch, base: None, stat: String::new(), error: None },
+    Ok(Some(base)) => match crate::git::diff_stat(repo_path, &base, target_ref) {
+      Ok(stat) => BranchStat { branch, base: Some(base), stat, error: None },
+      Err(e) => BranchStat { branch, base: Some(base), stat: String::new(), error: Some(e.to_string()) },
+    },
+  }
+}
+
+/// Backs the Branches list, which only ever shows "N files changed +X -Y"
+/// per branch. Skips computing/transferring full patch text, and computes
+/// every branch's stat in parallel instead of one at a time. `bases` maps a
+/// sandbox branch to the host ref it's compared against; branches missing
+/// from it use the sandbox's base branch.
+#[tauri::command]
+pub fn get_sandbox_diff_stats(
+  pool: State<DbPool>,
+  id: String,
+  bases: Option<std::collections::HashMap<String, String>>,
+) -> std::result::Result<SandboxDiffStats, String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  let sandbox = sandboxes::get(&conn, &id).map_err(|e| e.to_string())?;
+  let project = projects::get(&conn, &sandbox.project_id).map_err(|e| e.to_string())?;
+  let bases = bases.unwrap_or_default();
 
   let result: std::result::Result<SandboxDiffStats, String> = (|| {
     if sandbox.mode == "mount" {
       let branch = crate::git::current_branch(&project.repo_path).unwrap_or_else(|| "HEAD".to_string());
-      let stat = crate::git::diff_stat(&project.repo_path, &base_branch, None).map_err(|e| e.to_string())?;
-      return Ok(SandboxDiffStats { base_branch: Some(base_branch.clone()), branches: vec![BranchStat { branch, stat }] });
+      let base = bases.get(&branch).cloned();
+      let stat = branch_stat(&sandbox, &project.repo_path, branch, base, None);
+      return Ok(SandboxDiffStats { base_branch: sandbox.base_branch.clone(), branches: vec![stat] });
     }
 
     let name = sandbox.sbx_name.clone().ok_or_else(|| "sandbox isn't running".to_string())?;
@@ -3360,28 +3402,25 @@ pub fn get_sandbox_diff_stats(pool: State<DbPool>, id: String) -> std::result::R
       let handles: Vec<_> = sandbox_branches
         .iter()
         .map(|branch| {
-          let repo_path = project.repo_path.clone();
-          let base_branch = base_branch.clone();
+          let (sandbox, repo_path) = (&sandbox, project.repo_path.as_str());
+          let base = bases.get(branch).cloned();
           let target_ref = format!("{remote}/{branch}");
           let branch = branch.clone();
-          scope.spawn(move || -> std::result::Result<BranchStat, String> {
-            let stat = crate::git::diff_stat(&repo_path, &base_branch, Some(&target_ref)).map_err(|e| e.to_string())?;
-            Ok(BranchStat { branch, stat })
-          })
+          scope.spawn(move || branch_stat(sandbox, repo_path, branch, base, Some(&target_ref)))
         })
         .collect::<Vec<_>>();
-      handles.into_iter().map(|h| h.join().unwrap()).collect::<std::result::Result<Vec<_>, String>>()
-    })?;
+      handles.into_iter().map(|h| h.join().unwrap()).collect::<Vec<_>>()
+    });
 
-    Ok(SandboxDiffStats { base_branch: Some(base_branch.clone()), branches })
+    Ok(SandboxDiffStats { base_branch: sandbox.base_branch.clone(), branches })
   })();
 
   let stderr = result.as_ref().err().cloned();
   let _ = command_log::append(
     &conn,
-    "Diff sandbox stats against base branch",
+    "Diff sandbox stats against base branches",
     "git",
-    &[project.repo_path.clone(), base_branch],
+    &[project.repo_path.clone(), sandbox.base_branch.clone().unwrap_or_default()],
     result.is_ok(),
     None,
     stderr.as_deref(),
@@ -3397,10 +3436,11 @@ pub fn get_branch_commits(
   pool: State<DbPool>,
   id: String,
   branch: String,
+  base: Option<String>,
 ) -> std::result::Result<Vec<crate::git::CommitInfo>, String> {
   let conn = pool.get().map_err(|e| e.to_string())?;
   let sandbox = sandboxes::get(&conn, &id).map_err(|e| e.to_string())?;
-  let base_branch = sandbox.base_branch.clone().ok_or_else(|| "sandbox has no base branch".to_string())?;
+  let base_branch = comparison_base(&sandbox, base)?.ok_or_else(|| "sandbox has no base branch".to_string())?;
   let project = projects::get(&conn, &sandbox.project_id).map_err(|e| e.to_string())?;
 
   let result: std::result::Result<Vec<crate::git::CommitInfo>, String> = (|| {
@@ -3430,10 +3470,15 @@ pub fn get_branch_commits(
 /// Backs the branch-detail (Diff) page, which only ever renders one
 /// branch's patch. Mirrors `get_branch_commits`'s mount/clone branching.
 #[tauri::command]
-pub fn get_branch_diff(pool: State<DbPool>, id: String, branch: String) -> std::result::Result<BranchDiff, String> {
+pub fn get_branch_diff(
+  pool: State<DbPool>,
+  id: String,
+  branch: String,
+  base: Option<String>,
+) -> std::result::Result<BranchDiff, String> {
   let conn = pool.get().map_err(|e| e.to_string())?;
   let sandbox = sandboxes::get(&conn, &id).map_err(|e| e.to_string())?;
-  let base_branch = sandbox.base_branch.clone().ok_or_else(|| "sandbox has no base branch".to_string())?;
+  let base_branch = comparison_base(&sandbox, base)?.ok_or_else(|| "sandbox has no base branch".to_string())?;
   let project = projects::get(&conn, &sandbox.project_id).map_err(|e| e.to_string())?;
 
   let result: std::result::Result<BranchDiff, String> = (|| {
