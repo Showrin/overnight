@@ -127,6 +127,13 @@ export function parseDiffStat(stat: string): DiffStatCounts {
 
 // Formats a sandbox's effective network policy as a short label — either
 // its own override, or "Global default (<preset>)" when it inherits one.
+/** Just the effective mode — Open, Balanced or Locked Down — without where it comes from. */
+export function networkModeLabel(override: string | null, globalPreset: string | null): string {
+  if (override) return SANDBOX_NETWORK_PRESET_OVERRIDE_LABELS[override as SandboxNetworkPresetOverride] ?? override
+  if (globalPreset) return NETWORK_POLICY_PRESET_LABELS[globalPreset as NetworkPolicyPreset] ?? globalPreset
+  return '—'
+}
+
 export function formatNetworkPolicyLabel(
   override: string | null,
   globalPreset: string | null

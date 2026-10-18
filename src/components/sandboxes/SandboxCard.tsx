@@ -1,25 +1,15 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { DatabaseBackup } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { NetworkRuleEditor } from '@/components/settings/NetworkRuleEditor'
 import type { Route } from '@/lib/router'
-import type { NetworkRuleDecision, PolicyRule, SandboxNetworkPresetOverride } from '@/lib/networkPolicy'
-import {
-  NETWORK_POLICY_PRESET_LABELS,
-  SANDBOX_NETWORK_PRESET_OVERRIDE_LABELS,
-  SANDBOX_NETWORK_PRESET_OVERRIDES,
-} from '@/lib/networkPolicy'
-import { formatRelativeTime, permissionTextClass } from '@/lib/sandboxDisplay'
+import { formatRelativeTime, networkModeLabel, permissionTextClass } from '@/lib/sandboxDisplay'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
 import { SandboxActions } from './SandboxActions'
 import { SetupFailuresBanner } from './SetupFailuresBanner'
 import { StatusIndicator } from './StatusIndicator'
 import type { Sandbox } from './types'
-
-const DEFAULT_NETWORK_OVERRIDE = '__global_default__'
 
 export function SandboxCard({
   sandbox,
@@ -40,59 +30,6 @@ export function SandboxCard({
   const networkPolicyPreset = useAppStore((s) => s.networkPolicyPreset)
   const isBackingUp = useAppStore((s) => s.activeBackups.some((b) => b.sandbox_id === sandbox.id))
   const [copiedInfo, setCopiedInfo] = useState(false)
-
-  const [networkRules, setNetworkRules] = useState<PolicyRule[]>([])
-  const [loadingNetworkRules, setLoadingNetworkRules] = useState(false)
-  const [networkExpanded, setNetworkExpanded] = useState(false)
-  const [savingNetworkOverride, setSavingNetworkOverride] = useState(false)
-  const [networkError, setNetworkError] = useState<string | null>(null)
-
-  async function refreshNetworkRules() {
-    setLoadingNetworkRules(true)
-    setNetworkError(null)
-    try {
-      const rules = await invoke<PolicyRule[]>('get_sandbox_network_rules', { id: sandbox.id })
-      setNetworkRules(rules)
-    } catch (e) {
-      setNetworkError(String(e))
-    } finally {
-      setLoadingNetworkRules(false)
-    }
-  }
-
-  // Loaded once on mount (not on the shared 5s sandbox poll) — every
-  // visible card's rule count means one `sbx policy ls --wide` call, and
-  // rules only ever change from actions this same card triggers, so a
-  // reload after those is enough to stay fresh.
-  useEffect(() => {
-    refreshNetworkRules()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sandbox.id])
-
-  async function addSandboxNetworkRule(decision: NetworkRuleDecision, host: string) {
-    await invoke('add_sandbox_network_rule', { id: sandbox.id, decision, host })
-    await refreshNetworkRules()
-  }
-
-  async function removeSandboxNetworkRule(host: string) {
-    await invoke('remove_sandbox_network_rule', { id: sandbox.id, host })
-    await refreshNetworkRules()
-  }
-
-  async function handleNetworkOverrideChange(value: string) {
-    const preset = value === DEFAULT_NETWORK_OVERRIDE ? null : value
-    setSavingNetworkOverride(true)
-    setNetworkError(null)
-    try {
-      await invoke('set_sandbox_network_preset_override', { id: sandbox.id, preset })
-      await refreshNetworkRules()
-      onChanged()
-    } catch (e) {
-      setNetworkError(String(e))
-    } finally {
-      setSavingNetworkOverride(false)
-    }
-  }
 
   const location = sandbox.folder_path ?? projectRepoPath
 
@@ -182,57 +119,11 @@ export function SandboxCard({
           </div>
           <div className="flex min-w-0 flex-col gap-0.5">
             <span className="text-xs text-muted-foreground/70">Network</span>
-            <div className="flex items-center gap-1.5">
-              <span className="truncate text-sm text-foreground">
-                {sandbox.network_preset_override
-                  ? SANDBOX_NETWORK_PRESET_OVERRIDE_LABELS[
-                      sandbox.network_preset_override as SandboxNetworkPresetOverride
-                    ] ?? sandbox.network_preset_override
-                  : networkPolicyPreset
-                    ? `Global default (${NETWORK_POLICY_PRESET_LABELS[networkPolicyPreset as keyof typeof NETWORK_POLICY_PRESET_LABELS] ?? networkPolicyPreset})`
-                    : 'Global default'}
-              </span>
-              <button
-                type="button"
-                onClick={() => setNetworkExpanded((v) => !v)}
-                className="shrink-0 text-xs text-muted-foreground hover:text-foreground hover:underline"
-              >
-                {loadingNetworkRules ? '…' : `${networkRules.length} rule(s)`}
-              </button>
-            </div>
+            <span className="truncate text-sm text-foreground">
+              {networkModeLabel(sandbox.network_preset_override, networkPolicyPreset)}
+            </span>
           </div>
         </div>
-
-        {networkExpanded && (
-          <div className="flex flex-col gap-3 rounded-lg border border-border p-3">
-            <div className="flex flex-col gap-1">
-              <span className="text-xs text-muted-foreground/70">Preset override</span>
-              <Select
-                value={sandbox.network_preset_override ?? DEFAULT_NETWORK_OVERRIDE}
-                onValueChange={handleNetworkOverrideChange}
-                disabled={savingNetworkOverride}
-              >
-                <SelectTrigger className="h-8 w-48">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={DEFAULT_NETWORK_OVERRIDE}>Use global default</SelectItem>
-                  {SANDBOX_NETWORK_PRESET_OVERRIDES.map((preset) => (
-                    <SelectItem key={preset} value={preset}>
-                      {SANDBOX_NETWORK_PRESET_OVERRIDE_LABELS[preset]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                Only Open or Locked Down can be scoped to a single sandbox — Balanced is a machine-wide baseline
-                rule set.
-              </p>
-            </div>
-            <NetworkRuleEditor rules={networkRules} onAdd={addSandboxNetworkRule} onRemove={removeSandboxNetworkRule} />
-            {networkError && <p className="text-xs text-destructive">{networkError}</p>}
-          </div>
-        )}
 
         {sandbox.last_backup_at != null && (
           <p className="text-xs">Last backup: {formatRelativeTime(sandbox.last_backup_at)}</p>
