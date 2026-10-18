@@ -66,14 +66,7 @@ function JobCard({ job }: { job: CreateJob }) {
 
   return (
     <div className="flex w-80 flex-col gap-2 rounded-lg border border-border bg-card p-3 text-sm shadow-md shadow-primary/30 ring-2 ring-primary/50">
-      <div className="flex items-center gap-2">
-        {job.status === 'running' ? (
-          <Loader2 className="size-3.5 shrink-0 animate-spin text-primary" />
-        ) : job.status === 'done' ? (
-          <Check className="size-3.5 shrink-0 text-emerald-500" />
-        ) : (
-          <XCircle className="size-3.5 shrink-0 text-destructive" />
-        )}
+      <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 flex-col">
           <span className="truncate font-medium" title={sandbox?.name ?? sandbox?.sbx_name ?? job.label}>
             {sandbox?.name ?? sandbox?.sbx_name ?? job.label}
@@ -84,9 +77,14 @@ function JobCard({ job }: { job: CreateJob }) {
           </span>
         </div>
         {job.status !== 'running' && (
-          <Button size="icon-sm" variant="ghost" className="ml-auto" title="Dismiss" onClick={() => dismiss(job.id)}>
+          <button
+            type="button"
+            onClick={() => dismiss(job.id)}
+            aria-label="Dismiss"
+            className="shrink-0 text-muted-foreground hover:text-foreground"
+          >
             <X className="size-3.5" />
-          </Button>
+          </button>
         )}
       </div>
       <ul className="flex flex-col gap-1">
