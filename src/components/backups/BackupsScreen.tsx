@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { FolderOpen, Loader2, Trash2, X } from 'lucide-react'
+import { CheckSquare, FolderOpen, Loader2, Trash2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { formatRelativeTime } from '@/lib/sandboxDisplay'
 import { useAppStore } from '@/store/useAppStore'
 import { BackupCard, TRIGGER_LABELS } from './BackupCard'
+import { BulkDeleteBar } from './BulkDeleteBar'
+import { useBackupSelection } from './useBackupSelection'
 import type { SandboxBackup } from './types'
 
 const COLLAPSED_COUNT = 2
@@ -23,6 +25,7 @@ export function BackupsScreen() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [deletingGroup, setDeletingGroup] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const selection = useBackupSelection()
 
   async function loadBackups() {
     setLoading(true)
@@ -83,16 +86,37 @@ export function BackupsScreen() {
     <div className="flex w-full flex-col gap-4">
       <div className="flex items-center justify-between gap-2">
         <h1 className="text-lg font-medium">Backups</h1>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => invoke('open_backups_root_folder')}
-          title="Open the folder every sandbox's backups are stored under"
-        >
-          <FolderOpen className="size-3.5" />
-          Open Folder
-        </Button>
+        <div className="flex items-center gap-2">
+          {!selection.selecting && backups.length > 0 && (
+            <Button size="sm" variant="outline" onClick={selection.start}>
+              <CheckSquare className="size-3.5" />
+              Select
+            </Button>
+          )}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => invoke('open_backups_root_folder')}
+            title="Open the folder every sandbox's backups are stored under"
+          >
+            <FolderOpen className="size-3.5" />
+            Open Folder
+          </Button>
+        </div>
       </div>
+
+      {selection.selecting && (
+        <BulkDeleteBar
+          selected={selection.selected}
+          allIds={backups.map((b) => b.id)}
+          onSelectAll={(checked) => selection.setMany(backups.map((b) => b.id), checked)}
+          onCancel={selection.stop}
+          onDeleted={() => {
+            selection.stop()
+            loadBackups()
+          }}
+        />
+      )}
 
       {activeBackups.map((active) => {
         const sandbox = sandboxes.find((s) => s.id === active.sandbox_id)
@@ -132,21 +156,39 @@ export function BackupsScreen() {
         const expanded = expandedGroups.has(sandboxId)
         const visible = expanded ? sandboxBackups : sandboxBackups.slice(0, COLLAPSED_COUNT)
         const hasMore = sandboxBackups.length > COLLAPSED_COUNT
+        const groupIds = sandboxBackups.map((b) => b.id)
+        const groupAllSelected = groupIds.every((id) => selection.selected.has(id))
         return (
           <div key={sandboxId} className="flex flex-col gap-2">
             <div className="flex items-center justify-between gap-2">
               <span className="text-sm font-medium text-foreground">{groupLabel(sandboxId, sandboxBackups)}</span>
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                title="Delete all backups for this sandbox"
-                onClick={() => setConfirmDeleteId(sandboxId)}
-              >
-                <Trash2 className="size-3.5" />
-              </Button>
+              {selection.selecting ? (
+                <input
+                  type="checkbox"
+                  aria-label="Select all backups for this sandbox"
+                  checked={groupAllSelected}
+                  onChange={(e) => selection.setMany(groupIds, e.target.checked)}
+                />
+              ) : (
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  title="Delete all backups for this sandbox"
+                  onClick={() => setConfirmDeleteId(sandboxId)}
+                >
+                  <Trash2 className="size-3.5" />
+                </Button>
+              )}
             </div>
             {visible.map((backup) => (
-              <BackupCard key={backup.id} backup={backup} allBackups={backups} onDeleted={loadBackups} />
+              <BackupCard
+                key={backup.id}
+                backup={backup}
+                allBackups={backups}
+                onDeleted={loadBackups}
+                selected={selection.selected.has(backup.id)}
+                onSelectedChange={selection.selecting ? (checked) => selection.toggle(backup.id, checked) : undefined}
+              />
             ))}
             {hasMore && (
               <Button

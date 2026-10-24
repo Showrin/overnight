@@ -21,10 +21,14 @@ export function BackupCard({
   backup,
   allBackups,
   onDeleted,
+  selected = false,
+  onSelectedChange,
 }: {
   backup: SandboxBackup
   allBackups: SandboxBackup[]
   onDeleted: () => void
+  selected?: boolean
+  onSelectedChange?: (checked: boolean) => void
 }) {
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -50,10 +54,18 @@ export function BackupCard({
   }
 
   return (
-    <Card className={cn('w-full', hasWarnings && 'border-amber-500/50')}>
+    <Card className={cn('w-full', hasWarnings && 'border-amber-500/50', selected && 'border-primary/60')}>
       <CardContent className="flex flex-col gap-2">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
+            {onSelectedChange && (
+              <input
+                type="checkbox"
+                aria-label="Select backup"
+                checked={selected}
+                onChange={(e) => onSelectedChange(e.target.checked)}
+              />
+            )}
             <Badge variant="outline-muted">{TRIGGER_LABELS[backup.trigger] ?? backup.trigger}</Badge>
             <span className="text-xs text-muted-foreground">{formatRelativeTime(backup.created_at)}</span>
           </div>

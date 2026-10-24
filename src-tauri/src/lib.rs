@@ -117,6 +117,7 @@ pub fn run() {
       commands::list_backups,
       commands::delete_sandbox_backup,
       commands::delete_sandbox_backups_for_sandbox,
+      commands::delete_sandbox_backups,
       commands::restore_backup,
       commands::sync_sandbox_plans,
       commands::get_sandbox_branch_info,

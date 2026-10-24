@@ -176,6 +176,23 @@ pub fn delete_all_for_sandbox(conn: &Connection, sandbox_id: &str) -> Result<()>
   Ok(())
 }
 
+pub fn delete_many(conn: &Connection, ids: &[String]) -> Result<Vec<SandboxBackup>> {
+  let tx = conn.unchecked_transaction()?;
+  let mut deleted = Vec::new();
+  for id in ids {
+    match get(&tx, id) {
+      Ok(backup) => {
+        tx.execute("DELETE FROM sandbox_backups WHERE id = ?1", params![id])?;
+        deleted.push(backup);
+      }
+      Err(Error::NotFound) => {}
+      Err(e) => return Err(e),
+    }
+  }
+  tx.commit()?;
+  Ok(deleted)
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -283,6 +300,32 @@ mod tests {
   fn get_missing_returns_not_found() {
     let conn = test_conn();
     assert!(matches!(get(&conn, "missing"), Err(Error::NotFound)));
+  }
+
+  #[test]
+  fn delete_many_removes_only_given_ids_and_skips_missing() {
+    let conn = test_conn();
+    let sandbox_id = make_sandbox(&conn);
+    let a = insert(&conn, &sandbox_id, None, "manual", "/data/a", true, false, true, None, None, &[], 0, &[]).unwrap();
+    let b = insert(&conn, &sandbox_id, None, "manual", "/data/b", true, false, true, None, None, &[], 0, &[]).unwrap();
+    let c = insert(&conn, &sandbox_id, None, "manual", "/data/c", true, false, true, None, None, &[], 0, &[]).unwrap();
+
+    let deleted = delete_many(&conn, &[a.id.clone(), c.id.clone(), "missing".to_string()]).unwrap();
+
+    let mut deleted_ids = deleted.iter().map(|d| d.id.clone()).collect::<Vec<_>>();
+    deleted_ids.sort();
+    let mut expected = vec![a.id, c.id];
+    expected.sort();
+    assert_eq!(deleted_ids, expected);
+    let left = list_all(&conn).unwrap();
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].id, b.id);
+  }
+
+  #[test]
+  fn delete_many_empty_is_noop() {
+    let conn = test_conn();
+    assert!(delete_many(&conn, &[]).unwrap().is_empty());
   }
 
   #[test]

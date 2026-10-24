@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { Loader2, RotateCcw, X } from 'lucide-react'
+import { CheckSquare, Loader2, RotateCcw, X } from 'lucide-react'
 import { BackupCard } from '@/components/backups/BackupCard'
+import { BulkDeleteBar } from '@/components/backups/BulkDeleteBar'
 import { RestoreDialog } from '@/components/backups/RestoreDialog'
 import type { SandboxBackup } from '@/components/backups/types'
+import { useBackupSelection } from '@/components/backups/useBackupSelection'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
@@ -23,6 +25,7 @@ export function SandboxBackupsTab({ sandbox }: { sandbox: Sandbox }) {
   )
   const cancelOperation = useAppStore((s) => s.cancelOperation)
   const isRestoring = restoreOp != null
+  const selection = useBackupSelection()
 
   async function load() {
     setLoading(true)
@@ -38,11 +41,13 @@ export function SandboxBackupsTab({ sandbox }: { sandbox: Sandbox }) {
   }
 
   useEffect(() => {
+    selection.stop()
     load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sandbox.id])
 
   const ownBackups = backups.filter((b) => b.sandbox_id === sandbox.id)
+  const ownIds = ownBackups.map((b) => b.id)
 
   return (
     <div className="flex flex-col gap-4 text-sm">
@@ -82,14 +87,41 @@ export function SandboxBackupsTab({ sandbox }: { sandbox: Sandbox }) {
       </div>
 
       <div className="flex flex-col gap-2">
-        <span className="text-xs font-medium text-foreground">Backups</span>
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs font-medium text-foreground">Backups</span>
+          {!selection.selecting && ownBackups.length > 0 && (
+            <Button size="sm" variant="ghost" onClick={selection.start}>
+              <CheckSquare className="size-3.5" />
+              Select
+            </Button>
+          )}
+        </div>
+        {selection.selecting && (
+          <BulkDeleteBar
+            selected={selection.selected}
+            allIds={ownIds}
+            onSelectAll={(checked) => selection.setMany(ownIds, checked)}
+            onCancel={selection.stop}
+            onDeleted={() => {
+              selection.stop()
+              load()
+            }}
+          />
+        )}
         {loading && <p className="text-sm text-muted-foreground">Loading…</p>}
         {error && <p className="text-sm text-destructive">{error}</p>}
         {!loading && !error && ownBackups.length === 0 && (
           <p className="text-sm text-muted-foreground">No backups yet.</p>
         )}
         {ownBackups.map((backup) => (
-          <BackupCard key={backup.id} backup={backup} allBackups={backups} onDeleted={load} />
+          <BackupCard
+            key={backup.id}
+            backup={backup}
+            allBackups={backups}
+            onDeleted={load}
+            selected={selection.selected.has(backup.id)}
+            onSelectedChange={selection.selecting ? (checked) => selection.toggle(backup.id, checked) : undefined}
+          />
         ))}
       </div>
 

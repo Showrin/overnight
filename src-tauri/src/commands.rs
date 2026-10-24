@@ -2916,6 +2916,21 @@ pub fn delete_sandbox_backups_for_sandbox(pool: State<DbPool>, sandbox_id: Strin
   backups::delete_all_for_sandbox(&conn, &sandbox_id).map_err(|e| e.to_string())
 }
 
+/// Deletes the given backups in one go — rows in one transaction, then their
+/// host directories (best-effort, same as `delete_sandbox_backup`). Unknown
+/// ids are skipped. Returns how many were deleted.
+#[tauri::command]
+pub fn delete_sandbox_backups(pool: State<DbPool>, ids: Vec<String>) -> std::result::Result<usize, String> {
+  let conn = pool.get().map_err(|e| e.to_string())?;
+  let deleted = backups::delete_many(&conn, &ids).map_err(|e| e.to_string())?;
+  for backup in &deleted {
+    if let Err(e) = std::fs::remove_dir_all(&backup.host_dir) {
+      log::warn!("delete_sandbox_backups: failed to remove {}: {e}", backup.host_dir);
+    }
+  }
+  Ok(deleted.len())
+}
+
 /// Restores a backup's `.claude` and/or `.git` copy (per `scope`) back into
 /// a running sandbox.
 #[tauri::command]
