@@ -1,32 +1,11 @@
-import { useEffect, useState } from 'react'
-import { Check, Copy, X } from 'lucide-react'
+import { useEffect } from 'react'
+import { X } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { branchSyncBadgeVariant, branchSyncShortLabel, branchSyncStatusLabel } from '@/lib/sandboxDisplay'
 import { useAppStore } from '@/store/useAppStore'
+import { CopyBranchButton } from './CopyBranchButton'
 
 const AUTO_DISMISS_MS = 45000
-
-function CopyBranchButton({ branch }: { branch: string }) {
-  const [copied, setCopied] = useState(false)
-
-  async function copy() {
-    await navigator.clipboard.writeText(branch)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1500)
-  }
-
-  return (
-    <button
-      type="button"
-      onClick={copy}
-      aria-label={`Copy ${branch}`}
-      title="Copy branch name"
-      className="shrink-0 text-muted-foreground hover:text-foreground"
-    >
-      {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
-    </button>
-  )
-}
 
 // Small bottom-right popout showing the last Git Sync's per-branch output —
 // replaces putting that list in the OS notification body, which platforms

@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
 import { AutoGitSyncSelect } from './AutoGitSyncSelect'
 import { BaseBranchPicker } from './BaseBranchPicker'
+import { CopyBranchButton } from './CopyBranchButton'
 import { useHostBranches, type HostBranches } from './useHostBranches'
 import { SandboxHeader } from './SandboxHeader'
 import type { BranchStat, SandboxDiffStats } from './types'
@@ -34,7 +35,10 @@ function BranchCard({
   return (
     <div className="flex items-center justify-between gap-4 rounded-lg border border-border p-3">
       <div className="flex min-w-0 flex-col gap-1">
-        <span className="truncate font-mono text-sm text-foreground">{diff.branch}</span>
+        <span className="flex min-w-0 items-center gap-1.5">
+          <CopyBranchButton branch={diff.branch} />
+          <span className="truncate font-mono text-sm text-foreground">{diff.branch}</span>
+        </span>
         {diff.error ? (
           <span className="truncate text-xs text-destructive" title={diff.error}>
             {diff.error}
@@ -159,7 +163,10 @@ export function BranchesPage({ sandboxId, navigate }: { sandboxId: string; navig
                         o.status === 'needs_manual_merge' ? 'border-warning/40 bg-warning/10' : 'border-border'
                       )}
                     >
-                      <span className="truncate font-mono text-foreground">{o.branch}</span>
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <CopyBranchButton branch={o.branch} />
+                        <span className="truncate font-mono text-foreground">{o.branch}</span>
+                      </span>
                       <Badge variant={branchSyncBadgeVariant(o.status)}>{branchSyncStatusLabel(o.status)}</Badge>
                     </li>
                   ))}

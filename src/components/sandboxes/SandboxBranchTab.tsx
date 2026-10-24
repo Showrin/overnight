@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { formatRelativeTime } from '@/lib/sandboxDisplay'
+import { CopyBranchButton } from './CopyBranchButton'
 import type { Sandbox } from './types'
 
 const BASE_BRANCH_UNKNOWN_COPY = 'Unknown — created before branch tracking was added'
@@ -57,7 +58,10 @@ export function SandboxBranchTab({ sandbox }: { sandbox: Sandbox }) {
         <div className="flex min-w-0 flex-col gap-0.5">
           <span className="text-xs text-muted-foreground/70">Base Branch</span>
           {info.base_branch ? (
-            <span className="truncate font-mono text-sm text-foreground">{info.base_branch}</span>
+            <span className="flex min-w-0 items-center gap-1.5">
+              <CopyBranchButton branch={info.base_branch} />
+              <span className="truncate font-mono text-sm text-foreground">{info.base_branch}</span>
+            </span>
           ) : (
             <span className="text-sm text-muted-foreground">{BASE_BRANCH_UNKNOWN_COPY}</span>
           )}
@@ -69,7 +73,10 @@ export function SandboxBranchTab({ sandbox }: { sandbox: Sandbox }) {
           {freshnessLabel === null ? (
             <span className="text-sm text-muted-foreground">{NO_SNAPSHOT_COPY}</span>
           ) : info.current_branch ? (
-            <span className="truncate font-mono text-sm text-foreground">{info.current_branch}</span>
+            <span className="flex min-w-0 items-center gap-1.5">
+              <CopyBranchButton branch={info.current_branch} />
+              <span className="truncate font-mono text-sm text-foreground">{info.current_branch}</span>
+            </span>
           ) : (
             <span className="text-sm text-muted-foreground">{loading ? 'Loading…' : 'Detached HEAD'}</span>
           )}
@@ -85,8 +92,9 @@ export function SandboxBranchTab({ sandbox }: { sandbox: Sandbox }) {
         ) : info.branches.length > 0 ? (
           <ul className="flex flex-col gap-0.5">
             {info.branches.map((branch) => (
-              <li key={branch} className="font-mono text-sm text-foreground">
-                {branch === info.current_branch ? `* ${branch}` : `  ${branch}`}
+              <li key={branch} className="flex items-center gap-1.5 font-mono text-sm text-foreground">
+                <CopyBranchButton branch={branch} />
+                <span className="whitespace-pre">{branch === info.current_branch ? `* ${branch}` : `  ${branch}`}</span>
               </li>
             ))}
           </ul>
@@ -106,7 +114,8 @@ export function SandboxBranchTab({ sandbox }: { sandbox: Sandbox }) {
             {info.worktrees.map((worktree) => (
               <li key={worktree.path} className="flex flex-col">
                 <span className="truncate font-mono text-sm text-foreground">{worktree.path}</span>
-                <span className="text-xs text-muted-foreground">
+                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  {worktree.branch && <CopyBranchButton branch={worktree.branch} />}
                   {worktree.branch ?? 'detached'} @ {worktree.head_sha ? worktree.head_sha.slice(0, 7) : 'unknown'}
                 </span>
               </li>
