@@ -857,31 +857,96 @@ pub async fn push_agent_config<R: Runtime>(
 }
 
 const HOST_SOURCE_PATH: &str = "/run/sandbox/source";
+const SET_ORIGIN_ATTEMPTS: u32 = 30;
 
-fn set_origin_script(workspace: &str) -> String {
+/// Retries until `origin` reads back as `source`: the clone may not exist yet,
+/// and sbx can still overwrite `origin` with the host's remote.
+fn set_origin_script(workspace: &str, source: &str, attempts: u32) -> String {
   let ws = shell_quote(workspace);
+  let src = shell_quote(source);
   format!(
-    "git -C {ws} remote set-url origin {HOST_SOURCE_PATH} 2>/dev/null || git -C {ws} remote add origin {HOST_SOURCE_PATH}"
+    "i=0\n\
+     while [ $i -lt {attempts} ]; do\n\
+     i=$((i+1))\n\
+     if git -C {ws} rev-parse --git-dir >/dev/null 2>&1; then\n\
+     git -C {ws} remote set-url origin {src} 2>/dev/null || git -C {ws} remote add origin {src}\n\
+     fi\n\
+     sleep 1\n\
+     [ \"$(git -C {ws} remote get-url origin 2>/dev/null)\" = {src} ] && exit 0\n\
+     done\n\
+     echo \"origin not set to \"{src} >&2\n\
+     exit 1\n"
   )
 }
 
 /// Points a clone-mode workspace's `origin` at the read-only host repo mount.
 pub async fn set_git_origin_to_source<R: Runtime>(app: &AppHandle<R>, name: &str) -> Result<()> {
   let workspace = workspace_path(app, name).await?.unwrap_or_else(|| SANDBOX_HOME.to_string());
-  run(app, "Set git origin", &["exec", "-d", name, "sh", "-c", &set_origin_script(&workspace)]).await?;
+  let script = set_origin_script(&workspace, HOST_SOURCE_PATH, SET_ORIGIN_ATTEMPTS);
+  run(app, "Set git origin", &["exec", name, "sh", "-c", &script]).await?;
   Ok(())
 }
 
 #[cfg(test)]
 mod set_origin_script_tests {
   use super::set_origin_script;
+  use std::process::Command;
 
+  fn temp_dir(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("overnight-{tag}-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+  }
+
+  fn git(dir: &std::path::Path, args: &[&str]) -> String {
+    let out = Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+  }
+
+  #[cfg(unix)]
   #[test]
-  fn sets_or_adds_origin() {
-    assert_eq!(
-      set_origin_script("/home/agent/my repo"),
-      "git -C '/home/agent/my repo' remote set-url origin /run/sandbox/source 2>/dev/null || git -C '/home/agent/my repo' remote add origin /run/sandbox/source"
-    );
+  fn replaces_existing_origin() {
+    let repo = temp_dir("origin-repo");
+    git(&repo, &["init", "-q"]);
+    git(&repo, &["remote", "add", "origin", "https://example.com/r.git"]);
+    let status = Command::new("sh").arg("-c").arg(set_origin_script(&repo.to_string_lossy(), "/src", 3)).status().unwrap();
+    assert!(status.success());
+    assert_eq!(git(&repo, &["remote", "get-url", "origin"]), "/src");
+    std::fs::remove_dir_all(repo).unwrap();
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn adds_missing_origin() {
+    let repo = temp_dir("origin-repo");
+    git(&repo, &["init", "-q"]);
+    let status = Command::new("sh").arg("-c").arg(set_origin_script(&repo.to_string_lossy(), "/src", 3)).status().unwrap();
+    assert!(status.success());
+    assert_eq!(git(&repo, &["remote", "get-url", "origin"]), "/src");
+    std::fs::remove_dir_all(repo).unwrap();
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn fails_when_workspace_never_becomes_repo() {
+    let dir = temp_dir("origin-empty");
+    let out = Command::new("sh").arg("-c").arg(set_origin_script(&dir.to_string_lossy(), "/src", 2)).output().unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("origin not set to /src"));
+    std::fs::remove_dir_all(dir).unwrap();
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn waits_for_repo_created_later() {
+    let dir = temp_dir("origin-late");
+    let ws = dir.to_string_lossy().into_owned();
+    let mut child = Command::new("sh").arg("-c").arg(set_origin_script(&ws, "/src", 5)).spawn().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    git(&dir, &["init", "-q"]);
+    assert!(child.wait().unwrap().success());
+    assert_eq!(git(&dir, &["remote", "get-url", "origin"]), "/src");
+    std::fs::remove_dir_all(dir).unwrap();
   }
 }
 
