@@ -1,17 +1,16 @@
 import { useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { ChevronsUpDown, Code, Loader2, Play, Square } from 'lucide-react'
+import { ChevronsUpDown, Loader2, Play, Square, TerminalSquare } from 'lucide-react'
 import type { Route } from '@/lib/router'
 import { notify } from '@/lib/notify'
 import { AGENT_ACCENT_CLASSES, AGENT_LABELS, type Agent } from '@/lib/agentHost'
 import { AGENT_ICONS } from '@/components/agent-icons'
 import { useAppStore } from '@/store/useAppStore'
 import type { Sandbox } from './types'
-import { useOpenInVscode } from './useOpenInVscode'
 
 const MAX_VISIBLE = 4
 
-type BusyAction = 'start' | 'stop' | 'vscode' | 'agent' | null
+type BusyAction = 'start' | 'stop' | 'terminal' | 'agent' | null
 
 export function SidebarSandboxList({ onNavigate }: { onNavigate: (route: Route) => void }) {
   const sandboxes = useAppStore((s) => s.sandboxes)
@@ -19,7 +18,6 @@ export function SidebarSandboxList({ onNavigate }: { onNavigate: (route: Route) 
   const loadSandboxes = useAppStore((s) => s.loadSandboxes)
   const platform = useAppStore((s) => s.platform)
   const [busy, setBusy] = useState<{ id: string; action: BusyAction } | null>(null)
-  const { openInVscode, sshSetupDialog } = useOpenInVscode()
 
   async function run(sandbox: Sandbox, action: Exclude<BusyAction, null>, invoker: () => Promise<unknown>) {
     setBusy({ id: sandbox.id, action })
@@ -69,18 +67,18 @@ export function SidebarSandboxList({ onNavigate }: { onNavigate: (route: Route) 
               <>
                 <button
                   type="button"
-                  aria-label="Open in VS Code"
-                  title="Open in VS Code"
+                  aria-label="Open terminal"
+                  title="Open terminal"
                   disabled={isBusy}
                   onClick={() =>
-                    run(sandbox, 'vscode', () => openInVscode(sandbox.id))
+                    run(sandbox, 'terminal', () => invoke('open_sandbox_terminal', { id: sandbox.id }))
                   }
                   className="flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
                 >
-                  {isBusy && busy?.action === 'vscode' ? (
+                  {isBusy && busy?.action === 'terminal' ? (
                     <Loader2 className="size-3 animate-spin" />
                   ) : (
-                    <Code className="size-3" strokeWidth={1.5} />
+                    <TerminalSquare className="size-3" strokeWidth={1.5} />
                   )}
                 </button>
                 {platform === 'windows' && (
@@ -140,7 +138,6 @@ export function SidebarSandboxList({ onNavigate }: { onNavigate: (route: Route) 
           View More
         </button>
       )}
-      {sshSetupDialog}
     </div>
   )
 }

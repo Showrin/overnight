@@ -150,21 +150,23 @@ export function SandboxActions({
       <div className="flex flex-wrap gap-2">
         {sandbox.status === "running" && (
           <>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={busyAction != null}
-              onClick={() =>
-                run("vscode", () => openInVscode(sandbox.id))
-              }
-            >
-              {busyAction === "vscode" ? (
-                <Loader2 className="size-3.5 animate-spin" />
-              ) : (
-                <Code className="size-3.5" />
-              )}
-              VS Code
-            </Button>
+            {context === "detail" && (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busyAction != null}
+                onClick={() =>
+                  run("vscode", () => openInVscode(sandbox.id))
+                }
+              >
+                {busyAction === "vscode" ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Code className="size-3.5" />
+                )}
+                VS Code
+              </Button>
+            )}
             {platform === "windows" && (() => {
               const AgentIcon = AGENT_ICONS[sandbox.agent as Agent] ?? AGENT_ICONS.claude
               return (
@@ -188,61 +190,59 @@ export function SandboxActions({
                 </Button>
               )
             })()}
-            {platform === "windows" ? (
-              context === "detail" && (
-                <div className="inline-flex">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={busyAction != null}
-                    className="rounded-r-none border-r-0"
-                    onClick={() =>
-                      run("terminal", () =>
-                        invoke("open_sandbox_terminal", {
-                          id: sandbox.id,
-                          terminalHost: defaultTerminalHost,
-                        }),
-                      )
-                    }
-                  >
-                    {busyAction === "terminal" ? (
-                      <Loader2 className="size-3.5 animate-spin" />
-                    ) : (
-                      <TerminalSquare className="size-3.5" />
-                    )}
-                    {TERMINAL_HOST_OPEN_LABELS[defaultTerminalHost as TerminalHost] ?? "Open terminal"}
-                  </Button>
-                  <Popover open={terminalMenuOpen} onOpenChange={setTerminalMenuOpen}>
-                    <PopoverTrigger asChild>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={busyAction != null}
-                        className="rounded-l-none px-1"
-                        aria-label="Choose terminal app"
+            {platform === "windows" && context === "detail" ? (
+              <div className="inline-flex">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busyAction != null}
+                  className="rounded-r-none border-r-0"
+                  onClick={() =>
+                    run("terminal", () =>
+                      invoke("open_sandbox_terminal", {
+                        id: sandbox.id,
+                        terminalHost: defaultTerminalHost,
+                      }),
+                    )
+                  }
+                >
+                  {busyAction === "terminal" ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <TerminalSquare className="size-3.5" />
+                  )}
+                  {TERMINAL_HOST_OPEN_LABELS[defaultTerminalHost as TerminalHost] ?? "Open terminal"}
+                </Button>
+                <Popover open={terminalMenuOpen} onOpenChange={setTerminalMenuOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={busyAction != null}
+                      className="rounded-l-none px-1"
+                      aria-label="Choose terminal app"
+                    >
+                      <ChevronDown className="size-3.5" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="end" className="flex flex-col gap-0.5">
+                    {TERMINAL_HOSTS.map((host) => (
+                      <button
+                        key={host}
+                        type="button"
+                        onClick={() => {
+                          setTerminalMenuOpen(false)
+                          saveDefaultTerminalHost(host)
+                        }}
+                        className="flex w-full items-center justify-between gap-4 rounded-md px-2 py-1.5 text-left text-sm outline-none hover:bg-accent hover:text-accent-foreground"
                       >
-                        <ChevronDown className="size-3.5" />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent align="end" className="flex flex-col gap-0.5">
-                      {TERMINAL_HOSTS.map((host) => (
-                        <button
-                          key={host}
-                          type="button"
-                          onClick={() => {
-                            setTerminalMenuOpen(false)
-                            saveDefaultTerminalHost(host)
-                          }}
-                          className="flex w-full items-center justify-between gap-4 rounded-md px-2 py-1.5 text-left text-sm outline-none hover:bg-accent hover:text-accent-foreground"
-                        >
-                          {TERMINAL_HOST_LABELS[host]}
-                          {host === defaultTerminalHost && <Check className="size-3.5" />}
-                        </button>
-                      ))}
-                    </PopoverContent>
-                  </Popover>
-                </div>
-              )
+                        {TERMINAL_HOST_LABELS[host]}
+                        {host === defaultTerminalHost && <Check className="size-3.5" />}
+                      </button>
+                    ))}
+                  </PopoverContent>
+                </Popover>
+              </div>
             ) : (
               <Button
                 size="sm"
